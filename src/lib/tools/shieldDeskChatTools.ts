@@ -3,6 +3,7 @@ import type OpenAI from "openai";
 import { query } from "@/lib/db";
 import { canAccess } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
+import { fetchNvdCve } from "@/lib/services/nvd";
 
 export type { ChatSession } from "@/lib/auth/session";
 
@@ -376,6 +377,28 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
     } catch {
       // Fallback below if service is offline
     }
+  }
+
+  // Query real NVD threat intelligence API
+  try {
+    const nvd = await fetchNvdCve(args.cveId);
+    if (nvd.success && nvd.record) {
+      return {
+        record: {
+          cve_id: nvd.record.id,
+          cvss_score: nvd.record.cvssScore ?? 7.5,
+          severity: nvd.record.severity,
+          cisa_kev: Boolean(nvd.record.cisaRequiredAction),
+          remediation_tier: nvd.record.cisaRequiredAction ? "IMMEDIATE_ACTION" : "SCHEDULED_PATCH",
+          description: nvd.record.description,
+          recommended_mitigation:
+            nvd.record.cisaRequiredAction ||
+            `Apply vendor patches for ${nvd.record.id}, isolate exposed endpoints, and monitor network perimeters.`,
+        },
+      };
+    }
+  } catch {
+    // Continue to dev fallback if NVD fetch encounters issues
   }
 
   // Dev fallback:

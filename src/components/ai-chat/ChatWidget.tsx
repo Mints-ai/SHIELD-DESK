@@ -61,6 +61,58 @@ export function ChatWidget() {
     setInput("");
     setIsSending(true);
 
+    // Detect CVE command (e.g. "Analyze CVE-2024-3400" or /CVE-\d{4}-\d+/)
+    const cveMatch = trimmed.match(/\bCVE-\d{4}-\d{4,7}\b/i);
+    if (cveMatch) {
+      const cveId = cveMatch[0].toUpperCase();
+      try {
+        const res = await fetch("/api/analyze-cve", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ cveId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data?.message || `Failed to analyze ${cveId}`);
+        }
+
+        // Format: CVE ID, short summary, severity, and suggested fix
+        const reply =
+          data.formattedMessage ||
+          `CVE ID: ${data.cveId}\n\nSeverity: ${data.severity}${
+            data.cvssScore !== null ? ` (CVSS ${data.cvssScore})` : ""
+          }\n\nSummary: ${data.summary}\n\nRisk: ${data.risk}\n\nSuggested Fix: ${
+            data.mitigation
+          }`;
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: reply,
+          },
+        ]);
+      } catch (err: unknown) {
+        const messageText = err instanceof Error ? err.message : undefined;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: messageText || `Failed to retrieve intelligence for ${cveId}.`,
+            isError: true,
+          },
+        ]);
+      } finally {
+        setIsSending(false);
+      }
+      return;
+    }
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
