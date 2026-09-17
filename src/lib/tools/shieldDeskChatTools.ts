@@ -216,14 +216,14 @@ export async function getIncidents(
     conditions.push(`tenant_id = $${params.length}`);
   }
   if (args.severity) {
-    params.push(args.severity);
-    conditions.push(`severity = $${params.length}`);
+    params.push(args.severity.toLowerCase());
+    conditions.push(`LOWER(severity) = $${params.length}`);
   }
   if (args.status) {
-    params.push(args.status);
-    conditions.push(`status = $${params.length}`);
+    params.push(args.status.toLowerCase());
+    conditions.push(`LOWER(status) = $${params.length}`);
   } else {
-    conditions.push(`status NOT IN ('resolved', 'closed')`);
+    conditions.push(`LOWER(status) NOT IN ('resolved', 'closed')`);
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -284,7 +284,7 @@ export async function investigateIncident(
   try {
     const incidentResult = await query(
       `SELECT id, incident_code, severity, status, title, description, created_at
-       FROM incidents WHERE incident_code = $1 ${tenantScope}
+       FROM incidents WHERE UPPER(incident_code) = UPPER($1) ${tenantScope}
        LIMIT 1`,
       params
     );
@@ -428,7 +428,7 @@ export async function generateMitigationPlan(
   let linkedCveRows: { cve_id: string }[] = [];
   try {
     const result = await query<{ cve_id: string }>(
-      "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE incident_code = $1)",
+      "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE UPPER(incident_code) = UPPER($1))",
       [args.incidentId]
     );
     linkedCveRows = result.rows;
