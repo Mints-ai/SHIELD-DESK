@@ -6,30 +6,18 @@
 ---
 
 ## Table of Contents
-1. [What is ShieldDesk?](#1-what-is-shielddesk)
-2. [Complete System Architecture](#2-complete-system-architecture)
-3. [What Has Been Done So Far (With Concrete Examples)](#3-what-has-been-done-so-far-with-concrete-examples)
+1. [Complete System Architecture](#2-complete-system-architecture)
+2. [What Has Been Done So Far (With Concrete Examples)](#3-what-has-been-done-so-far-with-concrete-examples)
    - [3.1 The 3-Step Chat Pipeline](#31-the-3-step-chat-pipeline)
    - [3.2 Real Working Examples](#32-real-working-examples)
    - [3.3 Multi-Tenant RBAC Security in Action](#33-multi-tenant-rbac-security-in-action)
    - [3.4 Local AI & Machine Learning Services](#34-local-ai--machine-learning-services)
-4. [What We Need to Do Next (Technical Roadmap)](#4-what-we-need-to-do-next-technical-roadmap)
-5. [Step-by-Step Guide: How to Run & Test Everything](#5-step-by-step-guide-how-to-run--test-everything)
+3. [What We Need to Do Next (Technical Roadmap)](#4-what-we-need-to-do-next-technical-roadmap)
+4. [Step-by-Step Guide: How to Run & Test Everything](#5-step-by-step-guide-how-to-run--test-everything)
 
 ---
 
-## 1. What is ShieldDesk?
-
-ShieldDesk is an autonomous Security Operations Center (SOC) assistant that enables security analysts to query incidents, investigate active breaches, look up CVE threat intelligence, and generate remediation plans.
-
-### Core Design Rules
-- **100% Private & On-Premises**: Powered by a local Ollama LLM and a local Python ML model. **No customer, incident, or vulnerability data ever leaves your network.**
-- **Constrained Intent Routing**: The model cannot hallucinate arbitrary answers or actions. It is strictly limited to 4 allow-listed security tools.
-- **Multi-Tenant Isolation**: Incidents belong strictly to tenants (e.g., `acme-tenant`, `globex-tenant`). Analysts from one tenant can never view or probe another tenant's records.
-
----
-
-## 2. Complete System Architecture
+## 1. Complete System Architecture
 
 ```
                                     USER / ANALYST
@@ -68,9 +56,9 @@ ShieldDesk is an autonomous Security Operations Center (SOC) assistant that enab
 
 ---
 
-## 3. What Has Been Done So Far (With Concrete Examples)
+## 2. What Has Been Done So Far (With Concrete Examples)
 
-### 3.1 The 3-Step Chat Pipeline
+### 2.1 The 3-Step Chat Pipeline
 
 The chat system executes a reliable 3-step pipeline on every request:
 
@@ -90,7 +78,7 @@ Validate user query       Call allow-listed tool         Stream formatted tokens
 
 ---
 
-### 3.2 Real Working Examples
+### 2.2 Real Working Examples
 
 #### Example 1: Fetching Incidents (`getIncidents`)
 * **Analyst Prompt**: `"Show me today's critical incidents"`
@@ -159,7 +147,7 @@ Validate user query       Call allow-listed tool         Stream formatted tokens
 
 ---
 
-### 3.3 Multi-Tenant RBAC Security in Action
+### 2.3 Multi-Tenant RBAC Security in Action
 
 ShieldDesk enforces access boundaries directly in backend SQL queries:
 
@@ -180,7 +168,7 @@ ShieldDesk enforces access boundaries directly in backend SQL queries:
 
 ---
 
-### 3.4 Local AI & Machine Learning Services
+### 2.4 Local AI & Machine Learning Services
 
 1. **Ollama Local LLM (`http://localhost:11434`)**:
    - Model: `qwen3:4b-instruct-2507-q4_K_M`
@@ -197,7 +185,7 @@ ShieldDesk enforces access boundaries directly in backend SQL queries:
 
 ---
 
-## 4. What We Need to Do Next (Technical Roadmap)
+## 3. What We Need to Do Next (Technical Roadmap)
 
 The remaining work is divided into 4 clear technical priorities:
 
@@ -258,7 +246,7 @@ Currently, analysts must manually type the incident ID (`INC-1042`).
 
 ---
 
-## 5. Step-by-Step Guide: How to Run & Test Everything
+## 4. Step-by-Step Guide: How to Run & Test Everything
 
 ### Step 1: Start the Local LLM (Ollama)
 Open a terminal and run:
