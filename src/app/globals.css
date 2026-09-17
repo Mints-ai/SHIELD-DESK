@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+:root {
+  --background: var(--sd-bg);
+  --foreground: var(--sd-text);
+  --primary: var(--sd-pine-bright);
+  --primary-foreground: var(--sd-text);
+  --border: var(--sd-border);
+  --muted: var(--sd-panel-raised);
+  --muted-foreground: var(--sd-text-muted);
+
+  /* ShieldDesk AI Chat Widget design tokens.
+     Pine (dark teal-green) + khaki come from the existing ShieldDesk
+     document branding — kept out of Tailwind's default palette on purpose
+     so the widget reads as ShieldDesk's own, not a generic dark-mode kit. */
+  --sd-bg: #101513;
+  --sd-panel: #171e1b;
+  --sd-panel-raised: #1e2621;
+  --sd-border: #2a332d;
+  --sd-pine: #2f5d50;
+  --sd-pine-bright: #4c8b76;
+  --sd-khaki: #c9b183;
+  --sd-khaki-dim: #8d7f5f;
+  --sd-text: #ecefea;
+  --sd-text-muted: #8f998f;
+  --sd-danger: #c1554a;
+  --sd-danger-dim: #4a2b28;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
