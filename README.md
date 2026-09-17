@@ -1,4 +1,4 @@
-# ShieldDesk AI Chat Widget — Web App
+# ShieldDesk AI Chat Widget 
 
 Next.js frontend + server-side API for the ShieldDesk AI Chat Widget. The
 model is a **local Ollama instance** — no cloud LLM API, no incident/CVE
