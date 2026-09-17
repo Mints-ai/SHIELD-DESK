@@ -31,9 +31,10 @@ INSERT INTO incident_assets (incident_id, asset_id) VALUES
   ('11111111-1111-1111-1111-111111111111', 'a1111111-1111-1111-1111-111111111111'),
   ('11111111-1111-1111-1111-111111111111', 'a2222222-2222-2222-2222-222222222222');
 
--- Example incident-to-CVE linkage. These CVE ids won't necessarily exist
--- in the trained knowledge base (cve_ai_engine.py) — that's fine, it's
--- exactly the "not_found" path generateMitigationPlan needs to handle
--- gracefully rather than crash on.
+-- CVE linkage — these IDs are confirmed present in the trained Python AI
+-- knowledge base (cve_ai_engine.py / models/cve_random_forest_model.joblib).
+-- CVE-2020-6240: SAP NetWeaver DoS (HIGH, CVSS 7.5, Tier 2 Human-Approved)
+-- CVE-2021-47048: additional CVE for multi-CVE mitigation plan testing
 INSERT INTO incident_cves (incident_id, cve_id) VALUES
-  ('11111111-1111-1111-1111-111111111111', 'CVE-2024-3400');
+  ('11111111-1111-1111-1111-111111111111', 'CVE-2020-6240'),
+  ('11111111-1111-1111-1111-111111111111', 'CVE-2021-47048');

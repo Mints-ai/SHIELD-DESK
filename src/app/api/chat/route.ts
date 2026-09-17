@@ -141,7 +141,13 @@ function logAudit(entry: {
       entry.answer,
       entry.outcome,
     ]
-  ).catch((err) => console.error("Audit log error:", err));
+  ).catch((err) => {
+    if (err?.code === "ECONNREFUSED" || String(err).includes("ECONNREFUSED")) {
+      // Postgres is offline in dev mode — skip audit write silently
+      return;
+    }
+    console.error("Audit log error:", err);
+  });
 }
 
 export async function POST(req: NextRequest) {
