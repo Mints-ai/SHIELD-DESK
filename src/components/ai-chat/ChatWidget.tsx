@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Bot, Send, User as UserIcon, ShieldHalf, X } from "lucide-react";
+import { ArrowDown, Bot, Send, User as UserIcon, ShieldHalf, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -45,12 +45,39 @@ export function ChatWidget() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const activeResponseRef = useRef<HTMLDivElement>(null);
+  const [activeResponseId, setActiveResponseId] = useState<string | null>(null);
+  const [shouldFollowLatest, setShouldFollowLatest] = useState(true);
   const accumulatedRef = useRef("");
 
   useEffect(() => {
-    if (isOpen) scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isSending, isOpen]);
+    const messagesContainer = messagesRef.current;
+    const activeResponse = activeResponseRef.current;
+    if (!isOpen || !messagesContainer || !activeResponseId || !activeResponse) return;
+
+    messagesContainer.scrollTo({
+      top: Math.max(0, activeResponse.offsetTop - 16),
+      behavior: "smooth",
+    });
+  }, [activeResponseId, isOpen]);
+
+  const handleMessagesScroll = () => {
+    const messagesContainer = messagesRef.current;
+    if (!messagesContainer) return;
+
+    const distanceFromLatest =
+      messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight;
+    setShouldFollowLatest(distanceFromLatest < 48);
+  };
+
+  const scrollToLatest = () => {
+    setShouldFollowLatest(true);
+    messagesRef.current?.scrollTo({
+      top: messagesRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  };
 
   const sendMessage = async (text: string) => {
     const trimmed = text.trim();
@@ -59,6 +86,7 @@ export function ChatWidget() {
     const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", content: trimmed };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    setShouldFollowLatest(true);
     setIsSending(true);
 
     try {
@@ -79,6 +107,7 @@ export function ChatWidget() {
       if (!res.body) throw new Error("Empty response from assistant.");
 
       const assistantId = crypto.randomUUID();
+      setActiveResponseId(assistantId);
       setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "" }]);
 
       const reader = res.body.getReader();
@@ -174,7 +203,11 @@ export function ChatWidget() {
               <span className="text-sm font-bold text-foreground">ShieldDesk Assistant</span>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0">
+            <div
+              ref={messagesRef}
+              onScroll={handleMessagesScroll}
+              className="relative flex-1 overflow-y-auto p-4 space-y-3 min-h-0"
+            >
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-4">
                   <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
@@ -201,6 +234,7 @@ export function ChatWidget() {
                   {messages.map((m) => (
                     <motion.div
                       key={m.id}
+                      ref={m.id === activeResponseId ? activeResponseRef : undefined}
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
                       className={cn("flex items-start gap-2", m.role === "user" && "flex-row-reverse")}
@@ -246,7 +280,18 @@ export function ChatWidget() {
                   </div>
                 </div>
               )}
-              <div ref={scrollRef} />
+
+              {!shouldFollowLatest && messages.length > 0 && (
+                <button
+                  type="button"
+                  onClick={scrollToLatest}
+                  className="sticky bottom-0 mx-auto flex items-center gap-1 rounded-full border border-border bg-[var(--sd-panel)] px-2.5 py-1 text-[10px] text-foreground/70 shadow-md transition-colors hover:border-primary/40 hover:text-foreground"
+                  aria-label="Jump to latest response"
+                >
+                  <ArrowDown className="h-3 w-3" />
+                  Latest response
+                </button>
+              )}
             </div>
 
             <form onSubmit={handleSubmit} className="shrink-0 border-t border-border p-3 flex items-center gap-2">
