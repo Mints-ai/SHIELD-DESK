@@ -12,7 +12,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         {children}
-        {/* Globally-available floating entry point (Vision: page-agnostic). */}
+        {/* Globally-available floating entry point */}
         <ChatWidget />
       </body>
     </html>
