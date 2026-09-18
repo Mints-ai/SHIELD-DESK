@@ -5,11 +5,13 @@
 INSERT INTO users (id, tenant_id, role) VALUES
   ('dev-analyst', 'acme-tenant', 'user'),
   ('dev-admin',   'acme-tenant', 'system_admin'),
-  ('dev-other',   'globex-tenant', 'user'); -- different tenant, for isolation testing
+  ('dev-other',   'globex-tenant', 'user')
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO assets (id, tenant_id, hostname, asset_type) VALUES
   ('a1111111-1111-1111-1111-111111111111', 'acme-tenant', 'FIN-WS-042', 'workstation'),
-  ('a2222222-2222-2222-2222-222222222222', 'acme-tenant', 'FIN-DB-01',  'database-server');
+  ('a2222222-2222-2222-2222-222222222222', 'acme-tenant', 'FIN-DB-01',  'database-server')
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO incidents (id, incident_code, tenant_id, severity, status, title, description) VALUES
   ('11111111-1111-1111-1111-111111111111', 'INC-1042', 'acme-tenant', 'critical', 'investigating',
@@ -20,16 +22,25 @@ INSERT INTO incidents (id, incident_code, tenant_id, severity, status, title, de
    'Multiple failed administrator login attempts detected from an external IP range.'),
   ('33333333-3333-3333-3333-333333333333', 'INC-1031', 'acme-tenant', 'medium', 'resolved',
    'Outbound traffic to a newly-registered domain',
-   'Endpoint contacted a domain registered within the last 48 hours; blocked by egress filtering.');
+   'Endpoint contacted a domain registered within the last 48 hours; blocked by egress filtering.')
+ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO incident_events (incident_id, occurred_at, description) VALUES
-  ('11111111-1111-1111-1111-111111111111', now() - interval '3 hours', 'Initial detection: anomalous SMB traffic from FIN-WS-042.'),
-  ('11111111-1111-1111-1111-111111111111', now() - interval '2 hours', 'Confirmed lateral movement attempt toward FIN-DB-01.'),
-  ('11111111-1111-1111-1111-111111111111', now() - interval '1 hour',  'Analyst assigned; containment options under review.');
+INSERT INTO incident_events (incident_id, occurred_at, description)
+SELECT '11111111-1111-1111-1111-111111111111', now() - interval '3 hours', 'Initial detection: anomalous SMB traffic from FIN-WS-042.'
+WHERE NOT EXISTS (SELECT 1 FROM incident_events WHERE incident_id = '11111111-1111-1111-1111-111111111111' AND description LIKE 'Initial detection%');
+
+INSERT INTO incident_events (incident_id, occurred_at, description)
+SELECT '11111111-1111-1111-1111-111111111111', now() - interval '2 hours', 'Confirmed lateral movement attempt toward FIN-DB-01.'
+WHERE NOT EXISTS (SELECT 1 FROM incident_events WHERE incident_id = '11111111-1111-1111-1111-111111111111' AND description LIKE 'Confirmed lateral movement%');
+
+INSERT INTO incident_events (incident_id, occurred_at, description)
+SELECT '11111111-1111-1111-1111-111111111111', now() - interval '1 hour',  'Analyst assigned; containment options under review.'
+WHERE NOT EXISTS (SELECT 1 FROM incident_events WHERE incident_id = '11111111-1111-1111-1111-111111111111' AND description LIKE 'Analyst assigned%');
 
 INSERT INTO incident_assets (incident_id, asset_id) VALUES
   ('11111111-1111-1111-1111-111111111111', 'a1111111-1111-1111-1111-111111111111'),
-  ('11111111-1111-1111-1111-111111111111', 'a2222222-2222-2222-2222-222222222222');
+  ('11111111-1111-1111-1111-111111111111', 'a2222222-2222-2222-2222-222222222222')
+ON CONFLICT (incident_id, asset_id) DO NOTHING;
 
 -- CVE linkage — these IDs are confirmed present in the trained Python AI
 -- knowledge base (cve_ai_engine.py / models/cve_random_forest_model.joblib).
@@ -37,4 +48,5 @@ INSERT INTO incident_assets (incident_id, asset_id) VALUES
 -- CVE-2021-47048: additional CVE for multi-CVE mitigation plan testing
 INSERT INTO incident_cves (incident_id, cve_id) VALUES
   ('11111111-1111-1111-1111-111111111111', 'CVE-2020-6240'),
-  ('11111111-1111-1111-1111-111111111111', 'CVE-2021-47048');
+  ('11111111-1111-1111-1111-111111111111', 'CVE-2021-47048')
+ON CONFLICT (incident_id, cve_id) DO NOTHING;

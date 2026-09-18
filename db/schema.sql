@@ -12,7 +12,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
 -- bypass this backs. Swap in real credential storage when ShieldDesk has
 -- its own login flow.
 -- ---------------------------------------------------------------------------
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id         text PRIMARY KEY,   -- opaque user id (dev mode: whatever the caller sends)
   tenant_id  text NOT NULL,
   role       text NOT NULL CHECK (role IN ('system_admin', 'super_admin', 'user')),
@@ -22,7 +22,7 @@ CREATE TABLE users (
 -- ---------------------------------------------------------------------------
 -- Incidents
 -- ---------------------------------------------------------------------------
-CREATE TABLE incidents (
+CREATE TABLE IF NOT EXISTS incidents (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   incident_code text UNIQUE NOT NULL,     -- e.g. 'INC-1042'
   tenant_id     text NOT NULL,
@@ -33,60 +33,60 @@ CREATE TABLE incidents (
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_incidents_tenant ON incidents (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_incidents_tenant ON incidents (tenant_id);
 
-CREATE TABLE incident_events (
+CREATE TABLE IF NOT EXISTS incident_events (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   incident_id uuid NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
-  occurred_at timestamptz NOT NULL DEFAULT now(),
-  description text NOT NULL
+  occurred_at timestamptz NOT NULL,
+  description text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_incident_events_incident ON incident_events (incident_id);
+CREATE INDEX IF NOT EXISTS idx_incident_events_incident ON incident_events (incident_id);
 
 -- ---------------------------------------------------------------------------
 -- Assets
 -- ---------------------------------------------------------------------------
-CREATE TABLE assets (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id  text NOT NULL,
-  hostname   text NOT NULL,
-  asset_type text NOT NULL DEFAULT 'workstation'
+CREATE TABLE IF NOT EXISTS assets (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   text NOT NULL,
+  hostname    text NOT NULL,
+  asset_type  text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_assets_tenant ON assets (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_assets_tenant ON assets (tenant_id);
 
-CREATE TABLE incident_assets (
+CREATE TABLE IF NOT EXISTS incident_assets (
   incident_id uuid NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
   asset_id    uuid NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
   PRIMARY KEY (incident_id, asset_id)
 );
 
 -- ---------------------------------------------------------------------------
--- Incident <-> CVE linkage — the design decision from this conversation.
--- Many-to-many: one incident can involve several CVEs (e.g. a chained
--- exploit), and one CVE can show up across multiple incidents/tenants.
--- cve_id is a plain text column (not a foreign key) because the CVE
--- knowledge base lives in the separate Python engine (cve_ai_engine.py),
--- not in this database — this table just records which CVE ids are
--- relevant to which incident, and generateMitigationPlan looks each one
--- up via GET /api/lookup at request time.
+-- Vulnerabilities linked to an incident.
+-- One incident can touch multiple CVEs; one CVE can appear in multiple
+-- incidents. Kept simple: just the IDs, with the Python service
+-- (cve_ai_engine.py / server.py) being the authority on what the CVE
+-- actually means (CVSS, KEV status, domain, recommended remediation).
 -- ---------------------------------------------------------------------------
-CREATE TABLE incident_cves (
+CREATE TABLE IF NOT EXISTS incident_cves (
   incident_id uuid NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
-  cve_id      text NOT NULL,   -- e.g. 'CVE-2024-3400'
+  cve_id      text NOT NULL,              -- e.g. 'CVE-2024-3400'
   PRIMARY KEY (incident_id, cve_id)
 );
 
 -- ---------------------------------------------------------------------------
--- Audit log for chat requests (Phase 8)
+-- Audit log: every question asked, tool called, and final answer recorded.
+-- Critical for SOC compliance / SOC2.
 -- ---------------------------------------------------------------------------
-CREATE TABLE chat_audit_log (
+CREATE TABLE IF NOT EXISTS chat_audit_log (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   uid         text NOT NULL,
   role        text NOT NULL,
   tenant_id   text NOT NULL,
   question    text NOT NULL,
-  tool_called text,
-  answer      text,
-  outcome     text NOT NULL,
+  tool_called text,                       -- nullable; out-of-scope queries don't call one
+  answer      text NOT NULL,
+  outcome     text NOT NULL,              -- 'authorized' | 'denied' | 'error' | 'out_of_scope'
   created_at  timestamptz NOT NULL DEFAULT now()
 );

@@ -268,16 +268,20 @@ python server.py
 
 ---
 
-### Step 3: (Optional) Set Up Live PostgreSQL Database
-If you want live PostgreSQL database storage (instead of the built-in dev fallback):
-1. Run the installer already downloaded in your Downloads folder:
-   *(Set password to: `shielddesk_dev`)*
-2. In PowerShell, run the setup script:
-   ```powershell
-   cd "D: yourfoldername\Ai_Chatbot_Updates\web"
-   .\setup_database.ps1
-   ```
-*(Note: If PostgreSQL is not running, the application automatically uses its built-in dev fallback mode, so the UI and AI continue working seamlessly).*
+### Step 3: Start & Initialize PostgreSQL Database
+The database script has been upgraded with **automatic startup detection**. If PostgreSQL is ever stopped (e.g., after restarting your computer), running this script will automatically launch it in the background:
+
+```powershell
+cd "D:\mario\mINTS\ShieldDesk\Chatbot\New folder\Ai_Chatbot_Updates\web"
+.\setup_database.ps1
+```
+
+* **What it does automatically**:
+  1. Checks port `5432`; if closed, automatically launches PostgreSQL in the background.
+  2. Ensures the `shielddesk` user and database exist.
+  3. Applies `db/schema.sql` and `db/seed.sql` idempotently (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`).
+  4. Verifies the connection and displays the seeded incidents.
+*(Note: If the database is ever offline, the application automatically falls back to its built-in dev mock mode so the UI and AI continue working seamlessly).*
 
 ---
 
