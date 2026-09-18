@@ -251,12 +251,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { message?: string; context?: ChatContext };
+  let body: { message?: string; context?: ChatContext; history?: { role: string; content: string }[] };
+  // Parse request body
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
+  // Extract history if provided (for in‑memory continuity)
+  const history = Array.isArray(body.history) ? body.history : [];
+  // Infer incident context from prior user messages when not explicitly provided
+  if (!body.context?.currentIncidentId) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === "user") {
+        const match = msg.content.match(INCIDENT_ID_RE);
+        if (match) {
+          body.context = { ...(body.context || {}), currentIncidentId: match[0].toUpperCase() };
+          break;
+        }
+      }
+    }
+  }
+// Duplicate body parsing removed – already handled earlier
 
   const message = body?.message;
   if (!message || typeof message !== "string") {
@@ -394,6 +411,8 @@ export async function POST(req: NextRequest) {
         model: OLLAMA_MODEL,
         messages: [
           { role: "system", content: buildRoutingSystemPrompt(contextLines) },
+          // Include prior conversation history for continuity
+          ...history.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
           { role: "user", content: message },
         ],
         tools: CHAT_TOOLS,

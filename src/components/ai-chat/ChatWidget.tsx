@@ -5,6 +5,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ArrowDown, Bot, Send, User as UserIcon, ShieldHalf, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+// Session storage helpers (persisted only for the current tab)
+
 
 interface ChatMessage {
   id: string;
@@ -62,6 +64,9 @@ export function ChatWidget() {
     });
   }, [activeResponseId, isOpen]);
 
+
+
+
   const handleMessagesScroll = () => {
     const messagesContainer = messagesRef.current;
     if (!messagesContainer) return;
@@ -90,13 +95,14 @@ export function ChatWidget() {
     setIsSending(true);
 
     try {
+      const historyPayload = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }));
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": DEV_USER_ID,
         },
-        body: JSON.stringify({ message: trimmed }),
+        body: JSON.stringify({ message: trimmed, history: historyPayload }),
       });
 
       if (!res.ok) {
