@@ -12,7 +12,7 @@ import { checkDatabaseConnection } from "@/lib/db";
  *   at OLLAMA_BASE_URL or it isn't)
  */
 export async function GET() {
-  const databaseConfigured = Boolean(process.env.DATABASE_URL);
+  const databaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const databaseConnected = databaseConfigured
     ? await checkDatabaseConnection()
     : false;

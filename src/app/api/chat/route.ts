@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ollama, OLLAMA_MODEL } from "@/lib/ai/ollama";
 import { getSessionFromRequest, type ChatSession } from "@/lib/auth/session";
-import { query } from "@/lib/db";
+import { getSupabase } from "@/lib/db";
 import {
   CHAT_TOOLS,
   getIncidents,
@@ -129,23 +129,21 @@ function logAudit(entry: {
   answer: string;
 }) {
   // Fire-and-forget — never blocks the response on the audit write.
-  query(
-    `INSERT INTO chat_audit_log (uid, role, tenant_id, question, tool_called, answer, outcome, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
-    [
-      entry.session.uid,
-      entry.session.role,
-      entry.session.tenantId,
-      entry.question,
-      entry.toolName,
-      entry.answer,
-      entry.outcome,
-    ]
-  ).catch((err) => {
-    if (err?.code === "ECONNREFUSED" || String(err).includes("ECONNREFUSED")) {
-      // Postgres is offline in dev mode — skip audit write silently
-      return;
-    }
+  void Promise.resolve(
+    getSupabase()
+      .from("chat_audit_log")
+      .insert({
+        uid: entry.session.uid,
+        role: entry.session.role,
+        tenant_id: entry.session.tenantId,
+        question: entry.question,
+        tool_called: entry.toolName,
+        answer: entry.answer,
+        outcome: entry.outcome,
+      })
+  ).then(({ error }) => {
+    if (error) console.error("Audit log error:", error);
+  }).catch((err: unknown) => {
     console.error("Audit log error:", err);
   });
 }

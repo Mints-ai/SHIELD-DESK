@@ -4,11 +4,15 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:full": "concurrently --kill-others-on-fail false --names \"NEXT,PYTHON\" --prefix-colors \"cyan,yellow\" \"npm run dev\" \"npm run python:start\"",
+    "python:start": "node -e \"const fs=require('fs');const path='../ai-chat-desk/server.py';if(fs.existsSync(path)){const {execSync}=require('child_process');process.chdir('../ai-chat-desk');require('child_process').spawnSync('python',['server.py'],{stdio:'inherit'})}else{console.warn('[PYTHON] ai-chat-desk/server.py not found — skipping. CVE lookups will use mock data. See README for setup.');process.exit(0)}\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.116.0",
     "clsx": "^2.1.1",
     "framer-motion": "^13.3.0",
     "lucide-react": "^1.46.0",
@@ -26,6 +30,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.5",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",

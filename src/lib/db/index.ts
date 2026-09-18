@@ -1,51 +1,53 @@
 import "server-only";
-import { Pool, type QueryResultRow } from "pg";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * ShieldDesk PostgreSQL connection.
+ * ShieldDesk Supabase connection.
  *
- * SECURITY: Gemini must never receive a direct handle to this pool.
- * All queries are issued from the Tool Gateway / service layer (Phase 4),
- * after authentication + RBAC + tenant checks have passed (Phase 3).
+ * Uses the publishable key for server-side queries. Application-layer RBAC
+ * and tenant isolation are enforced in the Tool Gateway
+ * (lib/tools/shieldDeskChatTools.ts) — Supabase RLS is not relied upon here
+ * so that the existing canAccess() / tenant-scoping logic continues to work
+ * unchanged.
+ *
+ * SECURITY: Never expose this module or its client to the browser.
+ * All queries go through the Tool Gateway after auth + RBAC checks.
  */
 
 declare global {
-  var __shieldDeskPgPool: Pool | undefined;
+  // eslint-disable-next-line no-var
+  var __shieldDeskSupabase: SupabaseClient | undefined;
 }
 
-function createPool(): Pool {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
+function createAdminClient(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !key) {
     throw new Error(
-      "DATABASE_URL is not set. Add it to your server-side environment " +
-        "(.env.local) — see .env.example."
+      "NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY " +
+        "must be set in .env.local — see the Supabase project settings."
     );
   }
-  return new Pool({ connectionString });
+  return createClient(url, key);
 }
 
-// Reuse the pool across hot reloads in dev. Created lazily (on first real
-// query) so simply importing this module — e.g. during a build's route
-// data collection — never throws for a missing DATABASE_URL.
-function getPool(): Pool {
-  if (!global.__shieldDeskPgPool) {
-    global.__shieldDeskPgPool = createPool();
+// Reuse the client across hot reloads in dev. Created lazily (on first real
+// query) so simply importing this module never throws for missing env vars.
+export function getSupabase(): SupabaseClient {
+  if (!global.__shieldDeskSupabase) {
+    global.__shieldDeskSupabase = createAdminClient();
   }
-  return global.__shieldDeskPgPool;
-}
-
-export async function query<T extends QueryResultRow = QueryResultRow>(
-  text: string,
-  params?: unknown[]
-) {
-  return getPool().query<T>(text, params);
+  return global.__shieldDeskSupabase;
 }
 
 export async function checkDatabaseConnection(): Promise<boolean> {
-  if (!process.env.DATABASE_URL) return false;
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return false;
   try {
-    await getPool().query("SELECT 1");
-    return true;
+    const { error } = await getSupabase()
+      .from("users")
+      .select("id")
+      .limit(1);
+    return !error;
   } catch {
     return false;
   }

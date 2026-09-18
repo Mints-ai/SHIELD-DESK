@@ -1,6 +1,6 @@
 import "server-only";
 import type OpenAI from "openai";
-import { query } from "@/lib/db";
+import { getSupabase } from "@/lib/db";
 import { canAccess } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
 
@@ -15,24 +15,13 @@ export type { ChatSession } from "@/lib/auth/session";
  * tenant isolation itself rather than trusting anything the model says
  * about who's asking.
  *
- * ASSUMED POSTGRES SCHEMA (see db/schema.sql for the real, applied version):
- *   incidents (
- *     id, incident_code text unique,      -- e.g. 'INC-1042'
- *     tenant_id text, severity text, status text,
- *     title text, description text,
- *     created_at timestamptz, updated_at timestamptz
- *   )
- *   incident_events (
- *     id, incident_id text references incidents(id),
- *     occurred_at timestamptz, description text
- *   )
- *   assets ( id, tenant_id text, hostname text, asset_type text )
- *   incident_assets ( incident_id text, asset_id text )
- *   incident_cves ( incident_id text, cve_id text )
+ * DATABASE: Migrated from local PostgreSQL (pg pool) to Supabase JS client.
+ * All queries use the Supabase query builder. Raw SQL has been replaced with
+ * .from().select().eq() chains. The application-layer RBAC + tenant scoping
+ * logic is unchanged — we do NOT rely on Supabase RLS.
  *
  * The Python vulnerability-intelligence engine (Phase 5) is reached over
- * HTTP via PYTHON_AI_SERVICE_URL — see ../../../server.py at the repo root
- * for the existing model this is meant to call.
+ * HTTP via PYTHON_AI_SERVICE_URL — see server.py at the repo root.
  */
 
 // ---------------------------------------------------------------------------
@@ -133,7 +122,7 @@ export const CHAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Dev fallback seed data (used when PostgreSQL / Python AI service is offline)
+// Dev fallback seed data (used when Supabase is unreachable / tables empty)
 // ---------------------------------------------------------------------------
 const MOCK_INCIDENTS = [
   {
@@ -208,39 +197,32 @@ export async function getIncidents(
   args: { severity?: string; status?: string; limit?: number } = {}
 ) {
   const limit = Math.min(Math.max(args.limit ?? 10, 1), 50);
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  if (!canAccess(session.role, "VIEW_CROSS_TENANT")) {
-    params.push(session.tenantId);
-    conditions.push(`tenant_id = $${params.length}`);
-  }
-  if (args.severity) {
-    params.push(args.severity);
-    conditions.push(`severity = $${params.length}`);
-  }
-  if (args.status) {
-    params.push(args.status);
-    conditions.push(`status = $${params.length}`);
-  } else {
-    conditions.push(`status NOT IN ('resolved', 'closed')`);
-  }
-
-  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  params.push(limit);
 
   try {
-    const result = await query(
-      `SELECT incident_code, severity, status, title, created_at
-       FROM incidents
-       ${where}
-       ORDER BY created_at DESC
-       LIMIT $${params.length}`,
-      params
-    );
-    return { incidents: result.rows };
-  } catch (err) {
-    // Dev fallback if database is offline
+    const supabase = getSupabase();
+    let q = supabase
+      .from("incidents")
+      .select("incident_code, severity, status, title, created_at");
+
+    if (!canAccess(session.role, "VIEW_CROSS_TENANT")) {
+      q = q.eq("tenant_id", session.tenantId);
+    }
+    if (args.severity) {
+      q = q.eq("severity", args.severity);
+    }
+    if (args.status) {
+      q = q.eq("status", args.status);
+    } else {
+      q = q.not("status", "in", "(resolved,closed)");
+    }
+
+    q = q.order("created_at", { ascending: false }).limit(limit);
+
+    const { data, error } = await q;
+    if (error) throw error;
+    return { incidents: data ?? [] };
+  } catch {
+    // Dev fallback if Supabase is unreachable
     const filtered = MOCK_INCIDENTS.filter((inc) => {
       if (!canAccess(session.role, "VIEW_CROSS_TENANT") && inc.tenant_id !== session.tenantId) {
         return false;
@@ -274,37 +256,43 @@ export async function investigateIncident(
 ) {
   if (!args.incidentId) return { error: "missing_incident_id" };
 
-  const tenantScope = canAccess(session.role, "VIEW_CROSS_TENANT")
-    ? ""
-    : "AND tenant_id = $2";
-  const params = canAccess(session.role, "VIEW_CROSS_TENANT")
-    ? [args.incidentId]
-    : [args.incidentId, session.tenantId];
-
   try {
-    const incidentResult = await query(
-      `SELECT id, incident_code, severity, status, title, description, created_at
-       FROM incidents WHERE incident_code = $1 ${tenantScope}
-       LIMIT 1`,
-      params
-    );
+    const supabase = getSupabase();
 
-    const incident = incidentResult.rows[0];
+    // Step 1: Fetch the incident
+    let incidentQuery = supabase
+      .from("incidents")
+      .select("id, incident_code, severity, status, title, description, created_at")
+      .eq("incident_code", args.incidentId);
+
+    if (!canAccess(session.role, "VIEW_CROSS_TENANT")) {
+      incidentQuery = incidentQuery.eq("tenant_id", session.tenantId);
+    }
+
+    const { data: incident, error: incidentError } = await incidentQuery
+      .limit(1)
+      .maybeSingle();
+
+    if (incidentError) throw incidentError;
     if (!incident) return { error: "not_found" };
 
-    const [events, assets] = await Promise.all([
-      query(
-        `SELECT occurred_at, description FROM incident_events
-         WHERE incident_id = $1 ORDER BY occurred_at ASC`,
-        [incident.id]
-      ),
-      query(
-        `SELECT a.hostname, a.asset_type FROM assets a
-         JOIN incident_assets ia ON ia.asset_id = a.id
-         WHERE ia.incident_id = $1`,
-        [incident.id]
-      ),
+    // Step 2: Fetch events and assets in parallel
+    const [eventsResult, assetsResult] = await Promise.all([
+      supabase
+        .from("incident_events")
+        .select("occurred_at, description")
+        .eq("incident_id", incident.id)
+        .order("occurred_at", { ascending: true }),
+      supabase
+        .from("incident_assets")
+        .select("assets(hostname, asset_type)")
+        .eq("incident_id", incident.id),
     ]);
+
+    const events = eventsResult.data ?? [];
+    const affectedAssets = (assetsResult.data ?? [])
+      .map((row: { assets: unknown }) => row.assets)
+      .filter(Boolean) as Array<{ hostname: string; asset_type: string }>;
 
     return {
       incident: {
@@ -315,11 +303,11 @@ export async function investigateIncident(
         description: incident.description,
         createdAt: incident.created_at,
       },
-      events: events.rows,
-      affectedAssets: assets.rows,
+      events,
+      affectedAssets,
     };
-  } catch (err) {
-    // Dev fallback if database is offline
+  } catch {
+    // Dev fallback if Supabase is unreachable
     const incident = MOCK_INCIDENTS.find(
       (i) => i.incident_code.toUpperCase() === args.incidentId!.toUpperCase()
     );
@@ -353,12 +341,30 @@ export async function investigateIncident(
 // 12,900+ CVE knowledge base. Rate-limited, tenant-agnostic per the
 // development plan's tool table — CVE data isn't tenant-scoped data, it's
 // shared threat intelligence.
-//
-// Note: server.py has no endpoint for analyzing a CVE that ISN'T already in
-// the knowledge base — /api/predict exists for that, but it takes a free-text
-// vulnerability *description*, not a CVE ID, so it can't be used as a
-// fallback here without the user supplying a description themselves.
 // ---------------------------------------------------------------------------
+// Normalise a raw Python-engine record to a unified schema the LLM understands.
+// The Python engine uses: cvss_severity / kev_listed / assigned_tier / mitigation_plan
+// The mock uses:          severity       / cisa_kev   / remediation_tier / recommended_mitigation
+// Both are mapped here so the Ollama formatter always sees the same field names.
+// ---------------------------------------------------------------------------
+function normaliseCveRecord(raw: Record<string, unknown>): Record<string, unknown> {
+  return {
+    cve_id:                raw.cve_id,
+    category:              raw.category              ?? "General",
+    domain:                raw.domain               ?? null,
+    cvss_score:            raw.cvss_score,
+    severity:              raw.cvss_severity         ?? raw.severity         ?? "UNKNOWN",
+    cwe_id:                raw.cwe_id               ?? null,
+    epss_score:            raw.epss_score            ?? null,
+    kev_listed:            raw.kev_listed !== undefined
+                             ? Boolean(raw.kev_listed)
+                             : raw.cisa_kev          ?? false,
+    description:           raw.description          ?? null,
+    recommended_mitigation: raw.mitigation_plan      ?? raw.recommended_mitigation ?? null,
+    assigned_tier:         raw.assigned_tier         ?? raw.remediation_tier ?? null,
+  };
+}
+
 export async function analyzeCve(_session: ChatSession, args: { cveId?: string }) {
   if (!args.cveId) return { error: "missing_cve_id" };
 
@@ -366,34 +372,38 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
   if (baseUrl) {
     try {
       const url = `${baseUrl}/api/lookup?cve=${encodeURIComponent(args.cveId)}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      // 20s timeout — Python engine can be slow on first request while model is warm
+      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
 
       if (res.status === 404) return { error: "not_found" };
       if (res.ok) {
-        const body = await res.json();
-        return { record: body.record };
+        const body = await res.json() as { record?: Record<string, unknown> };
+        if (body.record) {
+          return { record: normaliseCveRecord(body.record), source: "engine" };
+        }
       }
     } catch {
-      // Fallback below if service is offline
+      // Fallback below if service is offline or timed out
     }
   }
 
   // Dev fallback:
   const cveUpper = args.cveId.toUpperCase();
   if (MOCK_CVE_RECORDS[cveUpper]) {
-    return { record: MOCK_CVE_RECORDS[cveUpper] };
+    return { record: normaliseCveRecord(MOCK_CVE_RECORDS[cveUpper] as Record<string, unknown>), source: "mock" };
   }
 
   return {
-    record: {
+    source: "mock",
+    record: normaliseCveRecord({
       cve_id: cveUpper,
       cvss_score: 8.8,
       severity: "HIGH",
-      cisa_kev: false,
-      remediation_tier: "SCHEDULED_PATCH",
+      kev_listed: false,
+      assigned_tier: "SCHEDULED_PATCH",
       description: `Threat intelligence analysis for ${cveUpper}.`,
-      recommended_mitigation: `Apply vendor patches for ${cveUpper}, enforce boundary firewalls, and monitor endpoint logs.`,
-    },
+      mitigation_plan: `Apply vendor patches for ${cveUpper}, enforce boundary firewalls, and monitor endpoint logs.`,
+    }),
   };
 }
 
@@ -402,13 +412,6 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
 // Planning/governance only (Phase 7) — composes incident + linked-CVE
 // context into immediate / short-term / long-term tasks. Never executes
 // anything.
-//
-// CVE linkage: incident_cves is a many-to-many join table we defined as
-// part of this build (see db/schema.sql) — one incident can involve
-// several CVEs. Each linked CVE is looked up via analyzeCve() (the real
-// GET /api/lookup call), and any that come back unresolved (e.g.
-// "not_found" in the trained knowledge base, or the engine being
-// unreachable) are noted rather than failing the whole plan.
 // ---------------------------------------------------------------------------
 export async function generateMitigationPlan(
   session: ChatSession,
@@ -427,13 +430,26 @@ export async function generateMitigationPlan(
 
   let linkedCveRows: { cve_id: string }[] = [];
   try {
-    const result = await query<{ cve_id: string }>(
-      "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE incident_code = $1)",
-      [args.incidentId]
-    );
-    linkedCveRows = result.rows;
-  } catch (err) {
-    // Dev fallback if database is offline
+    // Step 1: Get the incident's UUID from its code
+    const { data: incRow } = await getSupabase()
+      .from("incidents")
+      .select("id")
+      .eq("incident_code", args.incidentId)
+      .limit(1)
+      .maybeSingle();
+
+    if (incRow) {
+      // Step 2: Fetch linked CVEs using the UUID
+      const { data: cveData, error: cveError } = await getSupabase()
+        .from("incident_cves")
+        .select("cve_id")
+        .eq("incident_id", incRow.id);
+
+      if (cveError) throw cveError;
+      linkedCveRows = cveData ?? [];
+    }
+  } catch {
+    // Dev fallback if Supabase is unreachable
     const cves = MOCK_INCIDENT_CVES[args.incidentId.toUpperCase()] || ["CVE-2024-3400"];
     linkedCveRows = cves.map((cve_id) => ({ cve_id }));
   }

@@ -1,5 +1,5 @@
 import "server-only";
-import { query } from "@/lib/db";
+import { getSupabase } from "@/lib/db";
 import type { ShieldDeskRole } from "@/lib/permissions";
 
 export interface ChatSession {
@@ -43,12 +43,13 @@ export async function getSessionFromRequest(
   if (!uid) return null;
 
   try {
-    const result = await query<{ tenant_id: string; role: string }>(
-      "SELECT tenant_id, role FROM users WHERE id = $1 LIMIT 1",
-      [uid]
-    );
+    const { data: row } = await getSupabase()
+      .from("users")
+      .select("tenant_id, role")
+      .eq("id", uid)
+      .limit(1)
+      .maybeSingle();
 
-    const row = result.rows[0];
     if (row) {
       return {
         uid,
