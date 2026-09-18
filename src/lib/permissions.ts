@@ -13,17 +13,69 @@ import "server-only";
  * boundaries at all; every other check is tenant isolation, applied
  * uniformly to every query in lib/tools/shieldDeskChatTools.ts.
  */
-export type ShieldDeskRole = "system_admin" | "super_admin" | "user";
+export type ShieldDeskRole = "system_admin" | "super_admin" | "analyst" | "responder" | "viewer" | "user";
 
-export type Permission = "VIEW_CROSS_TENANT" | "MANAGE_USERS";
+export type Permission =
+  | "VIEW_CROSS_TENANT"
+  | "MANAGE_USERS"
+  | "incident.read"
+  | "incident.investigate"
+  | "cve.read"
+  | "incident.mitigate";
 
 const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
-  system_admin: ["VIEW_CROSS_TENANT", "MANAGE_USERS"],
-  super_admin: ["MANAGE_USERS"],
-  user: [],
+  system_admin: [
+    "VIEW_CROSS_TENANT",
+    "MANAGE_USERS",
+    "incident.read",
+    "incident.investigate",
+    "cve.read",
+    "incident.mitigate",
+  ],
+  super_admin: [
+    "MANAGE_USERS",
+    "incident.read",
+    "incident.investigate",
+    "cve.read",
+    "incident.mitigate",
+  ],
+  responder: [
+    "incident.read",
+    "incident.investigate",
+    "cve.read",
+    "incident.mitigate",
+  ],
+  analyst: [
+    "incident.read",
+    "incident.investigate",
+    "cve.read",
+  ],
+  viewer: [
+    "incident.read",
+    "cve.read",
+  ],
+  user: [
+    "incident.read",
+    "incident.investigate",
+    "cve.read",
+    "incident.mitigate",
+  ],
+};
+
+export const TOOL_PERMISSIONS: Record<string, Permission> = {
+  getIncidents: "incident.read",
+  investigateIncident: "incident.investigate",
+  analyzeCve: "cve.read",
+  generateMitigationPlan: "incident.mitigate",
 };
 
 export function canAccess(role: string, permission: Permission): boolean {
   const perms = ROLE_PERMISSIONS[role as ShieldDeskRole];
   return Boolean(perms?.includes(permission));
+}
+
+export function canExecuteTool(role: string, toolName: string): boolean {
+  const requiredPermission = TOOL_PERMISSIONS[toolName];
+  if (!requiredPermission) return false;
+  return canAccess(role, requiredPermission);
 }

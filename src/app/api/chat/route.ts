@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ollama, OLLAMA_MODEL } from "@/lib/ai/ollama";
 import { getSessionFromRequest, type ChatSession } from "@/lib/auth/session";
+import { canExecuteTool } from "@/lib/permissions";
 import { query } from "@/lib/db";
 import {
   CHAT_TOOLS,
@@ -53,9 +54,47 @@ const PROMPT_INJECTION_RE =
 const SQL_INJECTION_RE =
   /(\b(union\s+select|select\s+.*\s+from|insert\s+into|drop\s+table|delete\s+from|alter\s+table|update\s+.*\s+set|exec(\s|\()|information_schema|pg_catalog|sleep\s*\(|benchmark\s*\()\b|--|;\s*(drop|delete|insert|update|alter))/i;
 
-// Disallowed special characters (e.g. code injection, brackets, curly braces, semicolons, quotes, etc.)
-// Allows standard sentence punctuation: letters, numbers, spaces, and safe punctuation: - _ ? . , '
-const DISALLOWED_SPECIAL_CHARS_RE = /[<>{}[\];\\`|~^$%*+=]/;
+// Disallowed special characters: block quotes (single, double, smart quotes), brackets, symbols, etc.
+// Only allows alphanumeric words (A-Z, a-z, 0-9), hyphens (for INC-1042 / CVE-xxxx), spaces, and standard sentence enders (. ?)
+const DISALLOWED_SPECIAL_CHARS_RE = /["'`“”‘’<>{}[\];\\/|~^$%*+=!@#&()]/;
+
+// Sensitive Data Protection (Measure 9 & 11) - Redact credentials, tokens, secrets, private keys
+const SENSITIVE_DATA_PATTERNS = [
+  /\b(sk-[a-zA-Z0-9]{20,})\b/gi,
+  /\b(bearer\s+[a-zA-Z0-9_\-\.]{20,})\b/gi,
+  /\b(ghp_[a-zA-Z0-9]{36})\b/gi,
+  /\b(eyJh[a-zA-Z0-9_\-\.]+?\.[a-zA-Z0-9_\-\.]+?\.[a-zA-Z0-9_\-]+)\b/gi, // JWT
+  /(password|passwd|secret|api_key|access_token)\s*[:=]\s*["']?[^\s"';]{6,}["']?/gi,
+  /-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/gi,
+];
+
+function sanitizeOutput(text: string): string {
+  let cleaned = text;
+  for (const pattern of SENSITIVE_DATA_PATTERNS) {
+    cleaned = cleaned.replace(pattern, "[REDACTED_SECRET]");
+  }
+  return cleaned;
+}
+
+// In-Memory Sliding-Window Rate Limiter (Measure 12: max 30 requests / minute / user)
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const MAX_REQUESTS_PER_WINDOW = 30;
+const rateLimitMap = new Map<string, number[]>();
+
+function checkRateLimit(uid: string): boolean {
+  const now = Date.now();
+  const timestamps = rateLimitMap.get(uid) || [];
+  const windowStart = now - RATE_LIMIT_WINDOW_MS;
+  const recent = timestamps.filter((t) => t > windowStart);
+
+  if (recent.length >= MAX_REQUESTS_PER_WINDOW) {
+    return false; // Rate limit exceeded
+  }
+
+  recent.push(now);
+  rateLimitMap.set(uid, recent);
+  return true;
+}
 
 type ToolName =
   | "getIncidents"
@@ -204,6 +243,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Rate Limiting (Measure 12: Throttles automated probing / excessive requests)
+  if (!checkRateLimit(session.uid)) {
+    return streamFixedMessage(
+      "Rate limit exceeded. Please wait a moment before sending more requests.",
+      { session, question: "", toolName: null, outcome: "rate_limited" }
+    );
+  }
+
   let body: { message?: string; context?: ChatContext };
   try {
     body = await req.json();
@@ -228,7 +275,7 @@ export async function POST(req: NextRequest) {
   // Special Character Guardrail (prevents code, command, and prompt injection payloads)
   if (DISALLOWED_SPECIAL_CHARS_RE.test(message)) {
     return streamFixedMessage(
-      "Special characters are not allowed. Please enter plain text without symbols like < > { } [ ] ; ` | ~ ^ $ % * + =.",
+      "Special characters and quotes are not allowed. Please enter plain alphanumeric text only.",
       { session, question: message, toolName: null, outcome: "blocked_special_characters" }
     );
   }
@@ -392,6 +439,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Tool-level authorization (Measure 3 & 11: fail-closed permission enforcement)
+  if (!canExecuteTool(session.role, toolName!)) {
+    return streamFixedMessage(
+      "You do not have permission to execute this operation.",
+      { session, question: message, toolName, outcome: "not_authorized" }
+    );
+  }
+
   const toolResult = await runTool(toolName!, session, toolArgs);
 
   if (toolResult && typeof toolResult === "object" && "error" in toolResult) {
@@ -436,7 +491,8 @@ export async function POST(req: NextRequest) {
           const token = chunk.choices[0]?.delta?.content;
           if (token) {
             fullAnswer += token;
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`));
+            const safeToken = sanitizeOutput(token);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token: safeToken })}\n\n`));
           }
         }
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -449,7 +505,7 @@ export async function POST(req: NextRequest) {
           question: message,
           toolName,
           outcome: "authorized",
-          answer: fullAnswer,
+          answer: sanitizeOutput(fullAnswer),
         });
       }
     },
