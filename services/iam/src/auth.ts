@@ -5,7 +5,13 @@ import qrcode from "qrcode";
 import crypto from "crypto";
 import { setCache, getCache } from "./redis.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "shielddesk_super_secure_jwt_secret_dev_key_2026";
+const JWT_SECRET = (() => {
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("FATAL: JWT_SECRET environment variable is required in production mode.");
+  }
+  return "shielddesk_ephemeral_dev_secret_key";
+})();
 const ACCESS_TOKEN_EXPIRY = "1h";
 const SALT_ROUNDS = 12;
 

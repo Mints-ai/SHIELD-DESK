@@ -45,7 +45,10 @@ interface AnomalyMetric {
   unit: string;
 }
 
+import { useChat } from "@/lib/context/ChatContext";
+
 export default function ThreatsDashboardPage() {
+  const { activeUserId } = useChat();
   const [activeTab, setActiveTab] = useState<"yara" | "sigma" | "anomaly" | "ingest">("anomaly");
   const [loading, setLoading] = useState(false);
   const [yaraRules, setYaraRules] = useState<RuleItem[]>([]);
@@ -62,7 +65,9 @@ export default function ThreatsDashboardPage() {
   const fetchThreatData = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/threats");
+      const res = await fetch("/api/threats", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const data = await res.json();
       if (data.yara_rules) setYaraRules(data.yara_rules);
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
@@ -77,14 +82,17 @@ export default function ThreatsDashboardPage() {
 
   useEffect(() => {
     fetchThreatData();
-  }, []);
+  }, [activeUserId]);
 
   const triggerAnomalySimulation = async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/threats", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
         body: JSON.stringify({ action: "simulate_burst" }),
       });
       const data = await res.json();
@@ -122,7 +130,10 @@ export default function ThreatsDashboardPage() {
     try {
       const res = await fetch("/api/webhooks", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
         body: JSON.stringify({ endpoint_id: "wh-secops-slack" }),
       });
       const data = await res.json();

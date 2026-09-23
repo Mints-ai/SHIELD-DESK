@@ -2,43 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 
-export type DevUserId = "dev-analyst" | "dev-admin" | "dev-other";
-
-export interface DevUserMetadata {
-  id: DevUserId;
-  label: string;
-  role: "user" | "system_admin";
-  tenantId: string;
-  tenantName: string;
-  description: string;
-}
-
-export const DEV_USERS: Record<DevUserId, DevUserMetadata> = {
-  "dev-analyst": {
-    id: "dev-analyst",
-    label: "Analyst",
-    role: "user",
-    tenantId: "acme-tenant",
-    tenantName: "Acme Corp",
-    description: "Standard SOC Analyst (Acme Corp)",
-  },
-  "dev-admin": {
-    id: "dev-admin",
-    label: "System Admin",
-    role: "system_admin",
-    tenantId: "acme-tenant",
-    tenantName: "Acme Corp (Global Admin)",
-    description: "Cross-Tenant Administrator (All Tenants)",
-  },
-  "dev-other": {
-    id: "dev-other",
-    label: "Globex Analyst",
-    role: "user",
-    tenantId: "globex-tenant",
-    tenantName: "Globex Corp",
-    description: "External Tenant Analyst (Isolation Test)",
-  },
-};
+export { DEV_USERS, type DevUserId, type DevUserMetadata } from "@/lib/constants/devUsers";
 
 interface ChatContextType {
   activeUserId: DevUserId;

@@ -32,7 +32,7 @@ services:
   # 2. Python Vulnerability Intelligence Microservice (Port 8000)
   cve-engine:
     build:
-      context: ./ai-chat-desk
+      context: ./services/scan
       dockerfile: Dockerfile
     container_name: shielddesk-cve-engine
     restart: unless-stopped
@@ -49,9 +49,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_USER=shielddesk
-      - POSTGRES_PASSWORD=shielddesk
-      - POSTGRES_DB=shielddesk
+      - POSTGRES_USER=${POSTGRES_USER:-shielddesk}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-shielddesk}
+      - POSTGRES_DB=${POSTGRES_DB:-shielddesk}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro

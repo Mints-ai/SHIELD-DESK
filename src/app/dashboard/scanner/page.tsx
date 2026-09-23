@@ -45,7 +45,10 @@ interface SecretFinding {
   action_available: string;
 }
 
+import { useChat } from "@/lib/context/ChatContext";
+
 export default function ScannerDashboardPage() {
+  const { activeUserId } = useChat();
   const [activeTab, setActiveTab] = useState<"cve" | "secrets" | "patch" | "intel">("cve");
   const [loading, setLoading] = useState(false);
   const [scanResult, setScanResult] = useState<string | null>(null);
@@ -68,7 +71,9 @@ export default function ScannerDashboardPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/scans");
+      const res = await fetch("/api/scans", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const data = await res.json();
       if (data.cveFindings) setCves(data.cveFindings);
       if (data.secretFindings) setSecrets(data.secretFindings);
@@ -82,7 +87,7 @@ export default function ScannerDashboardPage() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [activeUserId]);
 
   const triggerTrivyScan = async () => {
     setLoading(true);
@@ -90,7 +95,10 @@ export default function ScannerDashboardPage() {
     try {
       const res = await fetch("/api/scans", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
         body: JSON.stringify({ action: "cve_scan", target_path: "/app", scan_type: "full" }),
       });
       const data = await res.json();
@@ -107,7 +115,10 @@ export default function ScannerDashboardPage() {
     try {
       const res = await fetch("/api/scans", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
         body: JSON.stringify({ action: "secrets_scan", source: "git_repo" }),
       });
       const data = await res.json();
@@ -124,7 +135,10 @@ export default function ScannerDashboardPage() {
     try {
       const res = await fetch("/api/scans", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
         body: JSON.stringify({ action: "rotate_key", key_id: "AKIA1234567890ABCDEF" }),
       });
       const data = await res.json();
@@ -144,7 +158,10 @@ export default function ScannerDashboardPage() {
     try {
       const res = await fetch("/api/scans", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
         body: JSON.stringify({
           action: "apply_patch",
           asset_ip: patchHost,
@@ -181,7 +198,10 @@ export default function ScannerDashboardPage() {
     try {
       const res = await fetch("/api/ai/advisor", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
         body: JSON.stringify({ action: "blast_radius", cve_id: cve.cve_id, host_id: cve.asset_id }),
       });
       const data = await res.json();
@@ -199,7 +219,10 @@ export default function ScannerDashboardPage() {
     try {
       const res = await fetch("/api/ai/advisor", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
         body: JSON.stringify({ action: "generate_runbook", cve_id: cve.cve_id, host_id: cve.asset_id }),
       });
       const data = await res.json();

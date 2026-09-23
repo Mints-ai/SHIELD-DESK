@@ -7,7 +7,10 @@ export async function POST(req: NextRequest) {
   const apiKeyHeader = req.headers.get("x-shielddesk-api-key") || req.headers.get("authorization");
   const configuredKey = process.env.SHIELDDESK_INGEST_API_KEY;
 
-  if (configuredKey && apiKeyHeader) {
+  if (configuredKey) {
+    if (!apiKeyHeader) {
+      return NextResponse.json({ error: "Unauthorized: Missing API Key" }, { status: 401 });
+    }
     const key = apiKeyHeader.replace(/^Bearer\s+/i, "").trim();
     if (key !== configuredKey) {
       return NextResponse.json({ error: "Unauthorized: Invalid API Key" }, { status: 401 });

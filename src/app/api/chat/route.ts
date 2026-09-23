@@ -58,22 +58,10 @@ const SQL_INJECTION_RE =
 // Only allows alphanumeric words (A-Z, a-z, 0-9), hyphens (for INC-1042 / CVE-xxxx), spaces, and standard sentence enders (. ?)
 const DISALLOWED_SPECIAL_CHARS_RE = /["'`“”‘’<>{}[\];\\/|~^$%*+=!@#&()]/;
 
-// Sensitive Data Protection (Measure 9 & 11) - Redact credentials, tokens, secrets, private keys
-const SENSITIVE_DATA_PATTERNS = [
-  /\b(sk-[a-zA-Z0-9]{20,})\b/gi,
-  /\b(bearer\s+[a-zA-Z0-9_\-\.]{20,})\b/gi,
-  /\b(ghp_[a-zA-Z0-9]{36})\b/gi,
-  /\b(eyJh[a-zA-Z0-9_\-\.]+?\.[a-zA-Z0-9_\-\.]+?\.[a-zA-Z0-9_\-]+)\b/gi, // JWT
-  /(password|passwd|secret|api_key|access_token)\s*[:=]\s*["']?[^\s"';]{6,}["']?/gi,
-  /-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/gi,
-];
+import { redactSensitiveData } from "@/lib/security/redactor";
 
 function sanitizeOutput(text: string): string {
-  let cleaned = text;
-  for (const pattern of SENSITIVE_DATA_PATTERNS) {
-    cleaned = cleaned.replace(pattern, "[REDACTED_SECRET]");
-  }
-  return cleaned;
+  return redactSensitiveData(text);
 }
 
 // In-Memory Sliding-Window Rate Limiter (Measure 12: max 30 requests / minute / user)

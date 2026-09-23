@@ -17,11 +17,7 @@ export interface ChatSession {
  * 3. PostgreSQL users table verification.
  * 4. Dev mode fallback (DEV_USERS) for local offline testing.
  */
-const DEV_USERS: Record<string, { tenantId: string; role: ShieldDeskRole; email: string }> = {
-  "dev-analyst": { tenantId: "acme-tenant", role: "user", email: "analyst@acme.corp" },
-  "dev-admin": { tenantId: "acme-tenant", role: "system_admin", email: "admin@acme.corp" },
-  "dev-other": { tenantId: "globex-tenant", role: "user", email: "analyst@globex.corp" },
-};
+import { DEV_USERS } from "@/lib/constants/devUsers";
 
 export async function getSessionFromRequest(
   req: Request
@@ -42,8 +38,10 @@ export async function getSessionFromRequest(
     }
   }
 
-  // 3. Check X-ShieldDesk-User header (Dev & Test mode)
-  const uid = tokenUid || req.headers.get("X-ShieldDesk-User");
+  // 3. Check X-ShieldDesk-User header (Dev & Test mode only)
+  const isDevOrTest = process.env.NODE_ENV !== "production";
+  const devHeaderUid = isDevOrTest ? req.headers.get("X-ShieldDesk-User") : null;
+  const uid = tokenUid || devHeaderUid;
   if (!uid) return null;
 
   // Supabase JWT verification if token is a structured JWT
@@ -83,7 +81,7 @@ export async function getSessionFromRequest(
     // Database unreachable — fallback to dev users in dev mode
   }
 
-  if (DEV_USERS[uid]) {
+  if (isDevOrTest && DEV_USERS[uid]) {
     return {
       uid,
       tenantId: DEV_USERS[uid].tenantId,

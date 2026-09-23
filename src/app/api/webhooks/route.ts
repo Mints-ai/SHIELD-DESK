@@ -26,9 +26,17 @@ const WEBHOOK_ENDPOINTS = [
   },
 ];
 
-export async function GET() {
+import { getSessionFromRequest } from "@/lib/auth/session";
+
+export async function GET(req: NextRequest) {
+  const session = await getSessionFromRequest(req);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   return NextResponse.json({
     status: "ok",
+    tenantId: session.tenantId,
     endpoints: WEBHOOK_ENDPOINTS,
     dispatcher: {
       engine: "Go 1.22 HMAC Dispatcher",
@@ -40,6 +48,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const session = await getSessionFromRequest(req);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json();
     const endpointId = body.endpoint_id || "wh-secops-slack";
@@ -47,11 +60,21 @@ export async function POST(req: NextRequest) {
       event: "test.webhook.verification",
       timestamp: Date.now(),
       severity: "TEST",
-      tenant_id: "acme-corp",
+      tenant_id: session.tenantId,
       message: "ShieldDesk HMAC-SHA256 webhook test dispatch.",
     });
 
-    const secret = "sd_webhook_secret_key_demo_signature";
+    const secret =
+      process.env.SHIELDDESK_WEBHOOK_SECRET ||
+      (process.env.NODE_ENV !== "production" ? "sd_webhook_dev_secret" : "");
+
+    if (!secret) {
+      return NextResponse.json(
+        { error: "SHIELDDESK_WEBHOOK_SECRET is not configured in production." },
+        { status: 500 }
+      );
+    }
+
     const signature = crypto
       .createHmac("sha256", secret)
       .update(testPayload)

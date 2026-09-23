@@ -168,39 +168,57 @@ npm test
 │   │   │   ├── fleet/                # Endpoint fleet heartbeat & command execution
 │   │   │   ├── governance/           # Approval tokens & separation of duties
 │   │   │   ├── ingest/webhooks/      # Live SIEM / EDR alert ingestion endpoint
+│   │   │   ├── scans/                # Trivy CVE, Gitleaks secrets & SSH patching
+│   │   │   ├── threats/              # YARA/Sigma rules & 3-sigma anomaly baselines
+│   │   │   ├── webhooks/             # HMAC-SHA256 test dispatcher
+│   │   │   ├── ai/advisor/           # Blast radius simulation & Claude runbooks
 │   │   │   └── compliance/           # ISO 27001 control mapping & evidence package
-│   │   ├── layout.tsx                # Root layout mounting global ChatWidget
+│   │   ├── dashboard/
+│   │   │   ├── scanner/              # Security Scanner & Remediation Center
+│   │   │   ├── threats/              # Threat Detection & Ingestion Engine
+│   │   │   ├── fleet/                # Endpoint Agent Fleet & Live Command
+│   │   │   ├── tasks/                # SOC Governance Kanban Board
+│   │   │   ├── compliance/           # ISO 27001 Audit Desk
+│   │   │   └── risk-scorecard/       # Executive Risk Scorecard
+│   │   ├── error.tsx                 # App Router Error Boundary
+│   │   ├── global-error.tsx          # Root Layout Error Boundary
+│   │   ├── layout.tsx                # Root layout mounting TopNavBar & ChatWidget
 │   │   ├── page.tsx                  # Incident queue & active triage console
 │   │   └── globals.css               # Beige + Deep Forest Spruce design tokens
 │   ├── components/
 │   │   ├── ai-chat/ChatWidget.tsx    # Slide-out AI chat drawer
-│   │   └── Navigation.tsx            # Global SOC navigation bar
+│   │   └── navigation/TopNavBar.tsx  # Global SOC navigation bar with Supabase health
 │   └── lib/
-│       ├── ai/ollama.ts              # Local Ollama client configuration
-│       ├── auth/session.ts           # Multi-tenant session resolver
+│       ├── auth/session.ts           # Multi-tenant session resolver (production-gated)
+│       ├── constants/devUsers.ts     # Centralized dev user metadata
 │       ├── governance/               # Approval tokens, autonomy tiers & kill switch
-│       ├── notifications/dispatcher.ts # Slack & Teams real-time alerting
+│       ├── observability/errorTracker.ts # Unified error tracking & telemetry
+│       ├── security/redactor.ts      # PII & secret redactor utility
 │       ├── supabase/                 # Supabase client & server auth utilities
-│       └── tools/shieldDeskChatTools.ts # The 4 constrained SOC tools
+│       └── tools/shieldDeskChatTools.ts # Constrained SOC incident tools
+├── services/
+│   ├── ingest/                       # Go 1.22 gRPC Ingest (:50051) with mTLS & PII scrubber
+│   ├── threat/                       # Go 1.22 daemon with YARA, Sigma, and 3-sigma ML anomaly
+│   ├── scan/                         # Python 3.12 FastAPI (:8001) Trivy CVE, Gitleaks & SSH patching
+│   ├── iam/                          # Node.js 20 Express (:4000) JWT, TOTP MFA, Redis & RBAC
+│   ├── ai-advisor/                   # Python 3.12 LangChain (:8002) Claude 3.5 Sonnet RAG
+│   └── webhooks/                     # Go 1.22 HMAC-SHA256 dispatcher with retry queue
+├── shared/
+│   ├── proto/                        # Protobuf gRPC contracts & v1 Go bindings
+│   ├── schemas/                      # PostgreSQL 16 schema-per-tenant, TimescaleDB & pgvector
+│   └── events/                       # NATS JetStream event subjects & JSON schemas
+├── gateway/
+│   └── kong.yml                      # Kong API Gateway declarative routing & rate limiting
+├── infra/
+│   ├── terraform/                    # AWS EKS 1.29, RDS Multi-AZ, ElastiCache Redis, S3 & VPC
+│   └── helm/                         # Production Kubernetes Helm chart (Deployments, HPA, PDB)
 ├── agent/
 │   ├── cmd/main.go                   # Go endpoint agent daemon
 │   ├── pkg/                          # Telemetry ring buffer, hash chaining, handlers
-│   ├── rust_daemon/                  # Rust Tier 3 emergency break-glass sentinel
 │   ├── deploy-agent.ps1              # Windows endpoint enrollment script
 │   └── deploy-agent.sh               # Linux systemd endpoint enrollment script
-├── ai-chat-desk/
-│   ├── Dockerfile                    # Container definition for Python ML service
-│   ├── feature_extractor.py          # Hybrid n-gram & threat regex extractor
-│   ├── cve_random_forest.py          # Unified Multi-Target Random Forest architecture
-│   ├── train_rf_model.py             # Model training & validation script
-│   ├── server.py                     # Vulnerability REST API (port 8000)
-│   └── models/                       # Persisted .joblib model bundle & metrics
-├── Dockerfile                        # Next.js 15 standalone production container
 ├── docker-compose.yml                # 1-command multi-service orchestration
 ├── .env.example                      # Production environment template
-├── db/
-│   ├── schema.sql                    # Multi-tenant PostgreSQL schema
-│   └── seed.sql                      # Idempotent baseline seed data
 └── tests/                            # 39 automated unit, security, and governance tests
 ```
 

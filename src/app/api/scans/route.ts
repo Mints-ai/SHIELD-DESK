@@ -73,7 +73,14 @@ const MOCK_SECRET_FINDINGS = [
   },
 ];
 
-export async function GET() {
+import { getSessionFromRequest } from "@/lib/auth/session";
+
+export async function GET(req: NextRequest) {
+  const session = await getSessionFromRequest(req);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const scanServiceUrl = process.env.SCAN_SERVICE_URL || "http://localhost:8001";
   let liveScanStatus = null;
 
@@ -91,6 +98,7 @@ export async function GET() {
   return NextResponse.json({
     status: "ok",
     serviceConnected: Boolean(liveScanStatus),
+    tenantId: session.tenantId,
     metrics: {
       totalVulnerabilities: 4,
       critical: 2,
@@ -130,6 +138,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const session = await getSessionFromRequest(req);
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json();
     const { action } = body;
