@@ -81,12 +81,15 @@ export async function getSessionFromRequest(
     // Database unreachable — fallback to dev users in dev mode
   }
 
-  if (isDevOrTest && DEV_USERS[uid]) {
-    return {
-      uid,
-      tenantId: DEV_USERS[uid].tenantId,
-      role: DEV_USERS[uid].role,
-    };
+  if (isDevOrTest && Object.prototype.hasOwnProperty.call(DEV_USERS, uid)) {
+    const devUser = DEV_USERS[uid as keyof typeof DEV_USERS];
+    if (devUser) {
+      return {
+        uid,
+        tenantId: devUser.tenantId,
+        role: devUser.role,
+      };
+    }
   }
 
   return null;
