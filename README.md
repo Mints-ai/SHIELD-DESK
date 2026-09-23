@@ -1,4 +1,13 @@
-# ShieldDesk — Autonomous SOC Operations Platform
+<p align="center">
+  <img src="public/logo.png" alt="ShieldDesk Logo" width="220" />
+</p>
+
+<h1 align="center">ShieldDesk™ — AI-Powered Security Operations</h1>
+
+<p align="center">
+  <strong>DETECT &middot; INVESTIGATE &middot; RESPOND &middot; SAFER TOGETHER</strong><br/>
+  <em>A Product by Mints Global</em>
+</p>
 
 > **An enterprise-grade Autonomous Security Operations Center (SOC) platform with multi-tenant isolation, human-in-the-loop governance (Tiers 0–3), a retrained Vulnerability Intelligence ML Engine, universal endpoint fleet management, live SIEM/EDR webhook ingestion, and an on-premises AI Co-Pilot.**
 

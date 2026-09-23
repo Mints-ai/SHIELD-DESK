@@ -114,18 +114,20 @@ export default function LoginPage() {
       <div className="relative w-full max-w-md flex flex-col gap-6 z-10">
         {/* Brand Header */}
         <div className="flex flex-col items-center text-center gap-3">
-          <div className="h-12 w-12 rounded-2xl bg-[var(--sd-pine)] text-[#f7f4ed] flex items-center justify-center shadow-lg shadow-[var(--sd-pine)]/15">
-            <Shield className="h-6 w-6 text-[#f7f4ed]" />
+          <div className="h-16 w-16 rounded-2xl bg-white border border-[var(--sd-border)] p-1.5 flex items-center justify-center shadow-lg shadow-[var(--sd-pine)]/15 overflow-hidden">
+            <img src="/logo.png" alt="ShieldDesk" className="h-full w-full object-contain" />
           </div>
           <div>
             <div className="flex items-center justify-center gap-2">
-              <h1 className="text-2xl font-bold tracking-tight text-[var(--sd-text)]">ShieldDesk</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-[var(--sd-text)]">
+                Shield<span className="text-[#a48858]">Desk</span><span className="text-[10px] text-[#a48858] align-super">™</span>
+              </h1>
               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--sd-panel)] text-[var(--sd-pine)] border border-[var(--sd-border)] uppercase tracking-wider font-mono shadow-xs">
                 SOC v2.5
               </span>
             </div>
             <p className="text-xs text-[var(--sd-text-muted)] mt-1">
-              Autonomous SOC Command &amp; Response Platform
+              AI-Powered Security Operations · A Product by Mints Global
             </p>
           </div>
         </div>

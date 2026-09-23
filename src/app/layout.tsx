@@ -4,8 +4,12 @@ import { ChatProvider } from "@/lib/context/ChatContext";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ShieldDesk — Autonomous SOC Operations Platform",
-  description: "Autonomous Security Operations Center co-pilot and incident orchestration platform.",
+  title: "ShieldDesk™ — AI-Powered Security Operations | Mints Global",
+  description: "Autonomous Security Operations Center co-pilot and incident orchestration platform by Mints Global.",
+  icons: {
+    icon: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

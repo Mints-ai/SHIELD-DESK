@@ -287,8 +287,9 @@ export function ChatWidget() {
               animate={{ rotate: 0, opacity: 1 }}
               exit={{ rotate: -90, opacity: 0 }}
               transition={{ duration: 0.15 }}
+              className="flex items-center justify-center w-full h-full p-1"
             >
-              <Shield className="h-6 w-6" />
+              <img src="/logo.png" alt="ShieldDesk" className="h-7 w-7 object-contain drop-shadow-sm" />
             </motion.span>
           )}
         </AnimatePresence>
@@ -307,18 +308,20 @@ export function ChatWidget() {
             {/* Header: Title + Role Switcher + Controls */}
             <div className="shrink-0 px-4 py-3 border-b border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/60 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2.5 min-w-0">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs">
-                  <Shield className="h-4 w-4" />
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-white border border-[var(--sd-border)] p-0.5 shadow-xs overflow-hidden">
+                  <img src="/logo.png" alt="ShieldDesk" className="h-full w-full object-contain" />
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-bold text-[var(--sd-pine)]">ShieldDesk</span>
+                    <span className="text-xs font-bold text-[var(--sd-pine)]">
+                      ShieldDesk<span className="text-[9px] text-[#a48858] align-super ml-0.5">™</span>
+                    </span>
                     <span className="rounded bg-white border border-[var(--sd-border)] px-1.5 py-0.2 text-[9px] font-bold text-[var(--sd-pine)] uppercase tracking-wide font-mono shadow-xs">
                       AI SOC
                     </span>
                   </div>
                   <div className="text-[10px] text-[var(--sd-text-muted)] truncate flex items-center gap-1">
-                    <span>{activeUser.tenantName}</span>
+                    <span>{activeUser.tenantName} · Mints Global</span>
                   </div>
                 </div>
               </div>
@@ -431,13 +434,15 @@ export function ChatWidget() {
             >
               {messages.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-3">
-                  <div className="w-11 h-11 rounded-2xl bg-[var(--sd-bg-alt)] border border-[var(--sd-border)] flex items-center justify-center shadow-xs">
-                    <Bot className="h-6 w-6 text-[var(--sd-pine)]" />
+                  <div className="w-12 h-12 rounded-2xl bg-white border border-[var(--sd-border)] p-1.5 flex items-center justify-center shadow-md">
+                    <img src="/logo.png" alt="ShieldDesk" className="h-full w-full object-contain" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-bold text-[var(--sd-pine)]">ShieldDesk Autonomous Co-Pilot</h4>
+                    <h4 className="text-xs font-bold text-[var(--sd-pine)]">
+                      ShieldDesk<span className="text-[9px] text-[#a48858] align-super ml-0.5">™</span> Autonomous Co-Pilot
+                    </h4>
                     <p className="mt-1 text-[11px] text-[var(--sd-text-muted)] max-w-[280px] leading-relaxed">
-                      Ask questions about active incidents, investigate telemetry, or look up CVE threat intelligence.
+                      AI-Powered Security Operations · Powered by Mints Global
                     </p>
                   </div>
                   <div className="flex flex-col gap-1.5 w-full mt-1">

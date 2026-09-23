@@ -2,7 +2,8 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 
-export { DEV_USERS, type DevUserId, type DevUserMetadata } from "@/lib/constants/devUsers";
+import { DEV_USERS, type DevUserId, type DevUserMetadata } from "@/lib/constants/devUsers";
+export { DEV_USERS, type DevUserId, type DevUserMetadata };
 
 interface ChatContextType {
   activeUserId: DevUserId;

@@ -85,20 +85,20 @@ export function TopNavBar() {
         {/* Brand & Platform Identifier */}
         <div className="flex items-center gap-7">
           <Link href="/" className="flex items-center gap-3 group cursor-pointer">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs group-hover:scale-105 transition-all duration-200">
-              <Shield className="h-4.5 w-4.5 text-[#f7f4ed]" />
+            <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white overflow-hidden shadow-xs group-hover:scale-105 transition-all duration-200 border border-[var(--sd-border)] p-1">
+              <img src="/logo.png" alt="ShieldDesk" className="h-full w-full object-contain" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold tracking-tight text-[var(--sd-text)] font-sans">
-                  ShieldDesk
+                  Shield<span className="text-[#a48858]">Desk</span><span className="text-[9px] text-[#a48858] align-super">™</span>
                 </span>
                 <span className="rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest bg-[var(--sd-bg)] text-[var(--sd-pine)] border border-[var(--sd-border)] font-mono">
                   Autonomous SOC
                 </span>
               </div>
               <p className="text-[10px] text-[var(--sd-text-muted)] font-normal">
-                Enterprise Incident Orchestration &amp; Governance
+                AI-Powered Security Operations · A Product by Mints Global
               </p>
             </div>
           </Link>
