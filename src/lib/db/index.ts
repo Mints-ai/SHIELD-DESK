@@ -21,7 +21,12 @@ function createPool(): Pool {
         "(.env.local) — see .env.example."
     );
   }
-  return new Pool({ connectionString });
+     return new Pool({
+     connectionString,
+     ssl: connectionString.includes("localhost")
+       ? false
+       : { rejectUnauthorized: false },
+   });;
 }
 
 // Reuse the pool across hot reloads in dev. Created lazily (on first real
