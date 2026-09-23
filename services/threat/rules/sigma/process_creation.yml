@@ -1,0 +1,23 @@
+title: Suspicious PowerShell Encoded Command Execution
+id: SIGMA-PROC-001
+status: production
+description: Detects base64 encoded powershell execution commonly used in malicious scripts
+author: ShieldDesk SOC
+severity: high
+type: intrusion
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith:
+            - '\powershell.exe'
+            - '\pwsh.exe'
+        CommandLine|contains:
+            - ' -enc '
+            - ' -encodedcommand '
+            - ' -e '
+            - 'FromBase64String'
+            - 'DownloadString'
+            - 'IEX'
+    condition: selection

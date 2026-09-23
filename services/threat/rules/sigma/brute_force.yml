@@ -1,0 +1,15 @@
+title: Multiple Failed Authentication Attempts (Brute Force)
+id: SIGMA-AUTH-002
+status: production
+description: Detects repeated authentication failures targeting a specific account
+author: ShieldDesk SOC
+severity: medium
+type: intrusion
+logsource:
+    category: auth
+    product: linux
+detection:
+    selection:
+        Action: 'failed_login'
+        FailedCount|gte: 5
+    condition: selection
