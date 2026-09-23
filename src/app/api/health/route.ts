@@ -28,9 +28,23 @@ export async function GET() {
     ollamaReachable = false;
   }
 
+  const pythonAiServiceUrl = process.env.PYTHON_AI_SERVICE_URL || "http://localhost:8000";
+  let pythonAiReachable = false;
+  try {
+    const res = await fetch(`${pythonAiServiceUrl}/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    pythonAiReachable = res.ok;
+  } catch {
+    pythonAiReachable = false;
+  }
+
+  const allHealthy = databaseConnected && (ollamaReachable || Boolean(process.env.GEMINI_API_KEY)) && pythonAiReachable;
+
   return NextResponse.json({
-    status: "ok",
-    ollama: { baseUrl: ollamaBaseUrl, reachable: ollamaReachable },
+    status: allHealthy ? "ok" : "degraded",
     database: { configured: databaseConfigured, connected: databaseConnected },
+    ollama: { baseUrl: ollamaBaseUrl, reachable: ollamaReachable },
+    pythonAiEngine: { baseUrl: pythonAiServiceUrl, reachable: pythonAiReachable },
   });
 }

@@ -323,70 +323,72 @@ export function ChatWidget() {
 
               {/* Header Right: Persona Selector & Clear */}
               <div className="flex items-center gap-1.5 shrink-0">
-                {/* Persona Switcher Dropdown */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setIsRoleDropdownOpen((v) => !v)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-[10.5px] font-semibold text-[var(--sd-pine)] transition-all cursor-pointer shadow-xs"
-                    title="Switch Dev Persona / RBAC Role"
-                  >
-                    <span
-                      className={cn(
-                        "h-1.5 w-1.5 rounded-full",
-                        activeUserId === "dev-admin"
-                          ? "bg-[#9333ea]"
-                          : activeUserId === "dev-other"
-                            ? "bg-[#d97706]"
-                            : "bg-[var(--sd-success)]"
-                      )}
-                    />
-                    <span className="truncate max-w-[70px]">{activeUser.label}</span>
-                    <ChevronDown className="h-3 w-3 opacity-60" />
-                  </button>
+                {/* Persona Switcher Dropdown (Restricted to non-production environments) */}
+                {process.env.NODE_ENV !== "production" && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsRoleDropdownOpen((v) => !v)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-[10.5px] font-semibold text-[var(--sd-pine)] transition-all cursor-pointer shadow-xs"
+                      title="Switch Dev Persona / RBAC Role (Dev Mode Only)"
+                    >
+                      <span
+                        className={cn(
+                          "h-1.5 w-1.5 rounded-full",
+                          activeUserId === "dev-admin"
+                            ? "bg-[#9333ea]"
+                            : activeUserId === "dev-other"
+                              ? "bg-[#d97706]"
+                              : "bg-[var(--sd-success)]"
+                        )}
+                      />
+                      <span className="truncate max-w-[70px]">{activeUser.label}</span>
+                      <ChevronDown className="h-3 w-3 opacity-60" />
+                    </button>
 
-                  <AnimatePresence>
-                    {isRoleDropdownOpen && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 4, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 4, scale: 0.95 }}
-                        transition={{ duration: 0.12 }}
-                        className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-[var(--sd-border)] bg-white p-1 shadow-2xl z-50"
-                      >
-                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--sd-text-muted)] border-b border-[var(--sd-border)] font-mono">
-                          Dev RBAC Persona Switcher
-                        </div>
-                        {Object.values(DEV_USERS).map((user) => (
-                          <button
-                            key={user.id}
-                            type="button"
-                            onClick={() => {
-                              setActiveUserId(user.id);
-                              setIsRoleDropdownOpen(false);
-                            }}
-                            className={cn(
-                              "w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors flex flex-col gap-0.5 cursor-pointer",
-                              user.id === activeUserId
-                                ? "bg-[var(--sd-pine)] text-[#f7f4ed] font-semibold shadow-xs"
-                                : "hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-                            )}
-                          >
-                            <div className="flex items-center justify-between">
-                              <span>{user.label}</span>
-                              <span className="text-[9.5px] font-mono opacity-80">
-                                {user.role === "system_admin" ? "Cross-Tenant" : user.tenantId}
+                    <AnimatePresence>
+                      {isRoleDropdownOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 4, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 4, scale: 0.95 }}
+                          transition={{ duration: 0.12 }}
+                          className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-[var(--sd-border)] bg-white p-1 shadow-2xl z-50"
+                        >
+                          <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--sd-text-muted)] border-b border-[var(--sd-border)] font-mono">
+                            Dev RBAC Persona Switcher
+                          </div>
+                          {Object.values(DEV_USERS).map((user) => (
+                            <button
+                              key={user.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveUserId(user.id);
+                                setIsRoleDropdownOpen(false);
+                              }}
+                              className={cn(
+                                "w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors flex flex-col gap-0.5 cursor-pointer",
+                                user.id === activeUserId
+                                  ? "bg-[var(--sd-pine)] text-[#f7f4ed] font-semibold shadow-xs"
+                                  : "hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+                              )}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span>{user.label}</span>
+                                <span className="text-[9.5px] font-mono opacity-80">
+                                  {user.role === "system_admin" ? "Cross-Tenant" : user.tenantId}
+                                </span>
+                              </div>
+                              <span className="text-[10px] opacity-75 font-normal leading-tight">
+                                {user.description}
                               </span>
-                            </div>
-                            <span className="text-[10px] opacity-75 font-normal leading-tight">
-                              {user.description}
-                            </span>
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
+                            </button>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
 
                 {/* Clear Chat Button */}
                 <button

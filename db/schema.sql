@@ -212,5 +212,64 @@ CREATE TABLE IF NOT EXISTS hash_chain_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_hash_chain_tenant ON hash_chain_audit (tenant_id);
 
+-- ---------------------------------------------------------------------------
+-- Defense-in-Depth: Postgres Row-Level Security (RLS) Policies
+-- Ensures tenant data cannot cross boundaries even if application filters fail.
+-- ---------------------------------------------------------------------------
+ALTER TABLE incidents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE assets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chat_audit_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mitigation_plans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mitigation_tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE approval_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE endpoint_agents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_command_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE hash_chain_audit ENABLE ROW LEVEL SECURITY;
+
+-- Tenant Isolation Policies (enforced when app.current_tenant session variable is set)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_incidents') THEN
+    CREATE POLICY tenant_isolation_incidents ON incidents
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_assets') THEN
+    CREATE POLICY tenant_isolation_assets ON assets
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_mitigation_plans') THEN
+    CREATE POLICY tenant_isolation_mitigation_plans ON mitigation_plans
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_agents') THEN
+    CREATE POLICY tenant_isolation_endpoint_agents ON endpoint_agents
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+END $$;
+
+
 
 
