@@ -106,56 +106,141 @@ Designed with an architectural, editorial **Beige & Deep Forest Spruce** aesthet
 
 ---
 
-## Quick Start Guide
+## Team Onboarding & Working Guide
 
-### Option A: 1-Command Docker Deployment (Recommended for Production)
-```bash
-docker compose up -d
-```
-*Boots the Next.js web application (`:3000`), Python CVE ML Engine (`:8000`), PostgreSQL (`:5432`), and Redis (`:6379`) with auto-mounted database schemas and persistent volumes.*
+Welcome to the ShieldDesk engineering team! Follow this guide to set up your local development environment, run the services, execute automated tests, and adhere to our team quality standards.
+
+> [!IMPORTANT]
+> **Mandatory Team Checklists**: Before submitting a PR or issuing a release, review and complete the role-specific items in [CHECKLIST.md](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/CHECKLIST.md) (tailored for **Security Engineers**, **Software Developers**, and **Software Testers**).
 
 ---
 
-### Option B: Local Development Startup
+### 1. Prerequisites
+Ensure you have the following installed on your machine:
+- **Node.js**: v18.18+ or v20+ (`node -v`)
+- **npm**: v9+ or v10+ (`npm -v`)
+- **Python**: v3.10+ or v3.12 (`python --version`)
+- **Go** *(Optional, for microservices)*: v1.21+ (`go version`)
+- **Docker Desktop** *(Optional, for containerized run)*: v24+
 
-#### 1. Start the Next.js Frontend & API Gateway
-```powershell
+---
+
+### 2. Quick Setup in 3 Steps
+
+#### Step 1: Clone & Configure Environment Variables
+```bash
+git clone https://github.com/Mints-ai/SHIELD-DESK.git
+cd shielddesk
+
+# Create local environment config from example
+cp .env.example .env.local
+```
+Review `.env.local` and ensure your Supabase keys, API gateway keys, and service URLs are configured.
+
+#### Step 2: Install Dependencies
+```bash
+# Install frontend & API gateway dependencies
 npm install
+
+# (Optional) Install Python ML & scan service dependencies
+pip install -r services/scan/requirements.txt
+```
+
+#### Step 3: Launch Local Dev Servers
+
+**Terminal 1 — Next.js Application & API Gateway (Port 3000):**
+```bash
 npm run dev
 ```
-*Frontend runs at: `http://localhost:3000`*
+Open **`http://localhost:3000`** in your browser.
 
-#### 2. Start the Python Vulnerability Intelligence Service
-```powershell
+**Terminal 2 — Python CVE & ML Vulnerability Server (Port 8000 / 8001):**
+```bash
 cd ai-chat-desk
-pip install -r requirements.txt
 python server.py
 ```
-*Vulnerability Engine runs at: `http://localhost:8000`*
 
-#### 3. (Optional) Start the Local Ollama Assistant
-```powershell
+**Terminal 3 (Optional) — Local Ollama AI Assistant (Port 11434):**
+```bash
 ollama run qwen3:4b
 ```
-*If Ollama is offline, ShieldDesk automatically activates the built-in deterministic telemetry synthesis fallback without failing or interrupting operations.*
+*(If Ollama is not installed or offline, ShieldDesk automatically engages its built-in deterministic offline fallback engine with zero downtime.)*
 
 ---
 
-## Automated Test Suite
+### 3. How to Authenticate & Test Personas Locally
 
-Run the full automated test suite (**39 passing tests** across 6 suites):
+ShieldDesk features multi-tenant isolation. To test across tenants without creating external accounts:
+1. Navigate to **`http://localhost:3000/login`**.
+2. **Option A (Quick Persona Switcher):**
+   - Click **"Quick Persona"** tab.
+   - Choose **Alex Rivera (Acme SOC Analyst)**, **Sarah Chen (Platform Admin)**, or **Marcus Vance (Globex Corp)**.
+   - Click **"Enter SOC Console"** for instant 1-click access.
+3. **Option B (Supabase Cloud Auth):**
+   - Click the **"Supabase"** tab.
+   - Log in using your registered Supabase credentials against the live project (`dpuotfxyfqvwggewczhs.supabase.co`).
+4. **Switching Personas On-the-Fly:**
+   - Open the floating **AI Co-Pilot Drawer** in the bottom-right corner.
+   - Click the persona badge in the header to switch roles instantly and test cross-tenant boundaries.
 
-```powershell
+---
+
+### 4. Running the Automated Test Suite
+
+Every commit must pass all automated test suites:
+
+```bash
+# Run Next.js, RBAC, Governance, Fleet, Ingest & Security tests (39 tests)
 npm test
 ```
 
-### Verified Test Suites:
-- **ShieldDesk Multi-Tenant RBAC & Isolation Suite** (8/8 PASS)
-- **ShieldDesk Approval Tokens & Layer 4 Governance Suite** (7/7 PASS)
-- **ShieldDesk Endpoint Agent Fleet & Live Command Suite** (8/8 PASS)
-- **ShieldDesk Public Ingestion & Webhook Normalizer Suite** (4/4 PASS)
-- **ShieldDesk ISO 27001 Compliance & Executive Scorecard Suite** (4/4 PASS)
-- **ShieldDesk Adversarial Security & Injection Defense Suite** (5/5 PASS)
+#### What `npm test` Validates:
+1. **Multi-Tenant RBAC & Isolation Suite** (8 tests) — Ensures no tenant can see or enumerate another tenant's incidents or plans.
+2. **Approval Tokens & Layer 4 Governance Suite** (7 tests) — Tests 24h expiration, anti-replay, and separation of duties.
+3. **Endpoint Agent Fleet & Live Command Suite** (8 tests) — Validates agent isolation, safety snapshots, and emergency kill switch.
+4. **Public Ingestion & Webhook Normalizer Suite** (4 tests) — Tests CrowdStrike, Defender, and Wazuh SIEM payload parsing.
+5. **ISO 27001 Compliance & Executive Scorecard Suite** (4 tests) — Verifies control mapping and evidence hash chains.
+6. **Adversarial Security & Injection Defense Suite** (5 tests) — Confirms prompt injection, SQLi, and secret redaction filters.
+
+#### Testing Python & Go Microservices (Optional):
+```bash
+# Python Scan & AI Advisor tests
+pytest services/scan/test_scan.py
+pytest services/ai-advisor/test_advisor.py
+
+# Go Threat Detection & Webhooks tests
+go test ./services/threat/...
+go test ./services/webhooks/...
+```
+
+---
+
+### 5. Team Git & Contribution Workflow
+
+1. **Branching Strategy**:
+   - `main`: Production-ready branch. Direct pushes must have passing tests.
+   - Feature branches: `feat/<feature-name>`, `fix/<bug-name>`, `sec/<security-patch>`.
+2. **Commit Message Format**:
+   Follow conventional commits:
+   - `feat(scope): add new feature`
+   - `fix(scope): resolve bug or regression`
+   - `sec(scope): security hardening or isolation fix`
+   - `test(scope): add or update test suites`
+3. **Pre-PR Checklist**:
+   - [x] Run `npm test` (all 39 tests passing).
+   - [x] Run `npx tsc --noEmit` (no TypeScript errors).
+   - [x] Verify no hardcoded secrets or API tokens in new files.
+   - [x] Review [CHECKLIST.md](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/CHECKLIST.md) for your role.
+
+---
+
+### 6. 1-Command Docker Deployment (Production)
+
+To boot the full stack in Docker containers:
+```bash
+docker compose up -d
+```
+*Launches Next.js (`:3000`), Python CVE Engine (`:8000`), PostgreSQL (`:5432`), and Redis (`:6379`) with auto-mounted schemas.*
 
 ---
 
