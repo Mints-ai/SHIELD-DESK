@@ -1,0 +1,58 @@
+{{- range $key, $service := .Values.services }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $service.name }}
+  labels:
+    app.kubernetes.io/name: {{ $service.name }}
+    app.kubernetes.io/part-of: shielddesk-platform
+spec:
+  replicas: {{ $service.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $service.name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $service.name }}
+    spec:
+      containers:
+        - name: {{ $service.name }}
+          image: {{ $service.image }}
+          imagePullPolicy: IfNotPresent
+          {{- if $service.port }}
+          ports:
+            - containerPort: {{ $service.port }}
+              name: http
+          {{- end }}
+          resources:
+            {{- toYaml $service.resources | nindent 12 }}
+          env:
+            - name: ENVIRONMENT
+              value: {{ $.Values.global.environment }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: shielddesk-secrets
+                  key: database_url
+                  optional: true
+            - name: REDIS_URL
+              value: "redis://shielddesk-redis:6379"
+            - name: NATS_URL
+              value: "nats://shielddesk-nats:4222"
+          {{- if $service.port }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ $service.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ $service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- end }}
+---
+{{- end }}

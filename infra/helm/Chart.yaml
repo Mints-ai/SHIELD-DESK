@@ -1,0 +1,9 @@
+apiVersion: v2
+name: shielddesk-platform
+description: Helm Chart for the ShieldDesk Autonomous SOC Platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: ShieldDesk Engineering
+    email: devops@shielddesk.io

@@ -1,0 +1,107 @@
+global:
+  environment: production
+  domain: shielddesk.io
+
+services:
+  ingest:
+    name: shielddesk-ingest
+    image: ghcr.io/mints-ai/shielddesk-ingest:latest
+    port: 50051
+    replicas: 3
+    minReplicas: 3
+    maxReplicas: 20
+    cpuTarget: 70
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "2000m"
+        memory: "2Gi"
+
+  threat:
+    name: shielddesk-threat
+    image: ghcr.io/mints-ai/shielddesk-threat:latest
+    replicas: 2
+    minReplicas: 2
+    maxReplicas: 10
+    cpuTarget: 75
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+
+  scan:
+    name: shielddesk-scan
+    image: ghcr.io/mints-ai/shielddesk-scan:latest
+    port: 8001
+    replicas: 2
+    minReplicas: 2
+    maxReplicas: 8
+    cpuTarget: 80
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2000m"
+        memory: "4Gi"
+
+  iam:
+    name: shielddesk-iam
+    image: ghcr.io/mints-ai/shielddesk-iam:latest
+    port: 4000
+    replicas: 2
+    minReplicas: 2
+    maxReplicas: 10
+    cpuTarget: 70
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "256Mi"
+      limits:
+        cpu: "1000m"
+        memory: "1Gi"
+
+  aiAdvisor:
+    name: shielddesk-ai-advisor
+    image: ghcr.io/mints-ai/shielddesk-ai-advisor:latest
+    port: 8002
+    replicas: 2
+    minReplicas: 2
+    maxReplicas: 8
+    cpuTarget: 75
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2Gi"
+
+  webhooks:
+    name: shielddesk-webhooks
+    image: ghcr.io/mints-ai/shielddesk-webhooks:latest
+    replicas: 2
+    minReplicas: 2
+    maxReplicas: 6
+    cpuTarget: 80
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+  gateway:
+    name: shielddesk-gateway
+    image: kong:3.6-alpine
+    port: 8080
+    replicas: 3
+    minReplicas: 3
+    maxReplicas: 15
+    cpuTarget: 70
