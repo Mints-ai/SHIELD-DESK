@@ -29,8 +29,10 @@ interface ChatMessage {
 const DEFAULT_SUGGESTIONS = [
   "Show me today's critical incidents",
   "Investigate INC-1042",
-  "Analyze CVE-2020-6240",
-  "Generate a mitigation plan for INC-1042",
+  "Simulate Blast Radius for CVE-2024-6387",
+  "Generate automated remediation runbook",
+  "Run Trivy container scan on fleet",
+  "Check for leaked secrets and exposed tokens",
 ];
 
 export function ChatWidget() {

@@ -13,14 +13,16 @@ import {
   KeyRound,
   Building2,
   UserCheck,
+  Cloud,
 } from "lucide-react";
 import { DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { cn } from "@/lib/utils";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const router = useRouter();
 
-  const [authMode, setAuthMode] = useState<"credentials" | "register" | "quick">("credentials");
+  const [authMode, setAuthMode] = useState<"credentials" | "register" | "quick" | "supabase">("credentials");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [orgName, setOrgName] = useState("");
@@ -55,6 +57,21 @@ export default function LoginPage() {
           setTimeout(() => router.push("/"), 1200);
         } else {
           setErrorMessage(data.error || "Registration failed");
+        }
+      } else if (authMode === "supabase") {
+        if (!isSupabaseConfigured || !supabase) {
+          setErrorMessage("Supabase cloud client is not configured.");
+        } else {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+          if (error) {
+            setErrorMessage(`Supabase Auth: ${error.message}`);
+          } else {
+            setSuccessMessage(`Authenticated via Supabase as ${data.user?.email || "Operator"}! Redirecting...`);
+            setTimeout(() => router.push("/"), 1000);
+          }
         }
       } else if (authMode === "credentials") {
         const res = await fetch("/api/auth/login", {
@@ -114,7 +131,7 @@ export default function LoginPage() {
         </div>
 
         {/* Auth Mode Tabs */}
-        <div className="p-1 rounded-xl bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] grid grid-cols-3 gap-1 text-xs">
+        <div className="p-1 rounded-xl bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] grid grid-cols-4 gap-1 text-[11px]">
           <button
             type="button"
             onClick={() => { setAuthMode("credentials"); setErrorMessage(null); }}
@@ -129,6 +146,19 @@ export default function LoginPage() {
           </button>
           <button
             type="button"
+            onClick={() => { setAuthMode("supabase"); setErrorMessage(null); }}
+            className={cn(
+              "py-1.5 rounded-lg font-medium transition cursor-pointer text-center flex items-center justify-center gap-1",
+              authMode === "supabase"
+                ? "bg-[var(--sd-panel)] text-[var(--sd-pine)] shadow-xs font-semibold"
+                : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+            )}
+          >
+            <Cloud className="h-3 w-3" />
+            <span>Supabase</span>
+          </button>
+          <button
+            type="button"
             onClick={() => { setAuthMode("register"); setErrorMessage(null); }}
             className={cn(
               "py-1.5 rounded-lg font-medium transition cursor-pointer text-center",
@@ -137,7 +167,7 @@ export default function LoginPage() {
                 : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
             )}
           >
-            Register Org
+            Register
           </button>
           <button
             type="button"
@@ -149,7 +179,7 @@ export default function LoginPage() {
                 : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
             )}
           >
-            Dev Persona
+            Persona
           </button>
         </div>
 
@@ -159,16 +189,20 @@ export default function LoginPage() {
             <h2 className="text-sm font-bold text-[var(--sd-text)]">
               {authMode === "register"
                 ? "Register New Tenant Organization"
-                : authMode === "credentials"
-                  ? "Operator Sign In"
-                  : "Quick Persona Switcher"}
+                : authMode === "supabase"
+                  ? "Supabase Cloud Authentication"
+                  : authMode === "credentials"
+                    ? "Operator Sign In"
+                    : "Quick Persona Switcher"}
             </h2>
             <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">
               {authMode === "register"
                 ? "Provision a dedicated tenant workspace with automated autonomy tiers."
-                : authMode === "credentials"
-                  ? "Enter your corporate credentials and hardware MFA token."
-                  : "One-click identity simulation for multi-tenant and RBAC testing."}
+                : authMode === "supabase"
+                  ? "Connect directly to your active Supabase cloud project (SHIELD-DESK)."
+                  : authMode === "credentials"
+                    ? "Enter your corporate credentials and hardware MFA token."
+                    : "One-click identity simulation for multi-tenant and RBAC testing."}
             </p>
           </div>
 
@@ -204,7 +238,17 @@ export default function LoginPage() {
               </div>
             )}
 
-            {(authMode === "credentials" || authMode === "register") && (
+            {authMode === "supabase" && (
+              <div className="p-2.5 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-[11px] text-[var(--sd-pine-bright)] flex items-center justify-between">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Cloud className="h-3.5 w-3.5" />
+                  SHIELD-DESK (dpuotfxyfqvwggewczhs)
+                </span>
+                <span className="font-mono text-[10px]">Cloud Auth Active</span>
+              </div>
+            )}
+
+            {(authMode === "credentials" || authMode === "register" || authMode === "supabase") && (
               <>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[11px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">

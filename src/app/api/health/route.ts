@@ -39,11 +39,31 @@ export async function GET() {
     pythonAiReachable = false;
   }
 
-  const allHealthy = databaseConnected && (ollamaReachable || Boolean(process.env.GEMINI_API_KEY)) && pythonAiReachable;
+  const supabaseConfigured = Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  );
+  let supabaseConnected = false;
+  if (supabaseConfigured) {
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/`, {
+        headers: {
+          apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+        },
+        signal: AbortSignal.timeout(2500),
+      });
+      // 200, 401 (valid response), or 404 from root rest endpoint indicates Supabase gateway is live
+      supabaseConnected = res.status < 500;
+    } catch {
+      supabaseConnected = false;
+    }
+  }
+
+  const allHealthy = (databaseConnected || supabaseConnected) && (ollamaReachable || Boolean(process.env.GEMINI_API_KEY) || pythonAiReachable);
 
   return NextResponse.json({
     status: allHealthy ? "ok" : "degraded",
     database: { configured: databaseConfigured, connected: databaseConnected },
+    supabase: { configured: supabaseConfigured, connected: supabaseConnected, url: process.env.NEXT_PUBLIC_SUPABASE_URL || null },
     ollama: { baseUrl: ollamaBaseUrl, reachable: ollamaReachable },
     pythonAiEngine: { baseUrl: pythonAiServiceUrl, reachable: pythonAiReachable },
   });

@@ -14,6 +14,9 @@ import {
   FileCheck2,
   BarChart3,
   LogIn,
+  Scan,
+  Flame,
+  Cloud,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
@@ -27,7 +30,8 @@ export function TopNavBar() {
   const [healthStatus, setHealthStatus] = useState<{
     database: boolean;
     ollama: boolean;
-  }>({ database: false, ollama: false });
+    supabase: boolean;
+  }>({ database: false, ollama: false, supabase: false });
 
   const [pendingTokens, setPendingTokens] = useState<ApprovalTokenRecord[]>([]);
   const [activeModalToken, setActiveModalToken] = useState<ApprovalTokenRecord | null>(null);
@@ -40,10 +44,11 @@ export function TopNavBar() {
         setHealthStatus({
           database: Boolean(data?.database?.connected),
           ollama: Boolean(data?.ollama?.reachable),
+          supabase: Boolean(data?.supabase?.connected),
         });
       })
       .catch(() => {
-        setHealthStatus({ database: false, ollama: false });
+        setHealthStatus({ database: false, ollama: false, supabase: false });
       });
   }, []);
 
@@ -68,6 +73,8 @@ export function TopNavBar() {
     { href: "/", label: "Incident Queue", icon: Layers },
     { href: "/dashboard/tasks", label: "Task Board", icon: CheckSquare },
     { href: "/dashboard/fleet", label: "Fleet & Host", icon: Server },
+    { href: "/dashboard/scanner", label: "Security Scanner", icon: Scan },
+    { href: "/dashboard/threats", label: "Threat Engine", icon: Flame },
     { href: "/dashboard/compliance", label: "ISO 27001 Audit", icon: FileCheck2 },
     { href: "/dashboard/risk-scorecard", label: "Risk Scorecard", icon: BarChart3 },
   ];
@@ -150,6 +157,17 @@ export function TopNavBar() {
                 className={cn(
                   "h-1.5 w-1.5 rounded-full",
                   healthStatus.database ? "bg-[var(--sd-pine-bright)] shadow-[0_0_6px_var(--sd-pine-bright)]" : "bg-[var(--sd-warning)]"
+                )}
+              />
+            </div>
+            <div className="h-3 w-px bg-[var(--sd-border)]" />
+            <div className="flex items-center gap-1.5" title="Supabase Cloud Database & Auth">
+              <Cloud className="h-3 w-3 text-[var(--sd-text-muted)]" />
+              <span className="text-[var(--sd-text-muted)] font-medium">Supabase:</span>
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  healthStatus.supabase ? "bg-[var(--sd-pine-bright)] shadow-[0_0_6px_var(--sd-pine-bright)]" : "bg-[var(--sd-text-dim)]"
                 )}
               />
             </div>
