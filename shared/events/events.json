@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ShieldDesk NATS Event Schemas",
+  "description": "Cross-language event contracts for ShieldDesk NATS JetStream messaging",
+  "definitions": {
+    "AgentEvent": {
+      "type": "object",
+      "required": ["tenant_id", "asset_id", "event_type", "timestamp", "payload"],
+      "properties": {
+        "tenant_id": { "type": "string" },
+        "asset_id": { "type": "string" },
+        "event_type": {
+          "type": "string",
+          "enum": ["process", "file", "network", "auth", "inventory"]
+        },
+        "timestamp": { "type": "integer", "description": "Epoch milliseconds UTC" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "agent_version": { "type": "string" }
+      }
+    },
+    "Alert": {
+      "type": "object",
+      "required": ["id", "tenant_id", "asset_id", "severity", "type", "rule_id", "created_at"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "tenant_id": { "type": "string" },
+        "asset_id": { "type": "string" },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "info"]
+        },
+        "type": {
+          "type": "string",
+          "enum": ["malware", "intrusion", "anomaly", "policy", "vuln"]
+        },
+        "rule_id": { "type": "string" },
+        "rule_name": { "type": "string" },
+        "ai_summary": { "type": "string" },
+        "payload": { "type": "object" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "WebhookEvent": {
+      "type": "object",
+      "required": ["event", "timestamp", "tenant_id", "data", "signature"],
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "alert.created",
+            "alert.resolved",
+            "vulnerability.critical",
+            "policy.violated",
+            "asset.discovered",
+            "backup.integrity_failed",
+            "lockdown.activated"
+          ]
+        },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "tenant_id": { "type": "string" },
+        "data": { "type": "object" },
+        "signature": { "type": "string" }
+      }
+    }
+  }
+}
