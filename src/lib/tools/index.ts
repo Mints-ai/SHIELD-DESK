@@ -11,5 +11,7 @@ export {
   investigateIncident,
   analyzeCve,
   generateMitigationPlan,
+  getMitigationPlan,
   type ChatSession,
 } from "./shieldDeskChatTools";
+

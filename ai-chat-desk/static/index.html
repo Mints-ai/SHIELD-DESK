@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vulnerability Intelligence & Remediation AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="top-nav">
+    <div class="nav-container">
+      <div class="brand-group">
+        <div class="brand-icon">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div class="brand-info">
+          <span class="brand-title">Vulnerability Intelligence</span>
+          <span class="brand-meta">Random Forest Multi-Target AI</span>
+        </div>
+      </div>
+
+      <nav class="segment-tabs" aria-label="Main Navigation">
+        <button class="tab-pill active" data-tab="tab-analyzer" id="btn-tab-analyzer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          Analyzer
+        </button>
+        <button class="tab-pill" data-tab="tab-explorer" id="btn-tab-explorer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Repository <span class="tab-badge">12.9k</span>
+        </button>
+        <button class="tab-pill" data-tab="tab-metrics" id="btn-tab-metrics">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+          Benchmarks
+        </button>
+      </nav>
+
+      <div class="nav-status">
+        <span class="live-badge">
+          <span class="pulse-indicator"></span>
+          Engine Active
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <!-- TAB 1: MINIMAL ANALYZER -->
+    <section id="tab-analyzer" class="view-panel active">
+      <!-- Quick Presets -->
+      <div class="preset-strip">
+        <span class="preset-label">Quick Presets</span>
+        <div class="preset-chips" id="presets-list">
+          <button class="chip-btn" data-index="0">Linux Netfilter RCE</button>
+          <button class="chip-btn" data-index="1">SAP NetWeaver Auth Bypass</button>
+          <button class="chip-btn" data-index="2">Windows RPC Runtime RCE</button>
+          <button class="chip-btn" data-index="3">Oracle EBS SQL Injection</button>
+          <button class="chip-btn" data-index="4">Defender Engine DoS</button>
+        </div>
+      </div>
+
+      <div class="grid-layout">
+        <!-- Input Form Section -->
+        <div class="surface form-surface">
+          <div class="surface-header">
+            <div>
+              <h2 class="surface-title">Vulnerability Input</h2>
+              <p class="surface-subtitle">Provide technical advisory, CVE description, or affected component</p>
+            </div>
+            <button type="button" class="btn-subtle" id="btn-clear">Reset</button>
+          </div>
+
+          <form id="analyze-form" class="form-flow">
+            <div class="form-block">
+              <label for="input-description">Advisory Description <span class="required-mark">*</span></label>
+              <textarea id="input-description" rows="5" placeholder="Enter vulnerability technical details, exploit vectors, or CVE description..." required></textarea>
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-block">
+                <label for="input-category">Target Platform</label>
+                <div class="custom-select">
+                  <select id="input-category">
+                    <option value="General">General / Cross-Platform</option>
+                    <option value="Linux (General/Kernel)">Linux / Kernel</option>
+                    <option value="Windows">Windows OS</option>
+                    <option value="Debian">Debian</option>
+                    <option value="Ubuntu">Ubuntu</option>
+                    <option value="Red Hat / RHEL / CentOS / Fedora">Red Hat / RHEL / Fedora</option>
+                    <option value="SAP">SAP Enterprise</option>
+                    <option value="Oracle E-Business Suite">Oracle E-Business Suite</option>
+                    <option value="Oracle PeopleSoft">Oracle PeopleSoft</option>
+                    <option value="Oracle JD Edwards">Oracle JD Edwards</option>
+                    <option value="Oracle WebLogic Server">Oracle WebLogic Server</option>
+                    <option value="Microsoft Dynamics">Microsoft Dynamics</option>
+                    <option value="Endpoint Defender">Microsoft Defender</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-block">
+                <label for="input-cwe">CWE Classification</label>
+                <input type="text" id="input-cwe" placeholder="e.g. CWE-78, CWE-120" value="Unknown">
+              </div>
+            </div>
+
+            <div class="form-row-2">
+              <div class="form-block">
+                <div class="label-row">
+                  <label for="input-epss">EPSS Exploit Score</label>
+                  <span id="epss-val" class="mono-tag">0.05</span>
+                </div>
+                <input type="range" id="input-epss" min="0" max="1" step="0.01" value="0.05">
+              </div>
+
+              <div class="form-block">
+                <label for="input-kev">CISA KEV Listing</label>
+                <div class="custom-select">
+                  <select id="input-kev">
+                    <option value="0">Not in KEV Catalog</option>
+                    <option value="1">Listed in CISA KEV (Active Threat)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <button type="submit" class="btn-primary-action" id="btn-submit-analyze">
+              <span>Evaluate Threat & Generate Mitigation</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+            </button>
+          </form>
+        </div>
+
+        <!-- Output Assessment Section -->
+        <div class="surface output-surface" id="output-card">
+          <div class="surface-header">
+            <div>
+              <h2 class="surface-title">AI Threat Intelligence</h2>
+              <p class="surface-subtitle">Random Forest multi-target prediction report</p>
+            </div>
+            <div id="urgency-badge-slot"></div>
+          </div>
+
+          <!-- Empty State -->
+          <div class="empty-display" id="empty-state">
+            <div class="empty-icon-box">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <h3 class="empty-heading">Ready for Evaluation</h3>
+            <p class="empty-text">Select a preset above or enter a vulnerability description to compute CVSS score, severity, operational tier, and actionable mitigation guidance.</p>
+          </div>
+
+          <!-- Loading State -->
+          <div class="loading-display hidden" id="loading-state">
+            <div class="ring-spinner"></div>
+            <p class="loading-text">Computing multi-target Random Forest trees & indexing mitigations...</p>
+          </div>
+
+          <!-- Results Container -->
+          <div class="results-flow hidden" id="results-container">
+            <!-- 4 Metric Tiles -->
+            <div class="metric-tiles-row">
+              <div class="metric-card" id="box-severity">
+                <span class="card-caption">CVSS Severity</span>
+                <span class="card-value" id="res-severity">HIGH</span>
+                <span class="card-subtext" id="res-severity-conf">98.2% Confidence</span>
+              </div>
+
+              <div class="metric-card" id="box-cvss">
+                <span class="card-caption">Predicted CVSS</span>
+                <span class="card-value" id="res-score">8.8 <span class="denom">/ 10</span></span>
+                <span class="card-subtext">Continuous Regression</span>
+              </div>
+
+              <div class="metric-card" id="box-tier">
+                <span class="card-caption">Action Tier</span>
+                <span class="card-value-sm" id="res-tier">Tier 2</span>
+                <span class="card-subtext" id="res-tier-conf">Human-Approved</span>
+              </div>
+
+              <div class="metric-card" id="box-kev">
+                <span class="card-caption">Exploit Threat</span>
+                <span class="card-value-sm" id="res-kev">STANDARD</span>
+                <span class="card-subtext" id="res-kev-prob">0.5% KEV Likelihood</span>
+              </div>
+            </div>
+
+            <!-- Probability Distribution -->
+            <div class="sub-panel">
+              <span class="sub-panel-title">Probability Breakdown</span>
+              <div class="distribution-list" id="prob-bars-container"></div>
+            </div>
+
+            <!-- Recommended Mitigation -->
+            <div class="mitigation-card">
+              <div class="mitigation-title-row">
+                <span class="mitigation-heading">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                  Recommended Mitigation Plan
+                </span>
+                <button type="button" class="btn-copy-chip" id="btn-copy-mitigation">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  Copy
+                </button>
+              </div>
+              <div class="mitigation-content" id="res-primary-mitigation"></div>
+            </div>
+
+            <!-- Historical Matches -->
+            <div class="sub-panel">
+              <span class="sub-panel-title">Verified Historical Reference Cases</span>
+              <div class="reference-cases" id="similar-cves-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: REPOSITORY EXPLORER -->
+    <section id="tab-explorer" class="view-panel">
+      <div class="surface">
+        <div class="surface-header flex-header">
+          <div>
+            <h2 class="surface-title">CVE Repository Database</h2>
+            <p class="surface-subtitle">12,968 normalized vulnerability records across OS, ERP, SAP, and Defender</p>
+          </div>
+          <div class="filter-bar">
+            <div class="input-with-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" id="search-cve" placeholder="Search by CVE ID, platform, or mitigation..." class="search-field">
+            </div>
+            <div class="custom-select select-compact">
+              <select id="filter-platform">
+                <option value="all">All Platforms</option>
+                <option value="Operating System">Operating Systems</option>
+                <option value="Enterprise ERP">Enterprise ERP</option>
+                <option value="SAP">SAP Enterprise</option>
+                <option value="Defender">Microsoft Defender</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="table-scroll-wrap">
+          <table class="data-grid">
+            <thead>
+              <tr>
+                <th>CVE ID</th>
+                <th>Category</th>
+                <th>Severity</th>
+                <th>CVSS</th>
+                <th>CWE</th>
+                <th>Remediation Tier</th>
+                <th>KEV</th>
+                <th>Mitigation Action</th>
+              </tr>
+            </thead>
+            <tbody id="cve-table-body">
+              <tr><td colspan="8" class="table-message">Loading repository records...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pagination-row">
+          <span id="page-info" class="pagination-info">Page 1</span>
+          <div class="pagination-controls">
+            <button class="page-button" id="btn-prev-page" disabled>Previous</button>
+            <button class="page-button" id="btn-next-page">Next</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: BENCHMARK METRICS -->
+    <section id="tab-metrics" class="view-panel">
+      <div class="metrics-stack">
+        <div class="summary-stat-grid">
+          <div class="stat-card">
+            <span class="stat-card-label">Harmonized Corpus</span>
+            <span class="stat-card-value" id="stat-total-cves">12,968</span>
+            <span class="stat-card-sub">Multi-source CVEs</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card-label">Severity Accuracy</span>
+            <span class="stat-card-value" id="stat-sev-acc">85.4%</span>
+            <span class="stat-card-sub">0.84 Weighted F1</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card-label">Tier Accuracy</span>
+            <span class="stat-card-value" id="stat-tier-acc">91.9%</span>
+            <span class="stat-card-sub">0.90 Weighted F1</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-card-label">KEV Exploit ROC</span>
+            <span class="stat-card-value" id="stat-kev-auc">0.999</span>
+            <span class="stat-card-sub">Area Under Curve</span>
+          </div>
+        </div>
+
+        <div class="reports-grid">
+          <div class="surface">
+            <div class="surface-header">
+              <h2 class="surface-title">CVSS Severity Classification Report</h2>
+            </div>
+            <div class="terminal-view" id="severity-report-content">Loading benchmark data...</div>
+          </div>
+
+          <div class="surface">
+            <div class="surface-header">
+              <h2 class="surface-title">Remediation Tier Classification Report</h2>
+            </div>
+            <div class="terminal-view" id="tier-report-content">Loading benchmark data...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="bottom-footer">
+    <div class="footer-container">
+      <span>Vulnerability Intelligence & Mitigation Engine</span>
+      <span class="dot-sep">•</span>
+      <span>Single Unified Random Forest Architecture</span>
+      <span class="dot-sep">•</span>
+      <span>12,968 Indexed Verified Remediations</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

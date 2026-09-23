@@ -1,0 +1,81 @@
+{
+  "dataset": {
+    "total_records": 12968,
+    "train_records": 10374,
+    "test_records": 2594,
+    "features_dim": 22003
+  },
+  "cvss_severity": {
+    "accuracy": 0.7598303777949114,
+    "macro_f1": 0.5795087590308712,
+    "weighted_f1": 0.7893612420386124,
+    "classes": [
+      "CRITICAL",
+      "HIGH",
+      "LOW",
+      "MEDIUM"
+    ],
+    "confusion_matrix": [
+      [
+        165,
+        26,
+        2,
+        17
+      ],
+      [
+        233,
+        1396,
+        44,
+        158
+      ],
+      [
+        2,
+        2,
+        21,
+        8
+      ],
+      [
+        50,
+        14,
+        67,
+        389
+      ]
+    ]
+  },
+  "cvss_score": {
+    "r2_score": 0.5171381120963668,
+    "rmse": 0.9377614782534754,
+    "mae": 0.6479740418116599
+  },
+  "remediation_tier": {
+    "accuracy": 0.7791056283731689,
+    "macro_f1": 0.5258711373101629,
+    "weighted_f1": 0.8218554678533766,
+    "classes": [
+      "Tier 1 (Low-Risk / Autonomous)",
+      "Tier 2 (Medium-Risk / Human-Approved)",
+      "Tier 3 (High-Risk / Dual-Sign-Off)"
+    ],
+    "confusion_matrix": [
+      [
+        41,
+        10,
+        9
+      ],
+      [
+        151,
+        1846,
+        348
+      ],
+      [
+        9,
+        46,
+        134
+      ]
+    ]
+  },
+  "kev_risk": {
+    "roc_auc": 1.0,
+    "f1_score": 1.0
+  }
+}

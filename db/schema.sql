@@ -90,3 +90,127 @@ CREATE TABLE IF NOT EXISTS chat_audit_log (
   outcome     text NOT NULL,              -- 'authorized' | 'denied' | 'error' | 'out_of_scope'
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- Priority 1: Mitigation Plans & Tasks (Persistent Governance Artifacts)
+-- Turns generateMitigationPlan into versioned, tracked database rows.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS mitigation_plans (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  incident_id   uuid NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+  tenant_id     text NOT NULL,
+  version       integer NOT NULL DEFAULT 1,
+  status        text NOT NULL CHECK (status IN ('draft', 'active', 'archived', 'completed')),
+  summary       text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mitigation_plans_tenant ON mitigation_plans (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_mitigation_plans_incident ON mitigation_plans (incident_id);
+
+CREATE TABLE IF NOT EXISTS mitigation_tasks (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  plan_id       uuid NOT NULL REFERENCES mitigation_plans(id) ON DELETE CASCADE,
+  tenant_id     text NOT NULL,
+  horizon       text NOT NULL CHECK (horizon IN ('immediate', 'short_term', 'long_term')),
+  title         text NOT NULL,
+  description   text,
+  tier          text NOT NULL DEFAULT 'Tier 2',
+  status        text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'in_progress', 'completed')),
+  blast_radius  text,
+  cve_id        text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mitigation_tasks_plan ON mitigation_tasks (plan_id);
+
+-- ---------------------------------------------------------------------------
+-- Priority 2: Layer 4 Governance — Approval Tokens & Separation of Duties
+-- Enforces human-in-the-loop gating before any Tier 2+ action can execute.
+-- Separation of duties (requested_by != approved_by) is enforced at the DB level.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS approval_tokens (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id        text NOT NULL,
+  task_id          uuid REFERENCES mitigation_tasks(id) ON DELETE CASCADE,
+  action_type      text NOT NULL,               -- e.g. 'isolate_host', 'deploy_patch', 'quarantine'
+  tier             text NOT NULL CHECK (tier IN ('Tier 0', 'Tier 1', 'Tier 2', 'Tier 3')),
+  status           text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'expired')),
+  requested_by     text NOT NULL REFERENCES users(id),
+  approved_by      text REFERENCES users(id),
+  rejection_reason text,
+  blast_radius     text,
+  model_confidence numeric(4,2) DEFAULT 0.95,   -- e.g. 0.95 (95% confidence)
+  expires_at       timestamptz NOT NULL,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  updated_at       timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT check_separation_of_duties CHECK (approved_by IS NULL OR requested_by <> approved_by)
+);
+CREATE INDEX IF NOT EXISTS idx_approval_tokens_tenant ON approval_tokens (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_approval_tokens_status ON approval_tokens (status);
+
+CREATE TABLE IF NOT EXISTS approval_audit_log (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_id    uuid,
+  tenant_id   text NOT NULL,
+  actor_id    text NOT NULL,
+  action      text NOT NULL,                    -- 'token_requested' | 'token_approved' | 'token_rejected' | 'action_executed'
+  details     text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_approval_audit_tenant ON approval_audit_log (tenant_id);
+
+-- ---------------------------------------------------------------------------
+-- Layer 2: Endpoint Agent Fleet Management
+-- Tracks registered endpoints, real-time telemetry, and health status.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS endpoint_agents (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id           text NOT NULL,
+  hostname            text NOT NULL,
+  ip_address          text NOT NULL,
+  os_type             text NOT NULL CHECK (os_type IN ('linux', 'windows', 'darwin')),
+  agent_version       text NOT NULL DEFAULT '0.4.2',
+  status              text NOT NULL CHECK (status IN ('connected', 'isolated', 'quarantined', 'disconnected')),
+  cpu_usage           numeric(5,2) DEFAULT 0.0,
+  memory_usage        numeric(5,2) DEFAULT 0.0,
+  eps                 integer DEFAULT 0,         -- events per second
+  kill_switch_active  boolean NOT NULL DEFAULT false,
+  safety_snapshot_id  text,
+  last_heartbeat      timestamptz NOT NULL DEFAULT now(),
+  created_at          timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_endpoint_agents_tenant ON endpoint_agents (tenant_id);
+
+CREATE TABLE IF NOT EXISTS agent_command_logs (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id      uuid NOT NULL REFERENCES endpoint_agents(id) ON DELETE CASCADE,
+  tenant_id     text NOT NULL,
+  command       text NOT NULL,
+  tier          text NOT NULL CHECK (tier IN ('Tier 0', 'Tier 1', 'Tier 2', 'Tier 3')),
+  token_id      uuid REFERENCES approval_tokens(id),
+  status        text NOT NULL CHECK (status IN ('pending', 'executing', 'succeeded', 'failed', 'rolled_back')),
+  output        text,
+  executed_by   text NOT NULL,
+  executed_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_command_logs_agent ON agent_command_logs (agent_id);
+
+-- ---------------------------------------------------------------------------
+-- Layer 3/4: Hash-Chained Tamper-Proof Audit Vault
+-- Cryptographically chains events (prev_hash + payload -> current_hash)
+-- for SOC 2 / ISO 27001 auditor verification.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS hash_chain_audit (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id     text NOT NULL,
+  event_type    text NOT NULL,
+  actor_id      text NOT NULL,
+  payload       jsonb NOT NULL,
+  prev_hash     text NOT NULL,
+  current_hash  text NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_hash_chain_tenant ON hash_chain_audit (tenant_id);
+
+
+

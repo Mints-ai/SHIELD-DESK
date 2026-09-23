@@ -1,0 +1,170 @@
+{
+  "model_architecture": "Single Unified Random Forest Model",
+  "dataset_summary": {
+    "total_records": 12968,
+    "test_records": 2594,
+    "domains": [
+      [
+        "Operating System",
+        8396
+      ],
+      [
+        "Enterprise ERP",
+        3178
+      ],
+      [
+        "SAP Enterprise",
+        1265
+      ],
+      [
+        "Endpoint Defender",
+        129
+      ]
+    ]
+  },
+  "cvss_severity_metrics": {
+    "accuracy": 0.8338473400154202,
+    "macro_f1": 0.5795033877030691,
+    "weighted_f1": 0.8251275446645163,
+    "classes": [
+      "CRITICAL",
+      "HIGH",
+      "LOW",
+      "MEDIUM"
+    ],
+    "classification_report": {
+      "CRITICAL": {
+        "precision": 0.5894736842105263,
+        "recall": 0.26666666666666666,
+        "f1-score": 0.3672131147540983,
+        "support": 210.0
+      },
+      "HIGH": {
+        "precision": 0.9128491620111732,
+        "recall": 0.892408519934462,
+        "f1-score": 0.9025131179232256,
+        "support": 1831.0
+      },
+      "LOW": {
+        "precision": 0.32,
+        "recall": 0.24242424242424243,
+        "f1-score": 0.2758620689655172,
+        "support": 33.0
+      },
+      "MEDIUM": {
+        "precision": 0.6798245614035088,
+        "recall": 0.8942307692307693,
+        "f1-score": 0.7724252491694352,
+        "support": 520.0
+      },
+      "accuracy": 0.8338473400154202,
+      "macro avg": {
+        "precision": 0.625536851906302,
+        "recall": 0.573932549564035,
+        "f1-score": 0.5795033877030691,
+        "support": 2594.0
+      },
+      "weighted avg": {
+        "precision": 0.8324152125121407,
+        "recall": 0.8338473400154202,
+        "f1-score": 0.8251275446645163,
+        "support": 2594.0
+      }
+    },
+    "confusion_matrix": [
+      [
+        56,
+        117,
+        1,
+        36
+      ],
+      [
+        29,
+        1634,
+        7,
+        161
+      ],
+      [
+        0,
+        3,
+        8,
+        22
+      ],
+      [
+        10,
+        36,
+        9,
+        465
+      ]
+    ]
+  },
+  "cvss_score_metrics": {
+    "r2_score": 0.5071637262100841,
+    "rmse": 0.94739754995729,
+    "mae": 0.6061858647918239
+  },
+  "remediation_tier_metrics": {
+    "accuracy": 0.9078643022359291,
+    "macro_f1": 0.593761260141822,
+    "weighted_f1": 0.8957196936308742,
+    "classes": [
+      "Tier 1 (Low-Risk / Autonomous)",
+      "Tier 2 (Medium-Risk / Human-Approved)",
+      "Tier 3 (High-Risk / Dual-Sign-Off)"
+    ],
+    "classification_report": {
+      "Tier 1 (Low-Risk / Autonomous)": {
+        "precision": 0.5283018867924528,
+        "recall": 0.4666666666666667,
+        "f1-score": 0.49557522123893805,
+        "support": 60.0
+      },
+      "Tier 2 (Medium-Risk / Human-Approved)": {
+        "precision": 0.9309922417313189,
+        "recall": 0.9722814498933902,
+        "f1-score": 0.951188986232791,
+        "support": 2345.0
+      },
+      "Tier 3 (High-Risk / Dual-Sign-Off)": {
+        "precision": 0.5108695652173914,
+        "recall": 0.24867724867724866,
+        "f1-score": 0.33451957295373663,
+        "support": 189.0
+      },
+      "accuracy": 0.9078643022359291,
+      "macro avg": {
+        "precision": 0.6567212312470544,
+        "recall": 0.5625417884124352,
+        "f1-score": 0.593761260141822,
+        "support": 2594.0
+      },
+      "weighted avg": {
+        "precision": 0.8910675666513402,
+        "recall": 0.9078643022359291,
+        "f1-score": 0.8957196936308742,
+        "support": 2594.0
+      }
+    },
+    "confusion_matrix": [
+      [
+        28,
+        29,
+        3
+      ],
+      [
+        23,
+        2280,
+        42
+      ],
+      [
+        2,
+        140,
+        47
+      ]
+    ]
+  },
+  "kev_exploitation_metrics": {
+    "roc_auc": 0.9800592101961965,
+    "f1_score": 0.4
+  }
+}

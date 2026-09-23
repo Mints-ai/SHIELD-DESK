@@ -22,11 +22,12 @@ function createPool(): Pool {
     );
   }
      return new Pool({
-     connectionString,
-     ssl: connectionString.includes("localhost")
-       ? false
-       : { rejectUnauthorized: false },
-   });;
+       connectionString,
+       connectionTimeoutMillis: 2000,
+       ssl: connectionString.includes("localhost")
+         ? false
+         : { rejectUnauthorized: false },
+     });
 }
 
 // Reuse the pool across hot reloads in dev. Created lazily (on first real
@@ -49,7 +50,10 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
 export async function checkDatabaseConnection(): Promise<boolean> {
   if (!process.env.DATABASE_URL) return false;
   try {
-    await getPool().query("SELECT 1");
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Timeout")), 1500)
+    );
+    await Promise.race([getPool().query("SELECT 1"), timeout]);
     return true;
   } catch {
     return false;

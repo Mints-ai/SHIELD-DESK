@@ -1,10 +1,23 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ArrowDown, Bot, Send, User as UserIcon, ShieldHalf, X } from "lucide-react";
+import {
+  ArrowDown,
+  Bot,
+  Send,
+  User as UserIcon,
+  Shield,
+  X,
+  Trash2,
+  ChevronDown,
+  Layers,
+  Sparkles,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
+import { FormattedAssistantMessage } from "./FormattedAssistantMessage";
 
 interface ChatMessage {
   id: string;
@@ -13,54 +26,77 @@ interface ChatMessage {
   isError?: boolean;
 }
 
-const SUGGESTIONS = [
+const DEFAULT_SUGGESTIONS = [
   "Show me today's critical incidents",
   "Investigate INC-1042",
-  "Analyze CVE-2024-3400",
+  "Analyze CVE-2020-6240",
   "Generate a mitigation plan for INC-1042",
 ];
 
-/**
- * DEV MODE: ShieldDesk doesn't have a real login system yet, so there's no
- * signed-in user to read an id from. This stands in for "whoever is using
- * the app right now" until real auth exists — swap this for a real user id
- * (and remove the hardcoded header below) once ShieldDesk has one. See
- * lib/auth/session.ts for the corresponding server-side note, and
- * db/seed.sql for the dev users this id can be set to (dev-analyst,
- * dev-admin, dev-other) to exercise different roles/tenants.
- */
-const DEV_USER_ID = "dev-analyst";
-
-/**
- * ShieldDesk AI Chat Widget — floating assistant, globally mounted
- * (see app/layout.tsx). Adapted from the Mints ERP assistant's
- * ChatWidget: same SSE-streaming, error/retry pattern, but fixed to
- * ShieldDesk's four supported intents instead of open-ended
- * employee/project/leave lookups, dev-mode identity instead of Firebase
- * (see DEV_USER_ID above), and without that app's GlobalTimer
- * positioning (ShieldDesk has no equivalent widget to sit above).
- */
 export function ChatWidget() {
-  const [isOpen, setIsOpen] = useState(false);
+  const {
+    activeUserId,
+    setActiveUserId,
+    activeUser,
+    activeIncidentId,
+    setActiveIncidentId,
+    activeCveId,
+    isChatOpen,
+    setIsChatOpen,
+    promptToInject,
+    setPromptToInject,
+  } = useChat();
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
+
   const messagesRef = useRef<HTMLDivElement>(null);
   const activeResponseRef = useRef<HTMLDivElement>(null);
   const [activeResponseId, setActiveResponseId] = useState<string | null>(null);
   const [shouldFollowLatest, setShouldFollowLatest] = useState(true);
   const accumulatedRef = useRef("");
 
+  const storageKey = `shielddesk_chat_messages_${activeUserId}`;
+
+  // Load chat history from sessionStorage on persona change
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(storageKey);
+      if (saved) {
+        setMessages(JSON.parse(saved));
+      } else {
+        setMessages([]);
+      }
+    } catch {
+      setMessages([]);
+    }
+  }, [storageKey]);
+
+  // Persist messages to sessionStorage
+  const saveMessages = useCallback(
+    (newMessages: ChatMessage[]) => {
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify(newMessages));
+      } catch {
+        // ignore
+      }
+    },
+    [storageKey]
+  );
+
+  // Auto-scroll logic
   useEffect(() => {
     const messagesContainer = messagesRef.current;
     const activeResponse = activeResponseRef.current;
-    if (!isOpen || !messagesContainer || !activeResponseId || !activeResponse) return;
+    if (!isChatOpen || !messagesContainer || !activeResponseId || !activeResponse) return;
 
     messagesContainer.scrollTo({
       top: Math.max(0, activeResponse.offsetTop - 16),
       behavior: "smooth",
     });
-  }, [activeResponseId, isOpen]);
+  }, [activeResponseId, isChatOpen]);
 
   const handleMessagesScroll = () => {
     const messagesContainer = messagesRef.current;
@@ -79,152 +115,339 @@ export function ChatWidget() {
     });
   };
 
-  const sendMessage = async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed || isSending) return;
-
-    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", content: trimmed };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setShouldFollowLatest(true);
-    setIsSending(true);
-
+  const clearChat = () => {
+    setMessages([]);
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-ShieldDesk-User": DEV_USER_ID,
-        },
-        body: JSON.stringify({ message: trimmed }),
-      });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `Request failed (${res.status})`);
-      }
-
-      if (!res.body) throw new Error("Empty response from assistant.");
-
-      const assistantId = crypto.randomUUID();
-      setActiveResponseId(assistantId);
-      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "" }]);
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      accumulatedRef.current = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() || "";
-
-        for (const part of parts) {
-          if (!part.startsWith("data: ")) continue;
-          const payload = part.slice(6);
-          if (payload === "[DONE]") continue;
-
-          try {
-            const obj = JSON.parse(payload);
-            if (obj.token) {
-              accumulatedRef.current += obj.token;
-              const accumulated = accumulatedRef.current;
-              setMessages((prev) =>
-                prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m))
-              );
-            }
-          } catch {
-            // partial chunk, wait for more data
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const messageText = err instanceof Error ? err.message : undefined;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content:
-            messageText === "Failed to fetch"
-              ? "Couldn't reach the assistant. Please try again in a moment."
-              : messageText || "Something went wrong. Please try again.",
-          isError: true,
-        },
-      ]);
-    } finally {
-      setIsSending(false);
+      sessionStorage.removeItem(storageKey);
+    } catch {
+      // ignore
     }
   };
+
+  const sendMessage = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || isSending) return;
+
+      const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", content: trimmed };
+      setMessages((prev) => {
+        const next = [...prev, userMsg];
+        saveMessages(next);
+        return next;
+      });
+      setInput("");
+      setShouldFollowLatest(true);
+      setIsSending(true);
+
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-ShieldDesk-User": activeUserId,
+          },
+          body: JSON.stringify({
+            message: trimmed,
+            context: {
+              currentIncidentId: activeIncidentId || undefined,
+              currentCveId: activeCveId || undefined,
+              currentPage: "dashboard",
+            },
+          }),
+        });
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body?.error || `Request failed (${res.status})`);
+        }
+
+        if (!res.body) throw new Error("Empty response from assistant.");
+
+        const assistantId = crypto.randomUUID();
+        setActiveResponseId(assistantId);
+        setMessages((prev) => {
+          const next: ChatMessage[] = [...prev, { id: assistantId, role: "assistant", content: "" }];
+          return next;
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        accumulatedRef.current = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+
+          for (const part of parts) {
+            if (!part.startsWith("data: ")) continue;
+            const payload = part.slice(6);
+            if (payload === "[DONE]") continue;
+
+            try {
+              const obj = JSON.parse(payload);
+              if (obj.token) {
+                accumulatedRef.current += obj.token;
+                const accumulated = accumulatedRef.current;
+                setMessages((prev) =>
+                  prev.map((m) => (m.id === assistantId ? { ...m, content: accumulated } : m))
+                );
+              }
+            } catch {
+              // partial chunk, wait for more data
+            }
+          }
+        }
+
+        // Final save with complete stream content
+        setMessages((prev) => {
+          saveMessages(prev);
+          return prev;
+        });
+      } catch (err: unknown) {
+        const messageText = err instanceof Error ? err.message : undefined;
+        setMessages((prev) => {
+          const next: ChatMessage[] = [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content:
+                messageText === "Failed to fetch"
+                  ? "Couldn't reach the assistant. Please verify that Next.js and Ollama are reachable."
+                  : messageText || "Something went wrong. Please try again.",
+              isError: true,
+            },
+          ];
+          saveMessages(next);
+          return next;
+        });
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [isSending, activeUserId, activeIncidentId, activeCveId, saveMessages]
+  );
+
+  // Consume injected prompts (e.g. from dashboard action buttons)
+  useEffect(() => {
+    if (promptToInject && isChatOpen && !isSending) {
+      const p = promptToInject;
+      setPromptToInject(null);
+      sendMessage(p);
+    }
+  }, [promptToInject, isChatOpen, isSending, sendMessage, setPromptToInject]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     sendMessage(input);
   };
 
+  const dynamicSuggestions = activeIncidentId
+    ? [
+        `Investigate ${activeIncidentId}`,
+        "What is the mitigation plan?",
+        "What assets are affected?",
+        "Show me today's critical incidents",
+      ]
+    : DEFAULT_SUGGESTIONS;
+
   return (
     <>
+      {/* Floating Toggle Button */}
       <button
-        onClick={() => setIsOpen((v) => !v)}
+        onClick={() => setIsChatOpen(!isChatOpen)}
         className={cn(
-          "fixed bottom-5 right-5 z-[100] h-14 w-14 rounded-full shadow-lg flex items-center justify-center transition-all cursor-pointer",
-          "bg-primary hover:scale-105 active:scale-95"
+          "fixed bottom-5 right-5 z-[100] h-13 w-13 rounded-2xl shadow-xl flex items-center justify-center transition-all duration-200 cursor-pointer",
+          "bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] hover:scale-105 active:scale-95 border border-[var(--sd-border)] text-[#f7f4ed]"
         )}
-        aria-label={isOpen ? "Close ShieldDesk Assistant" : "Open ShieldDesk Assistant"}
+        aria-label={isChatOpen ? "Close ShieldDesk Assistant" : "Open ShieldDesk Assistant"}
       >
         <AnimatePresence mode="wait" initial={false}>
-          {isOpen ? (
-            <motion.span key="close" initial={{ rotate: -90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: 90, opacity: 0 }} transition={{ duration: 0.15 }}>
-              <X className="h-6 w-6 text-foreground" />
+          {isChatOpen ? (
+            <motion.span
+              key="close"
+              initial={{ rotate: -90, opacity: 0 }}
+              animate={{ rotate: 0, opacity: 1 }}
+              exit={{ rotate: 90, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <X className="h-6 w-6" />
             </motion.span>
           ) : (
-            <motion.span key="open" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }} transition={{ duration: 0.15 }}>
-              <ShieldHalf className="h-6 w-6 text-foreground" />
+            <motion.span
+              key="open"
+              initial={{ rotate: 90, opacity: 0 }}
+              animate={{ rotate: 0, opacity: 1 }}
+              exit={{ rotate: -90, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <Shield className="h-6 w-6" />
             </motion.span>
           )}
         </AnimatePresence>
       </button>
 
+      {/* Chat Window */}
       <AnimatePresence>
-        {isOpen && (
+        {isChatOpen && (
           <motion.div
             initial={{ opacity: 0, y: 16, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16, scale: 0.97 }}
             transition={{ duration: 0.18 }}
-            className="fixed bottom-[calc(5rem+12px)] right-5 z-[100] w-[380px] max-w-[calc(100vw-3rem)] h-[520px] max-h-[calc(100vh-14rem)] rounded-2xl border border-border bg-[var(--sd-panel)] shadow-2xl flex flex-col overflow-hidden"
+            className="fixed bottom-[calc(4.75rem+12px)] right-5 z-[100] w-[420px] max-w-[calc(100vw-2.5rem)] h-[580px] max-h-[calc(100vh-8rem)] rounded-2xl border border-[var(--sd-border)] bg-white shadow-2xl flex flex-col overflow-hidden font-sans"
           >
-            <div className="shrink-0 px-4 py-3 border-b border-border flex items-center gap-2">
-              <ShieldHalf className="h-4 w-4 text-primary" />
-              <span className="text-sm font-bold text-foreground">ShieldDesk Assistant</span>
+            {/* Header: Title + Role Switcher + Controls */}
+            <div className="shrink-0 px-4 py-3 border-b border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/60 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs">
+                  <Shield className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-[var(--sd-pine)]">ShieldDesk</span>
+                    <span className="rounded bg-white border border-[var(--sd-border)] px-1.5 py-0.2 text-[9px] font-bold text-[var(--sd-pine)] uppercase tracking-wide font-mono shadow-xs">
+                      AI SOC
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-[var(--sd-text-muted)] truncate flex items-center gap-1">
+                    <span>{activeUser.tenantName}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Header Right: Persona Selector & Clear */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {/* Persona Switcher Dropdown */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsRoleDropdownOpen((v) => !v)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-[10.5px] font-semibold text-[var(--sd-pine)] transition-all cursor-pointer shadow-xs"
+                    title="Switch Dev Persona / RBAC Role"
+                  >
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        activeUserId === "dev-admin"
+                          ? "bg-[#9333ea]"
+                          : activeUserId === "dev-other"
+                            ? "bg-[#d97706]"
+                            : "bg-[var(--sd-success)]"
+                      )}
+                    />
+                    <span className="truncate max-w-[70px]">{activeUser.label}</span>
+                    <ChevronDown className="h-3 w-3 opacity-60" />
+                  </button>
+
+                  <AnimatePresence>
+                    {isRoleDropdownOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 4, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 4, scale: 0.95 }}
+                        transition={{ duration: 0.12 }}
+                        className="absolute right-0 top-full mt-1.5 w-56 rounded-xl border border-[var(--sd-border)] bg-white p-1 shadow-2xl z-50"
+                      >
+                        <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--sd-text-muted)] border-b border-[var(--sd-border)] font-mono">
+                          Dev RBAC Persona Switcher
+                        </div>
+                        {Object.values(DEV_USERS).map((user) => (
+                          <button
+                            key={user.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveUserId(user.id);
+                              setIsRoleDropdownOpen(false);
+                            }}
+                            className={cn(
+                              "w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors flex flex-col gap-0.5 cursor-pointer",
+                              user.id === activeUserId
+                                ? "bg-[var(--sd-pine)] text-[#f7f4ed] font-semibold shadow-xs"
+                                : "hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+                            )}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span>{user.label}</span>
+                              <span className="text-[9.5px] font-mono opacity-80">
+                                {user.role === "system_admin" ? "Cross-Tenant" : user.tenantId}
+                              </span>
+                            </div>
+                            <span className="text-[10px] opacity-75 font-normal leading-tight">
+                              {user.description}
+                            </span>
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {/* Clear Chat Button */}
+                <button
+                  type="button"
+                  onClick={clearChat}
+                  className="h-7 w-7 rounded-md border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-danger-dim)] hover:border-[var(--sd-danger-border)] text-[var(--sd-text-muted)] hover:text-[var(--sd-danger)] flex items-center justify-center transition-colors cursor-pointer shadow-xs"
+                  title="Clear Chat History"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
 
+            {/* Active Context Banner */}
+            {activeIncidentId && (
+              <div className="shrink-0 px-3 py-1.5 bg-[var(--sd-bg-alt)] border-b border-[var(--sd-border)] flex items-center justify-between text-[11px] text-[var(--sd-pine)]">
+                <div className="flex items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                  <span>
+                    Active Context: <strong className="font-semibold text-[var(--sd-pine)] font-mono">{activeIncidentId}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveIncidentId(null)}
+                  className="text-[10px] text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] underline cursor-pointer"
+                >
+                  Clear context
+                </button>
+              </div>
+            )}
+
+            {/* Messages Area */}
             <div
               ref={messagesRef}
               onScroll={handleMessagesScroll}
-              className="relative flex-1 overflow-y-auto p-4 space-y-3 min-h-0"
+              className="relative flex-1 overflow-y-auto p-4 space-y-3 min-h-0 bg-white"
             >
               {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-4">
-                  <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-                    <Bot className="h-5 w-5 text-primary" />
+                <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-3">
+                  <div className="w-11 h-11 rounded-2xl bg-[var(--sd-bg-alt)] border border-[var(--sd-border)] flex items-center justify-center shadow-xs">
+                    <Bot className="h-6 w-6 text-[var(--sd-pine)]" />
                   </div>
-                  <p className="text-xs text-foreground/40">
-                    Ask about incidents, CVEs, or mitigation plans. I only
-                    retrieve what your role is permitted to see.
-                  </p>
-                  <div className="flex flex-col gap-1.5 w-full">
-                    {SUGGESTIONS.map((s) => (
+                  <div>
+                    <h4 className="text-xs font-bold text-[var(--sd-pine)]">ShieldDesk Autonomous Co-Pilot</h4>
+                    <p className="mt-1 text-[11px] text-[var(--sd-text-muted)] max-w-[280px] leading-relaxed">
+                      Ask questions about active incidents, investigate telemetry, or look up CVE threat intelligence.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-1.5 w-full mt-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--sd-pine)] text-left px-1 flex items-center gap-1 font-mono">
+                      <Sparkles className="h-3 w-3 text-[var(--sd-pine)]" /> Suggested Inquiries
+                    </span>
+                    {dynamicSuggestions.map((s) => (
                       <button
                         key={s}
                         onClick={() => sendMessage(s)}
-                        className="px-3 py-2 rounded-lg border border-border text-[11px] text-foreground/70 hover:text-foreground hover:border-primary/30 transition-all text-left cursor-pointer"
+                        className="px-3 py-2 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[11px] text-[var(--sd-text)] hover:text-[var(--sd-pine)] hover:border-[var(--sd-border-strong)] transition-all text-left cursor-pointer flex items-center justify-between shadow-xs"
                       >
-                        {s}
+                        <span className="truncate">{s}</span>
+                        <Send className="h-2.5 w-2.5 text-[var(--sd-pine)] opacity-60 shrink-0 ml-1" />
                       </button>
                     ))}
                   </div>
@@ -239,74 +462,87 @@ export function ChatWidget() {
                       animate={{ opacity: 1, y: 0 }}
                       className={cn("flex items-start gap-2", m.role === "user" && "flex-row-reverse")}
                     >
-                      <Avatar className="w-6 h-6 border border-border shrink-0 mt-0.5">
+                      <Avatar className="w-6 h-6 border border-[var(--sd-border)] shrink-0 mt-0.5">
                         <AvatarFallback
                           className={cn(
                             "text-[10px] font-bold",
-                            m.role === "assistant" ? "bg-primary/20 text-primary/80" : "bg-muted text-foreground/70"
+                            m.role === "assistant" ? "bg-[var(--sd-bg-alt)] text-[var(--sd-pine)]" : "bg-[var(--sd-pine)] text-[#f7f4ed]"
                           )}
                         >
-                          {m.role === "assistant" ? <Bot className="w-3 h-3" /> : <UserIcon className="w-3 h-3" />}
+                          {m.role === "assistant" ? <Bot className="w-3.5 h-3.5 text-[var(--sd-pine)]" /> : <UserIcon className="w-3 h-3" />}
                         </AvatarFallback>
                       </Avatar>
                       <div
                         className={cn(
-                          "max-w-[80%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap",
+                          "max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed",
                           m.role === "user"
-                            ? "bg-primary text-foreground rounded-tr-sm"
+                            ? "bg-[var(--sd-pine)] text-[#f7f4ed] rounded-tr-sm shadow-xs"
                             : m.isError
-                              ? "bg-rose-950/40 border border-rose-500/20 text-rose-300 rounded-tl-sm"
-                              : "border border-border text-foreground/90 rounded-tl-sm"
+                              ? "bg-[var(--sd-danger-dim)] border border-[var(--sd-danger-border)] text-[var(--sd-danger)] rounded-tl-sm"
+                              : "border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-[var(--sd-text)] rounded-tl-sm shadow-xs"
                         )}
                       >
-                        {m.content}
+                        {m.role === "assistant" && !m.isError ? (
+                          <FormattedAssistantMessage content={m.content} />
+                        ) : (
+                          <div className="whitespace-pre-wrap">{m.content}</div>
+                        )}
                       </div>
                     </motion.div>
                   ))}
                 </AnimatePresence>
               )}
 
+              {/* Streaming loading indicator */}
               {isSending && (
                 <div className="flex items-start gap-2">
-                  <Avatar className="w-6 h-6 border border-border shrink-0 mt-0.5">
-                    <AvatarFallback className="bg-primary/20 text-primary/80">
-                      <Bot className="w-3 h-3" />
+                  <Avatar className="w-6 h-6 border border-[var(--sd-border)] shrink-0 mt-0.5">
+                    <AvatarFallback className="bg-[var(--sd-bg-alt)] text-[var(--sd-pine)]">
+                      <Bot className="w-3.5 h-3.5 text-[var(--sd-pine)]" />
                     </AvatarFallback>
                   </Avatar>
-                  <div className="border border-border rounded-xl rounded-tl-sm px-3 py-2 flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-foreground/30 animate-bounce [animation-delay:-0.3s]" />
-                    <span className="w-1 h-1 rounded-full bg-foreground/30 animate-bounce [animation-delay:-0.15s]" />
-                    <span className="w-1 h-1 rounded-full bg-foreground/30 animate-bounce" />
+                  <div className="border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] rounded-2xl rounded-tl-sm px-3.5 py-2.5 flex items-center gap-1.5 shadow-xs">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--sd-pine)] animate-bounce [animation-delay:-0.3s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--sd-pine)] animate-bounce [animation-delay:-0.15s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--sd-pine)] animate-bounce" />
+                    <span className="text-[10px] text-[var(--sd-text-muted)] ml-1 font-mono">Analyzing SOC telemetry...</span>
                   </div>
                 </div>
               )}
 
+              {/* Scroll to latest button */}
               {!shouldFollowLatest && messages.length > 0 && (
                 <button
                   type="button"
                   onClick={scrollToLatest}
-                  className="sticky bottom-0 mx-auto flex items-center gap-1 rounded-full border border-border bg-[var(--sd-panel)] px-2.5 py-1 text-[10px] text-foreground/70 shadow-md transition-colors hover:border-primary/40 hover:text-foreground"
+                  className="sticky bottom-1 mx-auto flex items-center gap-1 rounded-full border border-[var(--sd-border)] bg-white px-3 py-1 text-[10px] font-medium text-[var(--sd-pine)] shadow-md hover:border-[var(--sd-border-strong)] cursor-pointer"
                   aria-label="Jump to latest response"
                 >
-                  <ArrowDown className="h-3 w-3" />
-                  Latest response
+                  <ArrowDown className="h-3 w-3 text-[var(--sd-pine)]" />
+                  Jump to latest
                 </button>
               )}
             </div>
 
-            <form onSubmit={handleSubmit} className="shrink-0 border-t border-border p-3 flex items-center gap-2">
+            {/* Input Bar */}
+            <form onSubmit={handleSubmit} className="shrink-0 border-t border-[var(--sd-border)] p-3 bg-[var(--sd-bg-alt)]/40 flex items-center gap-2">
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask about an incident, CVE, or mitigation plan..."
+                placeholder={
+                  activeIncidentId
+                    ? `Ask about ${activeIncidentId} or 'investigate this'...'`
+                    : "Ask about an incident, CVE, or mitigation plan..."
+                }
                 maxLength={4000}
                 disabled={isSending}
-                className="flex-1 h-9 rounded-lg border border-border px-3 text-xs text-foreground placeholder:text-foreground/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary bg-background disabled:opacity-50"
+                className="flex-1 h-9 rounded-xl border border-[var(--sd-border)] px-3 text-xs text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--sd-pine)] bg-white disabled:opacity-50 shadow-xs"
               />
               <button
                 type="submit"
                 disabled={isSending || !input.trim()}
-                className="h-9 w-9 rounded-lg bg-primary hover:bg-primary disabled:opacity-40 text-foreground flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                className="h-9 w-9 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] disabled:opacity-40 text-[#f7f4ed] flex items-center justify-center transition-all cursor-pointer shrink-0 shadow-xs"
+                aria-label="Send message"
               >
                 <Send className="h-3.5 w-3.5" />
               </button>

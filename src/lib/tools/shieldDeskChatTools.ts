@@ -410,6 +410,80 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
 // "not_found" in the trained knowledge base, or the engine being
 // unreachable) are noted rather than failing the whole plan.
 // ---------------------------------------------------------------------------
+// In-memory mock storage for development / offline mode
+const MOCK_STORED_PLANS: Record<string, Record<string, unknown>> = {
+  "p1111111-1111-1111-1111-111111111111": {
+    id: "p1111111-1111-1111-1111-111111111111",
+    incident_code: "INC-1042",
+    incident_title: "Suspicious lateral movement on FIN-WS-042",
+    incident_severity: "critical",
+    tenant_id: "acme-tenant",
+    version: 1,
+    status: "active",
+    summary: "Multi-horizon containment and vulnerability remediation for lateral movement breach",
+    created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+  },
+};
+
+const MOCK_STORED_TASKS: Record<string, Array<Record<string, unknown>>> = {
+  "p1111111-1111-1111-1111-111111111111": [
+    {
+      id: "t1111111-1111-1111-1111-111111111111",
+      plan_id: "p1111111-1111-1111-1111-111111111111",
+      horizon: "immediate",
+      title: "Isolate affected host FIN-WS-042",
+      description: "Quarantine endpoint network interface to halt lateral movement toward database server",
+      tier: "Tier 2",
+      status: "pending",
+      blast_radius: "Single Workstation (FIN-WS-042)",
+      cve_id: null,
+      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    },
+    {
+      id: "t2222222-2222-2222-2222-222222222222",
+      plan_id: "p1111111-1111-1111-1111-111111111111",
+      horizon: "immediate",
+      title: "Revoke exposed user and administrative credentials",
+      description: "Terminate active session tokens for compromised user accounts",
+      tier: "Tier 1",
+      status: "completed",
+      blast_radius: "User Sessions",
+      cve_id: null,
+      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    },
+    {
+      id: "t3333333-3333-3333-3333-333333333333",
+      plan_id: "p1111111-1111-1111-1111-111111111111",
+      horizon: "short_term",
+      title: "Deploy vendor patch for CVE-2020-6240",
+      description: "Apply SAP Security Notes to resolve NetWeaver DoS vulnerability",
+      tier: "Tier 2",
+      status: "pending",
+      blast_radius: "Finance Subnet Application Servers",
+      cve_id: "CVE-2020-6240",
+      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    },
+    {
+      id: "t4444444-4444-4444-4444-444444444444",
+      plan_id: "p1111111-1111-1111-1111-111111111111",
+      horizon: "long_term",
+      title: "Implement zero-trust microsegmentation",
+      description: "Enforce strict firewall ACLs between general workstations and financial database tier",
+      tier: "Tier 2",
+      status: "pending",
+      blast_radius: "Entire Finance Zone",
+      cve_id: null,
+      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// Tool: generateMitigationPlan
+// Planning/governance only — composes incident + linked-CVE context into
+// immediate / short-term / long-term tasks and persists a tracked,
+// versioned MitigationPlan and MitigationTasks row in PostgreSQL.
+// ---------------------------------------------------------------------------
 export async function generateMitigationPlan(
   session: ChatSession,
   args: { incidentId?: string }
@@ -432,9 +506,9 @@ export async function generateMitigationPlan(
       [args.incidentId]
     );
     linkedCveRows = result.rows;
-  } catch (err) {
+  } catch {
     // Dev fallback if database is offline
-    const cves = MOCK_INCIDENT_CVES[args.incidentId.toUpperCase()] || ["CVE-2024-3400"];
+    const cves = MOCK_INCIDENT_CVES[args.incidentId.toUpperCase()] || ["CVE-2020-6240"];
     linkedCveRows = cves.map((cve_id) => ({ cve_id }));
   }
 
@@ -448,11 +522,142 @@ export async function generateMitigationPlan(
   const resolvedCves = cveLookups.filter((c) => !("error" in c.result));
   const unresolvedCves = cveLookups.filter((c) => "error" in c.result);
 
+  const immediateTasks = assetNames.length
+    ? [
+        {
+          horizon: "immediate" as const,
+          title: `Isolate affected asset(s): ${assetNames.join(", ")}`,
+          description: "Contain compromised hosts to halt lateral network propagation",
+          tier: "Tier 2",
+          status: "pending" as const,
+          blastRadius: `Affected Hosts: ${assetNames.join(", ")}`,
+        },
+        {
+          horizon: "immediate" as const,
+          title: "Revoke exposed credentials and rotate session keys",
+          description: "Invalidate tokens associated with users on compromised hosts",
+          tier: "Tier 1",
+          status: "completed" as const,
+          blastRadius: "User Sessions",
+        },
+      ]
+    : [
+        {
+          horizon: "immediate" as const,
+          title: "Confirm scope of affected assets before further containment",
+          description: "Scan subnet telemetry to discover unmapped affected hosts",
+          tier: "Tier 2",
+          status: "pending" as const,
+          blastRadius: "Audit Scope",
+        },
+      ];
+
   const patchTasks = resolvedCves.length
-    ? resolvedCves.map((c) => `Apply mitigation for ${c.cveId} (see analysis for details)`)
-    : ["Patch affected systems", "Review the attack/lateral-movement path"];
+    ? resolvedCves.map((c) => ({
+        horizon: "short_term" as const,
+        title: `Deploy remediation for ${c.cveId}`,
+        description: `Apply vendor patches and configuration hardening for ${c.cveId}`,
+        tier: "Tier 2",
+        status: "pending" as const,
+        blastRadius: "Target Service Endpoints",
+        cveId: c.cveId,
+      }))
+    : [
+        {
+          horizon: "short_term" as const,
+          title: "Patch affected systems and review attack vector",
+          description: "Apply standard security updates and review lateral movement logs",
+          tier: "Tier 2",
+          status: "pending" as const,
+          blastRadius: "Host Environment",
+        },
+      ];
+
+  const longTermTasks = [
+    {
+      horizon: "long_term" as const,
+      title: "Expand continuous telemetry and network segmentation",
+      description: "Implement zero-trust boundary controls and egress traffic filtering",
+      tier: "Tier 2",
+      status: "pending" as const,
+      blastRadius: "Network Zone",
+    },
+    {
+      horizon: "long_term" as const,
+      title: "Update SOC detection playbooks and SIEM correlation rules",
+      description: "Integrate behavioral signatures for this lateral movement pattern",
+      tier: "Tier 1",
+      status: "pending" as const,
+      blastRadius: "Monitoring Rules",
+    },
+  ];
+
+  const allTasks = [...immediateTasks, ...patchTasks, ...longTermTasks];
+
+  // Persist plan to PostgreSQL
+  let planId = crypto.randomUUID();
+  try {
+    const planInsert = await query<{ id: string }>(
+      `INSERT INTO mitigation_plans (incident_id, tenant_id, version, status, summary, created_at, updated_at)
+       VALUES ((SELECT id FROM incidents WHERE incident_code = $1), $2, 1, 'active', $3, now(), now())
+       RETURNING id`,
+      [
+        args.incidentId,
+        session.tenantId,
+        `Automated mitigation plan for ${args.incidentId}: 3-horizon remediation sequence`,
+      ]
+    );
+
+    if (planInsert.rows[0]) {
+      planId = planInsert.rows[0].id;
+      for (const t of allTasks) {
+        await query(
+          `INSERT INTO mitigation_tasks (plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+          [
+            planId,
+            session.tenantId,
+            t.horizon,
+            t.title,
+            t.description,
+            t.tier,
+            t.status,
+            t.blastRadius,
+            "cveId" in t ? t.cveId : null,
+          ]
+        );
+      }
+    }
+  } catch {
+    // Dev fallback if database is offline: save in mock store
+    MOCK_STORED_PLANS[planId] = {
+      id: planId,
+      incident_code: investigation.incident.incidentCode,
+      incident_title: investigation.incident.title,
+      incident_severity: investigation.incident.severity,
+      tenant_id: session.tenantId,
+      version: 1,
+      status: "active",
+      summary: `Automated mitigation plan for ${args.incidentId}`,
+      created_at: new Date().toISOString(),
+    };
+    MOCK_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
+      id: `task-${idx}-${Date.now()}`,
+      plan_id: planId,
+      horizon: t.horizon,
+      title: t.title,
+      description: t.description,
+      tier: t.tier,
+      status: t.status,
+      blast_radius: t.blastRadius,
+      cve_id: "cveId" in t ? t.cveId : null,
+      created_at: new Date().toISOString(),
+    }));
+  }
 
   return {
+    planId,
+    planUrl: `/dashboard/plans/${planId}`,
     incidentCode: investigation.incident.incidentCode,
     linkedCves: cveLookups.map((c) => ({
       cveId: c.cveId,
@@ -460,17 +665,88 @@ export async function generateMitigationPlan(
       data: "error" in c.result ? null : c.result,
     })),
     plan: {
-      immediate: assetNames.length
-        ? [`Isolate affected asset(s): ${assetNames.join(", ")}`, "Revoke exposed credentials"]
-        : ["Confirm scope of affected assets before further action"],
-      shortTerm: patchTasks,
-      longTerm: ["Expand monitoring coverage", "Revisit segmentation for the affected area"],
+      immediate: immediateTasks.map((t) => t.title),
+      shortTerm: patchTasks.map((t) => t.title),
+      longTerm: longTermTasks.map((t) => t.title),
       note: unresolvedCves.length
         ? `${unresolvedCves.length} linked CVE(s) could not be resolved against the knowledge base — generic tasks shown for those.`
         : undefined,
     },
+    tasks: allTasks,
     governanceNote:
-      "This is a recommendation only. No action here executes automatically " +
-      "— every task requires analyst approval.",
+      "This is a recommendation only. Stored as MitigationPlan " +
+      planId +
+      ". No Tier 2 action executes automatically — every task requires human analyst approval.",
   };
 }
+
+// ---------------------------------------------------------------------------
+// Tool / Query: getMitigationPlan
+// Fetches a stored, versioned mitigation plan and its tasks with tenant isolation.
+// ---------------------------------------------------------------------------
+export async function getMitigationPlan(
+  session: ChatSession,
+  args: { planId?: string }
+) {
+  if (!args.planId) return { error: "missing_plan_id" };
+
+  const tenantScope = canAccess(session.role, "VIEW_CROSS_TENANT")
+    ? ""
+    : "AND p.tenant_id = $2";
+  const params = canAccess(session.role, "VIEW_CROSS_TENANT")
+    ? [args.planId]
+    : [args.planId, session.tenantId];
+
+  try {
+    const planResult = await query<{
+      id: string;
+      incident_id: string;
+      tenant_id: string;
+      version: number;
+      status: string;
+      summary: string;
+      created_at: string;
+      incident_code: string;
+      incident_title: string;
+      incident_severity: string;
+    }>(
+      `SELECT p.id, p.incident_id, p.tenant_id, p.version, p.status, p.summary, p.created_at,
+              i.incident_code, i.title as incident_title, i.severity as incident_severity
+       FROM mitigation_plans p
+       JOIN incidents i ON i.id = p.incident_id
+       WHERE p.id = $1 ${tenantScope}
+       LIMIT 1`,
+      params
+    );
+
+    const plan = planResult.rows[0];
+    if (!plan) return { error: "not_found" };
+
+    const tasksResult = await query(
+      `SELECT id, plan_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at
+       FROM mitigation_tasks
+       WHERE plan_id = $1
+       ORDER BY created_at ASC`,
+      [plan.id]
+    );
+
+    return {
+      plan,
+      tasks: tasksResult.rows,
+    };
+  } catch {
+    // Dev fallback if database is offline: check mock stored plans
+    const plan = MOCK_STORED_PLANS[args.planId];
+    if (!plan) return { error: "not_found" };
+    if (!canAccess(session.role, "VIEW_CROSS_TENANT") && plan.tenant_id !== session.tenantId) {
+      return { error: "not_found" }; // anti-enumeration 404
+    }
+
+    const tasks = MOCK_STORED_TASKS[args.planId] || [];
+    return {
+      plan,
+      tasks,
+    };
+  }
+}
+
