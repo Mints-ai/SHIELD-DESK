@@ -321,9 +321,17 @@ export default function SOCDashboardPage() {
                       }
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition-all cursor-pointer shadow-xs"
                     >
-                      <FileText className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                      <Sparkles className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
                       Plan Mitigation
                     </button>
+                    <Link
+                      href="/dashboard/plans"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition-all cursor-pointer shadow-xs"
+                      title="View all 3-Horizon Mitigation Plans"
+                    >
+                      <FileText className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                      View Plans
+                    </Link>
                   </div>
                 </div>
 

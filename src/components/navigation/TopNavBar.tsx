@@ -12,6 +12,7 @@ import {
   CheckSquare,
   Server,
   FileCheck2,
+  FileText,
   BarChart3,
   LogIn,
   Scan,
@@ -71,6 +72,7 @@ export function TopNavBar() {
 
   const navLinks = [
     { href: "/", label: "Incident Queue", icon: Layers },
+    { href: "/dashboard/plans", label: "Mitigation Plans", icon: FileText },
     { href: "/dashboard/tasks", label: "Task Board", icon: CheckSquare },
     { href: "/dashboard/fleet", label: "Fleet & Host", icon: Server },
     { href: "/dashboard/scanner", label: "Security Scanner", icon: Scan },
