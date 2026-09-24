@@ -5,6 +5,13 @@ import { getComplianceSummary, exportAuditEvidencePackage } from "@/lib/complian
 export async function GET(req: NextRequest) {
   try {
     const caller = await getSessionUser(req);
+    if (!caller) {
+      return NextResponse.json(
+        { error: "Unauthorized: Valid authentication session required" },
+        { status: 401 }
+      );
+    }
+
     const url = new URL(req.url);
     const isExport = url.searchParams.get("export") === "true";
 

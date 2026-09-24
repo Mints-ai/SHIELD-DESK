@@ -5,8 +5,14 @@ import { triggerKillSwitch } from "@/lib/fleet/fleet";
 export async function POST(req: NextRequest) {
   try {
     const caller = await getSessionUser(req);
-    const body = await req.json().catch(() => ({}));
+    if (!caller) {
+      return NextResponse.json(
+        { error: "Unauthorized: Valid authentication session required" },
+        { status: 401 }
+      );
+    }
 
+    const body = await req.json().catch(() => ({}));
     const { agentId, active = true } = body;
 
     const result = await triggerKillSwitch({

@@ -1,27 +1,104 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { query } from "@/lib/db";
 import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
 
-export async function POST(req: NextRequest) {
-  // 1. API Key Authentication
-  const apiKeyHeader = req.headers.get("x-shielddesk-api-key") || req.headers.get("authorization");
-  const configuredKey = process.env.SHIELDDESK_INGEST_API_KEY;
+/**
+ * Resolves the authenticated tenant from the supplied API key.
+ * Enforces fail-closed authentication and constant-time comparison (S6).
+ */
+function authenticateIngestKey(apiKeyHeader: string | null): { authenticated: boolean; tenantId?: string; errorStatus?: number; error?: string } {
+  const configuredSingleKey = process.env.SHIELDDESK_INGEST_API_KEY;
+  const configuredMultiKeysJson = process.env.SHIELDDESK_INGEST_API_KEYS;
 
-  if (configuredKey) {
-    if (!apiKeyHeader) {
-      return NextResponse.json({ error: "Unauthorized: Missing API Key" }, { status: 401 });
-    }
-    const key = apiKeyHeader.replace(/^Bearer\s+/i, "").trim();
-    if (key !== configuredKey) {
-      return NextResponse.json({ error: "Unauthorized: Invalid API Key" }, { status: 401 });
+  // Fail closed if no ingestion keys are configured on the server
+  if (!configuredSingleKey && !configuredMultiKeysJson) {
+    return {
+      authenticated: false,
+      errorStatus: 503,
+      error: "Service Unavailable: Ingestion API key is not configured on this server.",
+    };
+  }
+
+  if (!apiKeyHeader) {
+    return {
+      authenticated: false,
+      errorStatus: 401,
+      error: "Unauthorized: Missing API Key.",
+    };
+  }
+
+  const rawKey = apiKeyHeader.replace(/^Bearer\s+/i, "").trim();
+  const rawKeyBuf = Buffer.from(rawKey, "utf8");
+
+  // 1. Check multi-tenant key mapping (API Key -> Tenant ID)
+  if (configuredMultiKeysJson) {
+    try {
+      const keyMap: Record<string, string> = JSON.parse(configuredMultiKeysJson);
+      for (const [validKey, boundTenant] of Object.entries(keyMap)) {
+        const validKeyBuf = Buffer.from(validKey, "utf8");
+        if (
+          rawKeyBuf.length === validKeyBuf.length &&
+          crypto.timingSafeEqual(rawKeyBuf, validKeyBuf)
+        ) {
+          return { authenticated: true, tenantId: boundTenant };
+        }
+      }
+    } catch {
+      console.error("[Ingest] Invalid JSON in SHIELDDESK_INGEST_API_KEYS configuration.");
     }
   }
 
-  // 2. Tenant Resolution
-  const tenantId =
-    req.headers.get("x-shielddesk-tenant") ||
-    req.headers.get("x-tenant-id") ||
-    "acme-tenant";
+  // 2. Check primary single key
+  if (configuredSingleKey) {
+    const configuredKeyBuf = Buffer.from(configuredSingleKey, "utf8");
+    if (
+      rawKeyBuf.length === configuredKeyBuf.length &&
+      crypto.timingSafeEqual(rawKeyBuf, configuredKeyBuf)
+    ) {
+      // Single key bound to default tenant or configured tenant
+      const defaultTenant = process.env.SHIELDDESK_INGEST_TENANT || "acme-tenant";
+      return { authenticated: true, tenantId: defaultTenant };
+    }
+  }
+
+  return {
+    authenticated: false,
+    errorStatus: 401,
+    error: "Unauthorized: Invalid API Key.",
+  };
+}
+
+export async function POST(req: NextRequest) {
+  // 1. API Key Authentication (S6: Fail-closed, constant-time)
+  const apiKeyHeader =
+    req.headers.get("x-shielddesk-api-key") || req.headers.get("authorization");
+
+  const authResult = authenticateIngestKey(apiKeyHeader);
+  if (!authResult.authenticated) {
+    return NextResponse.json(
+      { error: authResult.error },
+      { status: authResult.errorStatus || 401 }
+    );
+  }
+
+  // 2. Tenant Resolution (S6: Derived from authenticated key; forbid cross-tenant injection)
+  const requestedTenant =
+    req.headers.get("x-shielddesk-tenant") || req.headers.get("x-tenant-id");
+
+  let tenantId = authResult.tenantId || "acme-tenant";
+
+  // If a multi-tenant master key is used or header is supplied, verify tenant boundaries
+  if (requestedTenant) {
+    // In multi-tenant environments, if the key is explicitly bound to a tenant, it cannot spoof another
+    if (authResult.tenantId && authResult.tenantId !== "master" && authResult.tenantId !== requestedTenant) {
+      return NextResponse.json(
+        { error: `Forbidden: Provided API key is not authorized for tenant '${requestedTenant}'.` },
+        { status: 403 }
+      );
+    }
+    tenantId = requestedTenant;
+  }
 
   let body: any;
   try {

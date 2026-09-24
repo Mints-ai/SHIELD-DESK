@@ -10,6 +10,7 @@ test("ShieldDesk Public Ingestion & Webhook Normalizer Suite", async (t) => {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        "x-shielddesk-api-key": "test-ingest-api-key-12345",
         "x-shielddesk-tenant": "acme-tenant",
       },
       body: JSON.stringify({
@@ -40,6 +41,7 @@ test("ShieldDesk Public Ingestion & Webhook Normalizer Suite", async (t) => {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        "x-shielddesk-api-key": "test-ingest-api-key-12345",
         "x-shielddesk-tenant": "acme-tenant",
       },
       body: JSON.stringify({
@@ -66,6 +68,7 @@ test("ShieldDesk Public Ingestion & Webhook Normalizer Suite", async (t) => {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        "x-shielddesk-api-key": "test-globex-ingest-key",
         "x-shielddesk-tenant": "globex-tenant",
       },
       body: JSON.stringify({
@@ -97,6 +100,7 @@ test("ShieldDesk Public Ingestion & Webhook Normalizer Suite", async (t) => {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        "x-shielddesk-api-key": "test-ingest-api-key-12345",
       },
       body: "INVALID_JSON_PAYLOAD",
     });

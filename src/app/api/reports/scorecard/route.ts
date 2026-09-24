@@ -5,6 +5,13 @@ import { getExecutiveRiskScorecard } from "@/lib/reporting/scorecard";
 export async function GET(req: NextRequest) {
   try {
     const caller = await getSessionUser(req);
+    if (!caller) {
+      return NextResponse.json(
+        { error: "Unauthorized: Valid authentication session required" },
+        { status: 401 }
+      );
+    }
+
     const scorecard = await getExecutiveRiskScorecard(caller);
     return NextResponse.json(scorecard);
   } catch (err: unknown) {

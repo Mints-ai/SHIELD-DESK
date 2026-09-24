@@ -8,6 +8,13 @@ export async function GET(
 ) {
   try {
     const caller = await getSessionUser(req);
+    if (!caller) {
+      return NextResponse.json(
+        { error: "Unauthorized: Valid authentication session required" },
+        { status: 401 }
+      );
+    }
+
     const { id } = await params;
     const agent = await getEndpointAgent(id, caller);
 

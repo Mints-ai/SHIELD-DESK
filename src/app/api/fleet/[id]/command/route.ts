@@ -8,6 +8,13 @@ export async function POST(
 ) {
   try {
     const caller = await getSessionUser(req);
+    if (!caller) {
+      return NextResponse.json(
+        { error: "Unauthorized: Valid authentication session required" },
+        { status: 401 }
+      );
+    }
+
     const { id } = await params;
     const body = await req.json();
 
@@ -34,7 +41,11 @@ export async function POST(
     if (msg.includes("AGENT_NOT_FOUND")) {
       return NextResponse.json({ error: "Endpoint agent not found" }, { status: 404 });
     }
-    if (msg.includes("APPROVAL_TOKEN_REQUIRED") || msg.includes("APPROVAL_TOKEN_NOT_APPROVED") || msg.includes("APPROVAL_TOKEN_EXPIRED")) {
+    if (
+      msg.includes("APPROVAL_TOKEN_REQUIRED") ||
+      msg.includes("APPROVAL_TOKEN_NOT_APPROVED") ||
+      msg.includes("APPROVAL_TOKEN_EXPIRED")
+    ) {
       return NextResponse.json({ error: msg }, { status: 403 });
     }
     if (msg.includes("KILL_SWITCH_ACTIVE")) {

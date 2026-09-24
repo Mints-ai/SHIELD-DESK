@@ -13,11 +13,16 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
 -- its own login flow.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
-  id         text PRIMARY KEY,   -- opaque user id (dev mode: whatever the caller sends)
-  tenant_id  text NOT NULL,
-  role       text NOT NULL CHECK (role IN ('system_admin', 'super_admin', 'user')),
-  created_at timestamptz NOT NULL DEFAULT now()
+  id            text PRIMARY KEY,   -- opaque user id
+  tenant_id     text NOT NULL,
+  role          text NOT NULL CHECK (role IN ('system_admin', 'super_admin', 'user')),
+  email         text UNIQUE,
+  password_hash text,
+  created_at    timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email text UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash text;
+
 
 -- ---------------------------------------------------------------------------
 -- Incidents

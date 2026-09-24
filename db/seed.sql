@@ -1,12 +1,8 @@
--- Sample data for local development. One tenant, a few incidents/assets,
--- and a couple of dev users at different roles so RBAC is actually
--- exercisable, not just theoretical.
-
-INSERT INTO users (id, tenant_id, role) VALUES
-  ('dev-analyst', 'acme-tenant', 'user'),
-  ('dev-admin',   'acme-tenant', 'system_admin'),
-  ('dev-other',   'globex-tenant', 'user')
+-- Production baseline seeds. Dev personas are separated in db/seed.dev.sql
+INSERT INTO users (id, tenant_id, role, email) VALUES
+  ('system-air', 'acme-tenant', 'system_admin', 'system-air@internal.shielddesk')
 ON CONFLICT (id) DO NOTHING;
+
 
 INSERT INTO assets (id, tenant_id, hostname, asset_type) VALUES
   ('a1111111-1111-1111-1111-111111111111', 'acme-tenant', 'FIN-WS-042', 'workstation'),
@@ -73,7 +69,7 @@ INSERT INTO approval_tokens (
   'isolate_host',
   'Tier 2',
   'pending',
-  'dev-analyst',
+  'system-air',
   NULL,
   'Workstation FIN-WS-042 (Finance Subnet)',
   0.96,
@@ -107,7 +103,7 @@ INSERT INTO hash_chain_audit (
   id, tenant_id, event_type, actor_id, payload, prev_hash, current_hash
 ) VALUES
   ('hc000000-0000-0000-0000-000000000000', 'acme-tenant', 'GENESIS', 'system-init', '{"msg":"ShieldDesk Hash Chain Genesis"}'::jsonb, '0000000000000000000000000000000000000000000000000000000000000000', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
-  ('hc111111-1111-1111-1111-111111111111', 'acme-tenant', 'TOKEN_REQUEST', 'dev-analyst', '{"action":"isolate_host","host":"FIN-WS-042","tier":"Tier 2"}'::jsonb, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'a1f8c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b899')
+  ('hc111111-1111-1111-1111-111111111111', 'acme-tenant', 'TOKEN_REQUEST', 'system-air', '{"action":"isolate_host","host":"FIN-WS-042","tier":"Tier 2"}'::jsonb, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'a1f8c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b899')
 ON CONFLICT (id) DO NOTHING;
 
 

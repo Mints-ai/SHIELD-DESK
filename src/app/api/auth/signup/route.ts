@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/security/rateLimit";
 import { query } from "@/lib/db";
 import { supabaseServer } from "@/lib/supabase/server";
+import { createSessionToken } from "@/lib/auth/token";
+import { hashPassword } from "@/lib/auth/password";
+import type { ShieldDeskRole } from "@/lib/permissions";
 
 export async function POST(req: NextRequest) {
-  const clientIp = req.headers.get("x-forwarded-for") || "127.0.0.1";
+  const forwarded = req.headers.get("x-forwarded-for");
+  const clientIp = forwarded ? forwarded.split(",")[0].trim() : "127.0.0.1";
   const rateLimit = checkRateLimit(`signup:${clientIp}`, { limit: 5, windowMs: 60000 });
 
   if (!rateLimit.allowed) {
@@ -18,13 +22,21 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { email, password, organizationName, role = "user" } = body;
 
-    if (!email || !password) {
+    if (!email || !password || typeof email !== "string" || typeof password !== "string") {
       return NextResponse.json(
-        { error: "Email and password are required." },
+        { error: "Valid email and password are required." },
         { status: 400 }
       );
     }
 
+    if (password.length < 8) {
+      return NextResponse.json(
+        { error: "Password must be at least 8 characters long." },
+        { status: 400 }
+      );
+    }
+
+    const assignedRole: ShieldDeskRole = role === "system_admin" ? "system_admin" : "user";
     const tenantId = organizationName
       ? organizationName.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-tenant"
       : "custom-tenant";
@@ -38,9 +50,7 @@ export async function POST(req: NextRequest) {
         password,
         options: {
           data: {
-            tenant_id: tenantId,
             organization_name: organizationName || "Default Organization",
-            role: role === "system_admin" ? "system_admin" : "user",
           },
         },
       });
@@ -54,26 +64,35 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Persist to local PostgreSQL users table if database is accessible
+    // 2. Persist to local PostgreSQL users table with secure password hash
+    const hashedPassword = await hashPassword(password);
     try {
       await query(
-        `INSERT INTO users (id, tenant_id, role, email, created_at)
-         VALUES ($1, $2, $3, $4, now())
-         ON CONFLICT (id) DO NOTHING`,
-        [createdUid, tenantId, role, email]
+        `INSERT INTO users (id, tenant_id, role, email, password_hash, created_at)
+         VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
+        [createdUid, tenantId, assignedRole, email.toLowerCase().trim(), hashedPassword]
       );
-    } catch {
-      // Local table update is best effort if db container is warming up
+    } catch (dbErr) {
+      console.warn("[Signup] Local user persist warning:", dbErr);
     }
+
+    // S2: Cryptographically sign session token
+    const sessionToken = createSessionToken({
+      uid: createdUid,
+      tenantId,
+      role: assignedRole,
+    });
 
     const res = NextResponse.json({
       success: true,
       userId: createdUid,
       tenantId,
+      token: sessionToken,
       message: "Registration successful. Welcome to ShieldDesk SOC.",
     });
 
-    res.cookies.set("shielddesk_session", createdUid, {
+    res.cookies.set("shielddesk_session", sessionToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
