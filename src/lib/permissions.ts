@@ -67,6 +67,7 @@ export const TOOL_PERMISSIONS: Record<string, Permission> = {
   investigateIncident: "incident.investigate",
   analyzeCve: "cve.read",
   generateMitigationPlan: "incident.mitigate",
+  simulateBlastRadius: "cve.read",
 };
 
 export function canAccess(role: string, permission: Permission): boolean {

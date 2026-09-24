@@ -5,6 +5,7 @@ import {
   getIncidents,
   investigateIncident,
   generateMitigationPlan,
+  simulateBlastRadius,
   getMitigationPlan,
 } from "@/lib/tools";
 import { canAccess, canExecuteTool } from "@/lib/permissions";
@@ -90,11 +91,56 @@ describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
     // Viewer role
     assert.strictEqual(canExecuteTool("viewer", "getIncidents"), true);
     assert.strictEqual(canExecuteTool("viewer", "analyzeCve"), true);
+    assert.strictEqual(canExecuteTool("viewer", "simulateBlastRadius"), true);
     assert.strictEqual(canExecuteTool("viewer", "investigateIncident"), false);
     assert.strictEqual(canExecuteTool("viewer", "generateMitigationPlan"), false);
 
     // Unknown tool
     assert.strictEqual(canExecuteTool("system_admin", "unknownDestructiveTool"), false);
+  });
+
+  it("Priority 1: simulateBlastRadius computes downstream dependencies, posture delta, and isolation (Globex Analyst only)", async () => {
+    // 1. Authorization Gate: Non-Globex analyst (Acme) must be rejected
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blockedAcme: any = await simulateBlastRadius(acmeAnalyst, { cveId: "CVE-2024-6387" });
+    assert.ok("error" in blockedAcme, "Acme analyst must be denied blast radius simulation");
+    assert.strictEqual(blockedAcme.error, "not_authorized", "Must return not_authorized error for Acme analyst");
+
+    // 2. Blast radius simulation succeeds for authorized Globex Analyst
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cveRes: any = await simulateBlastRadius(globexAnalyst, { cveId: "CVE-2024-6387" });
+    assert.ok(cveRes.simulation, "Simulation object must be returned for Globex analyst");
+    assert.strictEqual(cveRes.simulation.target_cve, "CVE-2024-6387");
+    assert.ok(cveRes.simulation.downstream_dependencies.length >= 2, "Must identify downstream dependencies");
+    assert.ok(cveRes.simulation.posture_downgrade, "Must calculate posture downgrade");
+    assert.ok(cveRes.simulation.compliance_impact.length > 0, "Must calculate compliance impact");
+    assert.strictEqual(cveRes.simulation.layers.length, 4, "Must return 4 architectural layers");
+    assert.strictEqual(cveRes.simulation.layers[0].layer, "Initial Vector");
+    assert.strictEqual(cveRes.simulation.layers[1].layer, "Process Layer");
+    assert.strictEqual(cveRes.simulation.layers[2].layer, "Host System");
+    assert.strictEqual(cveRes.simulation.layers[3].layer, "Network Layer");
+
+    // 2b. Validate specialized CVE-2007-4475 matches exact expected visual table
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sapRes: any = await simulateBlastRadius(globexAnalyst, { cveId: "CVE-2007-4475" });
+    assert.ok(sapRes.simulation, "Must simulate CVE-2007-4475");
+    assert.strictEqual(sapRes.simulation.layers[0].damage_level, "Critical");
+    assert.strictEqual(sapRes.simulation.layers[1].damage_level, "High");
+    assert.strictEqual(sapRes.simulation.layers[2].damage_level, "Medium");
+    assert.strictEqual(sapRes.simulation.layers[3].damage_level, "Low-to-Medium");
+    assert.ok(sapRes.simulation.layers[0].scope.includes("SaveViewToSessionFile"));
+
+    // 2c. Validate dynamic synthesis on arbitrary CVE
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dynRes: any = await simulateBlastRadius(globexAnalyst, { cveId: "CVE-2023-9999" });
+    assert.ok(dynRes.simulation, "Must simulate dynamic arbitrary CVE");
+    assert.strictEqual(dynRes.simulation.layers.length, 4);
+
+    // 3. Tenant Isolation: Globex user cannot simulate blast radius on Acme's INC-1042
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blockedRes: any = await simulateBlastRadius(globexAnalyst, { incidentId: "INC-1042" });
+    assert.ok("error" in blockedRes, "Globex analyst must be denied access to Acme incident");
+    assert.strictEqual(blockedRes.error, "not_found", "Must return 404 anti-enumeration");
   });
 
   it("Priority 1: generateMitigationPlan persists plan and returns tracked planId & planUrl", async () => {

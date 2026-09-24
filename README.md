@@ -111,7 +111,9 @@ Designed with an architectural, editorial **Beige & Deep Forest Spruce** aesthet
 Welcome to the ShieldDesk engineering team! Follow this guide to set up your local development environment, run the services, execute automated tests, and adhere to our team quality standards.
 
 > [!IMPORTANT]
-> **Mandatory Team Checklists**: Before submitting a PR or issuing a release, review and complete the role-specific items in [CHECKLIST.md](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/CHECKLIST.md) (tailored for **Security Engineers**, **Software Developers**, and **Software Testers**).
+> **Mandatory Team Checklists & Architecture Guides**:
+> - Before submitting a PR or issuing a release, review the role-specific items in [CHECKLIST.md](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/CHECKLIST.md).
+> - For deep-dive architectural specifications, attack layer mechanics, and dynamic synthesis documentation for the SOC Co-Pilot simulation engine, refer to [BLAST_RADIUS_README.md](file:///D:/mario/mINTS/ShieldDesk/UpdatedMainBranch/SHIELD-DESK/BLAST_RADIUS_README.md).
 
 ---
 

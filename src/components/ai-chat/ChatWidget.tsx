@@ -26,10 +26,16 @@ interface ChatMessage {
   isError?: boolean;
 }
 
+const GLOBEX_SUGGESTIONS = [
+  "Simulate Blast Radius for CVE-2024-6387",
+  "Check for leaked secrets and exposed tokens",
+  "Run Trivy container scan on fleet",
+  "Show me todays critical incidents",
+];
+
 const DEFAULT_SUGGESTIONS = [
   "Show me todays critical incidents",
   "Investigate INC-1042",
-  "Simulate Blast Radius for CVE-2024-6387",
   "Generate automated remediation runbook",
   "Run Trivy container scan on fleet",
   "Check for leaked secrets and exposed tokens",
@@ -249,14 +255,19 @@ export function ChatWidget() {
     sendMessage(input);
   };
 
+  const isGlobex = activeUserId === "dev-other";
+
   const dynamicSuggestions = activeIncidentId
     ? [
         `Investigate ${activeIncidentId}`,
         "What is the mitigation plan?",
         "What assets are affected?",
+        ...(isGlobex ? ["Simulate Blast Radius for CVE-2024-6387"] : []),
         "Show me todays critical incidents",
       ]
-    : DEFAULT_SUGGESTIONS;
+    : isGlobex
+      ? GLOBEX_SUGGESTIONS
+      : DEFAULT_SUGGESTIONS;
 
   return (
     <>
