@@ -27,7 +27,7 @@ interface ChatMessage {
 }
 
 const DEFAULT_SUGGESTIONS = [
-  "Show me today's critical incidents",
+  "Show me todays critical incidents",
   "Investigate INC-1042",
   "Simulate Blast Radius for CVE-2024-6387",
   "Generate automated remediation runbook",
@@ -254,7 +254,7 @@ export function ChatWidget() {
         `Investigate ${activeIncidentId}`,
         "What is the mitigation plan?",
         "What assets are affected?",
-        "Show me today's critical incidents",
+        "Show me todays critical incidents",
       ]
     : DEFAULT_SUGGESTIONS;
 

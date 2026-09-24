@@ -111,7 +111,7 @@ Follow these exact routing associations:
   -> Tool Call: generateMitigationPlan(incidentId: extracted or from active context)
 - Query: "Analyze CVE-2020-6240", "Lookup vulnerability CVE-2024-3400", "What is the CVSS score for this CVE?"
   -> Tool Call: analyzeCve(cveId: extracted or from active context)
-- Query: "Show me today's critical incidents", "List open security alerts", "What incidents are active?"
+- Query: "Show me today's critical incidents", "Show me todays critical incidents", "List open security alerts", "What incidents are active?"
   -> Tool Call: getIncidents(severity?: "critical"|"high"|"medium"|"low", status?: "open"|"investigating")
 - Non-SOC query: "Write a poem", "Tell me a joke", "What is the weather?"
   -> NO TOOL CALL. Decline safely and state your purpose as a SOC incident co-pilot.
