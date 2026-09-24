@@ -362,7 +362,7 @@ export async function investigateIncident(
 export async function analyzeCve(_session: ChatSession, args: { cveId?: string }) {
   if (!args.cveId) return { error: "missing_cve_id" };
 
-  const baseUrl = process.env.PYTHON_AI_SERVICE_URL;
+  const baseUrl = process.env.PYTHON_AI_SERVICE_URL || "http://localhost:8000";
   if (baseUrl) {
     try {
       const url = `${baseUrl}/api/lookup?cve=${encodeURIComponent(args.cveId)}`;

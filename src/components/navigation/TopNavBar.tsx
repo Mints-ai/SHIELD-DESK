@@ -18,6 +18,7 @@ import {
   Scan,
   Flame,
   Cloud,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
@@ -32,7 +33,8 @@ export function TopNavBar() {
     database: boolean;
     ollama: boolean;
     supabase: boolean;
-  }>({ database: false, ollama: false, supabase: false });
+    pythonAiEngine: boolean;
+  }>({ database: false, ollama: false, supabase: false, pythonAiEngine: false });
 
   const [pendingTokens, setPendingTokens] = useState<ApprovalTokenRecord[]>([]);
   const [activeModalToken, setActiveModalToken] = useState<ApprovalTokenRecord | null>(null);
@@ -46,10 +48,11 @@ export function TopNavBar() {
           database: Boolean(data?.database?.connected),
           ollama: Boolean(data?.ollama?.reachable),
           supabase: Boolean(data?.supabase?.connected),
+          pythonAiEngine: Boolean(data?.pythonAiEngine?.reachable),
         });
       })
       .catch(() => {
-        setHealthStatus({ database: false, ollama: false, supabase: false });
+        setHealthStatus({ database: false, ollama: false, supabase: false, pythonAiEngine: false });
       });
   }, []);
 
@@ -181,6 +184,17 @@ export function TopNavBar() {
                 className={cn(
                   "h-1.5 w-1.5 rounded-full",
                   healthStatus.ollama ? "bg-[var(--sd-pine-bright)] shadow-[0_0_6px_var(--sd-pine-bright)]" : "bg-[var(--sd-text-dim)]"
+                )}
+              />
+            </div>
+            <div className="h-3 w-px bg-[var(--sd-border)]" />
+            <div className="flex items-center gap-1.5" title="Python CVE & ML Vulnerability Intelligence Engine (Port 8000)">
+              <Bot className="h-3 w-3 text-[var(--sd-text-muted)]" />
+              <span className="text-[var(--sd-text-muted)] font-medium">Python AI:</span>
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  healthStatus.pythonAiEngine ? "bg-[var(--sd-pine-bright)] shadow-[0_0_6px_var(--sd-pine-bright)]" : "bg-[var(--sd-text-dim)]"
                 )}
               />
             </div>

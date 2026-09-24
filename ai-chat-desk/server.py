@@ -74,6 +74,10 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(url.query)
 
+        if url.path in ("/health", "/api/health"):
+            self._send_json({"status": "ok", "service": "cve-ai-engine"})
+            return
+
         if url.path == "/api/lookup":
             cve_id = query.get("cve", [""])[0]
             if not cve_id:

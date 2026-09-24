@@ -34,20 +34,32 @@ export async function GET() {
     const res = await fetch(`${pythonAiServiceUrl}/health`, {
       signal: AbortSignal.timeout(2000),
     });
-    pythonAiReachable = res.ok;
+    if (res.ok) {
+      pythonAiReachable = true;
+    } else {
+      const fallbackRes = await fetch(`${pythonAiServiceUrl}/api/samples`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      pythonAiReachable = fallbackRes.ok;
+    }
   } catch {
     pythonAiReachable = false;
   }
 
+  const supabaseKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    "";
   const supabaseConfigured = Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    process.env.NEXT_PUBLIC_SUPABASE_URL && supabaseKey
   );
   let supabaseConnected = false;
   if (supabaseConfigured) {
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/`, {
         headers: {
-          apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+          apikey: supabaseKey,
         },
         signal: AbortSignal.timeout(2500),
       });
