@@ -249,72 +249,123 @@ docker compose up -d
 ```
 ├── src/
 │   ├── app/
-│   │   ├── login/                    # Multi-tenant login, registration & persona switcher
+│   │   ├── login/                        # Multi-tenant login, registration & persona switcher
 │   │   ├── dashboard/
-│   │   │   ├── compliance/page.tsx   # ISO 27001 compliance & evidence export
-│   │   │   ├── fleet/page.tsx        # Endpoint fleet management & live command
-│   │   │   ├── plans/[id]/page.tsx   # 3-horizon interactive mitigation plan
-│   │   │   ├── risk-scorecard/page.tsx # Executive posture & MTTD/MTTR scorecard
-│   │   │   └── tasks/page.tsx        # SOC Kanban governance task board
+│   │   │   ├── compliance/page.tsx       # ISO 27001 compliance & evidence export
+│   │   │   ├── fleet/page.tsx            # Endpoint fleet management & live command
+│   │   │   ├── plans/[id]/page.tsx       # 3-horizon interactive mitigation plan
+│   │   │   ├── risk-scorecard/page.tsx   # Executive posture & MTTD/MTTR scorecard
+│   │   │   ├── scanner/page.tsx          # Security Scanner & Remediation Center
+│   │   │   ├── tasks/page.tsx            # SOC Kanban governance task board
+│   │   │   └── threats/page.tsx          # Threat Detection & Ingestion Engine console
 │   │   ├── api/
-│   │   │   ├── auth/                 # Sign in & self-service tenant registration
-│   │   │   ├── chat/route.ts         # Intent router, tool gateway, SSE streaming & fallback
-│   │   │   ├── fleet/                # Endpoint fleet heartbeat & command execution
-│   │   │   ├── governance/           # Approval tokens & separation of duties
-│   │   │   ├── ingest/webhooks/      # Live SIEM / EDR alert ingestion endpoint
-│   │   │   ├── scans/                # Trivy CVE, Gitleaks secrets & SSH patching
-│   │   │   ├── threats/              # YARA/Sigma rules & 3-sigma anomaly baselines
-│   │   │   ├── webhooks/             # HMAC-SHA256 test dispatcher
-│   │   │   ├── ai/advisor/           # Blast radius simulation & Claude runbooks
-│   │   │   └── compliance/           # ISO 27001 control mapping & evidence package
-│   │   ├── dashboard/
-│   │   │   ├── scanner/              # Security Scanner & Remediation Center
-│   │   │   ├── threats/              # Threat Detection & Ingestion Engine
-│   │   │   ├── fleet/                # Endpoint Agent Fleet & Live Command
-│   │   │   ├── tasks/                # SOC Governance Kanban Board
-│   │   │   ├── compliance/           # ISO 27001 Audit Desk
-│   │   │   └── risk-scorecard/       # Executive Risk Scorecard
-│   │   ├── error.tsx                 # App Router Error Boundary
-│   │   ├── global-error.tsx          # Root Layout Error Boundary
-│   │   ├── layout.tsx                # Root layout mounting TopNavBar & ChatWidget
-│   │   ├── page.tsx                  # Incident queue & active triage console
-│   │   └── globals.css               # Beige + Deep Forest Spruce design tokens
+│   │   │   ├── ai/advisor/               # Blast radius simulation & AI runbook synthesis
+│   │   │   ├── approvals/                # Tier 2/3 approval token creation & sign-off
+│   │   │   ├── auth/                     # Sign in & self-service tenant registration
+│   │   │   ├── chat/route.ts             # Intent router, tool gateway, SSE streaming & fallback
+│   │   │   ├── compliance/               # ISO 27001 control mapping & evidence package
+│   │   │   ├── fleet/                    # Endpoint fleet heartbeat & command execution
+│   │   │   ├── health/route.ts           # Platform health & dependency status endpoint
+│   │   │   ├── incidents/route.ts        # Tenant-scoped incident CRUD
+│   │   │   ├── ingest/webhooks/          # Live SIEM / EDR alert ingestion endpoint
+│   │   │   ├── plans/                    # Mitigation plan generation & persistence
+│   │   │   ├── reports/scorecard/        # Executive risk scorecard data endpoint
+│   │   │   ├── scans/                    # Trivy CVE, Gitleaks secrets & SSH patching
+│   │   │   ├── threats/                  # YARA/Sigma rules & 3-sigma anomaly baselines
+│   │   │   └── webhooks/                 # HMAC-SHA256 test dispatcher
+│   │   ├── error.tsx                     # App Router Error Boundary
+│   │   ├── global-error.tsx              # Root Layout Error Boundary
+│   │   ├── layout.tsx                    # Root layout mounting TopNavBar & ChatWidget
+│   │   ├── page.tsx                      # Incident queue & active triage console
+│   │   └── globals.css                   # Beige + Deep Forest Spruce design tokens
 │   ├── components/
-│   │   ├── ai-chat/ChatWidget.tsx    # Slide-out AI chat drawer
-│   │   └── navigation/TopNavBar.tsx  # Global SOC navigation bar with Supabase health
-│   └── lib/
-│       ├── auth/session.ts           # Multi-tenant session resolver (production-gated)
-│       ├── constants/devUsers.ts     # Centralized dev user metadata
-│       ├── governance/               # Approval tokens, autonomy tiers & kill switch
-│       ├── observability/errorTracker.ts # Unified error tracking & telemetry
-│       ├── security/redactor.ts      # PII & secret redactor utility
-│       ├── supabase/                 # Supabase client & server auth utilities
-│       └── tools/shieldDeskChatTools.ts # Constrained SOC incident tools
+│   │   ├── ai-chat/ChatWidget.tsx        # Slide-out AI chat drawer
+│   │   ├── governance/
+│   │   │   ├── ApprovalModal.tsx         # Tier 2/3 human-in-the-loop approval dialog
+│   │   │   ├── AutonomyTierBadge.tsx     # Visual badge for Tier 0–3 autonomy level
+│   │   │   └── ModelConfidenceMeter.tsx  # ML model confidence display meter
+│   │   ├── navigation/TopNavBar.tsx      # Global SOC navigation bar with Supabase health
+│   │   └── ui/avatar.tsx                 # Reusable avatar component
+│   ├── lib/
+│   │   ├── ai/ollama.ts                  # Ollama LLM client wrapper & offline fallback
+│   │   ├── auth/session.ts               # Multi-tenant session resolver (production-gated)
+│   │   ├── compliance/                   # ISO 27001 control mappings & evidence utilities
+│   │   ├── constants/devUsers.ts         # Centralized dev user metadata
+│   │   ├── context/                      # React context providers (e.g. tenant, session)
+│   │   ├── db/                           # PostgreSQL client & query helpers
+│   │   ├── fleet/                        # Endpoint fleet telemetry & command utilities
+│   │   ├── governance/
+│   │   │   ├── approvalTokens.ts         # 24h token lifecycle, anti-replay & dual sign-off
+│   │   │   └── autonomyTier.ts           # Tier 0–3 classification & enforcement logic
+│   │   ├── notifications/dispatcher.ts   # Slack / Teams / SIEM real-time alert dispatcher
+│   │   ├── observability/errorTracker.ts # Unified error tracking & telemetry
+│   │   ├── permissions.ts                # RBAC permission matrix & canExecuteTool()
+│   │   ├── reporting/scorecard.ts        # Executive scorecard metric aggregation
+│   │   ├── security/redactor.ts          # PII & secret redactor utility
+│   │   ├── supabase/                     # Supabase client & server auth utilities
+│   │   ├── tools/shieldDeskChatTools.ts  # Constrained SOC incident tools
+│   │   └── utils.ts                      # Shared utility helpers
+│   └── types/                            # Shared TypeScript type definitions
+├── ai-chat-desk/                         # Python Vulnerability Intelligence Engine (Port 8000)
+│   ├── server.py                         # FastAPI server — CVE scoring & ML inference
+│   ├── cve_random_forest.py              # Unified Random Forest model architecture
+│   ├── feature_extractor.py              # Hybrid n-gram + threat regex feature pipeline
+│   ├── data_pipeline.py                  # CVE data ingestion & preprocessing
+│   ├── train_rf_model.py                 # Model training script (Random Forest)
+│   ├── train_model.py                    # Alternative full model training pipeline
+│   ├── evaluate.py                       # Model evaluation & metric reporting
+│   ├── predict.py                        # Inference utilities for standalone use
+│   ├── cve_ai_engine.py                  # High-level engine wrapper
+│   └── requirements.txt                  # Python dependencies
 ├── services/
-│   ├── ingest/                       # Go 1.22 gRPC Ingest (:50051) with mTLS & PII scrubber
-│   ├── threat/                       # Go 1.22 daemon with YARA, Sigma, and 3-sigma ML anomaly
-│   ├── scan/                         # Python 3.12 FastAPI (:8001) Trivy CVE, Gitleaks & SSH patching
-│   ├── iam/                          # Node.js 20 Express (:4000) JWT, TOTP MFA, Redis & RBAC
-│   ├── ai-advisor/                   # Python 3.12 LangChain (:8002) Claude 3.5 Sonnet RAG
-│   └── webhooks/                     # Go 1.22 HMAC-SHA256 dispatcher with retry queue
+│   ├── ingest/                           # Go 1.22 gRPC Ingest (:50051) with mTLS & PII scrubber
+│   ├── threat/                           # Go 1.22 daemon with YARA, Sigma & 3-sigma ML anomaly
+│   ├── scan/                             # Python 3.12 FastAPI (:8001) Trivy CVE & Gitleaks
+│   ├── iam/                              # Node.js 20 Express (:4000) JWT, TOTP MFA & RBAC
+│   ├── ai-advisor/                       # Python 3.12 LangChain (:8002) Claude 3.5 Sonnet RAG
+│   └── webhooks/                         # Go 1.22 HMAC-SHA256 dispatcher with retry queue
 ├── shared/
-│   ├── proto/                        # Protobuf gRPC contracts & v1 Go bindings
-│   ├── schemas/                      # PostgreSQL 16 schema-per-tenant, TimescaleDB & pgvector
-│   └── events/                       # NATS JetStream event subjects & JSON schemas
+│   ├── proto/                            # Protobuf gRPC contracts & v1 Go bindings
+│   ├── schemas/                          # PostgreSQL 16 schema-per-tenant, TimescaleDB & pgvector
+│   └── events/                           # NATS JetStream event subjects & JSON schemas
 ├── gateway/
-│   └── kong.yml                      # Kong API Gateway declarative routing & rate limiting
+│   └── kong.yml                          # Kong API Gateway declarative routing & rate limiting
 ├── infra/
-│   ├── terraform/                    # AWS EKS 1.29, RDS Multi-AZ, ElastiCache Redis, S3 & VPC
-│   └── helm/                         # Production Kubernetes Helm chart (Deployments, HPA, PDB)
+│   ├── terraform/                        # AWS EKS 1.29, RDS Multi-AZ, ElastiCache Redis, S3 & VPC
+│   └── helm/                             # Production Kubernetes Helm chart (Deployments, HPA, PDB)
 ├── agent/
-│   ├── cmd/main.go                   # Go endpoint agent daemon
-│   ├── pkg/                          # Telemetry ring buffer, hash chaining, handlers
-│   ├── deploy-agent.ps1              # Windows endpoint enrollment script
-│   └── deploy-agent.sh               # Linux systemd endpoint enrollment script
-├── docker-compose.yml                # 1-command multi-service orchestration
-├── .env.example                      # Production environment template
-└── tests/                            # 39 automated unit, security, and governance tests
+│   ├── cmd/main.go                       # Go endpoint agent daemon
+│   ├── pkg/                              # Telemetry ring buffer, hash chaining, handlers
+│   ├── deploy-agent.ps1                  # Windows endpoint enrollment script
+│   └── deploy-agent.sh                   # Linux systemd endpoint enrollment script
+├── tests/                                # 39 automated unit, security, and governance tests
+├── docker-compose.yml                    # 1-command multi-service orchestration
+├── Dockerfile                            # Container image for Next.js application
+└── .env.example                          # Production environment template (see below)
 ```
+
+---
+
+## Environment Configuration
+
+Copy `.env.example` to `.env.local` and configure the following variables:
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | ✅ | PostgreSQL connection string (default: `postgresql://shielddesk:shielddesk@localhost:5432/shielddesk`) |
+| `PYTHON_AI_SERVICE_URL` | ✅ | URL for Python Vulnerability ML Engine (default: `http://localhost:8000`) |
+| `OLLAMA_BASE_URL` | ✅ | Ollama LLM endpoint (default: `http://localhost:11434/v1`) |
+| `OLLAMA_MODEL` | ✅ | Ollama model name (default: `qwen3:4b`) |
+| `SHIELDDESK_INGEST_API_KEY` | ✅ | API key protecting `POST /api/ingest/webhooks` |
+| `NEXT_PUBLIC_SUPABASE_URL` | ⬜ | Optional Supabase project URL for cloud auth |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ⬜ | Supabase anonymous public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | ⬜ | Supabase service role key (server-side only) |
+| `SLACK_WEBHOOK_URL` | ⬜ | Slack incoming webhook for Tier 2/3 alert cards |
+| `TEAMS_WEBHOOK_URL` | ⬜ | Microsoft Teams incoming webhook for alert cards |
+| `SECURITY_WEBHOOK_URL` | ⬜ | External SIEM webhook for real-time alert forwarding |
+| `REDIS_URL` | ⬜ | Redis connection URL for multi-node session caching |
+
+> **Note:** Supabase configuration is optional. When omitted, ShieldDesk uses the local Quick Persona switcher for authentication with the local PostgreSQL database.
 
 ---
 
