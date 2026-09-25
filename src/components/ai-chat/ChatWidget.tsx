@@ -427,13 +427,7 @@ export function ChatWidget() {
                     Active Context: <strong className="font-semibold text-[var(--sd-pine)] font-mono">{activeIncidentId}</strong>
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveIncidentId(null)}
-                  className="text-[10px] text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] underline cursor-pointer"
-                >
-                  Clear context
-                </button>
+
               </div>
             )}
 
