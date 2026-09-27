@@ -148,25 +148,61 @@ npm install
 pip install -r services/scan/requirements.txt
 ```
 
-#### Step 3: Launch Local Dev Servers
+#### Step 3: Launch Everything — One Command
+
+Run all three services (Next.js UI, Python CVE Brain, Ollama LLM) in a single terminal with full live logs:
+
+```powershell
+.\start.ps1
+```
+
+Or via npm:
+
+```powershell
+npm run start:all
+```
+
+**What happens:**
+- ✅ **Ollama LLM** starts on `http://localhost:11434`
+- ✅ **Python CVE AI Engine** starts on `http://localhost:8000`
+- ✅ **Next.js UI & API Gateway** starts on `http://localhost:3000`
+- ✅ Script waits for each port to be ready before declaring "UP"
+- ✅ Color-coded live logs from all 3 services stream in one terminal
+- ✅ Press **`Ctrl+C`** once — all three services stop cleanly
+
+Open **`http://localhost:3000`** in your browser once you see `[ALL UP]`.
+
+> **Note:** If Ollama is not installed or offline, ShieldDesk automatically engages its built-in deterministic offline fallback engine with zero downtime.
+
+---
+
+#### Alternative: Manual Start (3 separate terminals)
+
+<details>
+<summary>Click to expand manual startup instructions</summary>
 
 **Terminal 1 — Next.js Application & API Gateway (Port 3000):**
 ```bash
 npm run dev
 ```
-Open **`http://localhost:3000`** in your browser.
 
-**Terminal 2 — Python CVE & ML Vulnerability Server (Port 8000 / 8001):**
+**Terminal 2 — Python CVE & ML Vulnerability Server (Port 8000):**
 ```bash
 cd ai-chat-desk
 python server.py
 ```
 
-**Terminal 3 (Optional) — Local Ollama AI Assistant (Port 11434):**
+**Terminal 3 — Local Ollama AI Assistant (Port 11434):**
 ```bash
-ollama run qwen3:4b
+ollama serve
 ```
-*(If Ollama is not installed or offline, ShieldDesk automatically engages its built-in deterministic offline fallback engine with zero downtime.)*
+Then confirm the model is available:
+```bash
+ollama list         # should show qwen3:4b
+ollama pull qwen3:4b  # run this if it's missing
+```
+
+</details>
 
 ---
 

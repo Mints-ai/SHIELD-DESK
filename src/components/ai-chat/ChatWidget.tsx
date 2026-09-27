@@ -255,19 +255,26 @@ export function ChatWidget() {
     sendMessage(input);
   };
 
-  const isGlobex = activeUserId === "dev-other";
+  // Roles that are permitted to use Simulate Blast Radius (mirrors cve.read in permissions.ts)
+  const canSimulateBlastRadius = ["system_admin", "super_admin", "analyst", "responder", "user"].includes(
+    activeUser.role
+  );
 
   const dynamicSuggestions = activeIncidentId
     ? [
         `Investigate ${activeIncidentId}`,
         "What is the mitigation plan?",
         "What assets are affected?",
-        ...(isGlobex ? ["Simulate Blast Radius for CVE-2024-6387"] : []),
+        ...(canSimulateBlastRadius ? ["Simulate Blast Radius for CVE-2024-6387"] : []),
         "Show me todays critical incidents",
       ]
-    : isGlobex
-      ? GLOBEX_SUGGESTIONS
+    : canSimulateBlastRadius
+      ? [
+          "Simulate Blast Radius for CVE-2024-6387",
+          ...DEFAULT_SUGGESTIONS,
+        ]
       : DEFAULT_SUGGESTIONS;
+
 
   return (
     <>

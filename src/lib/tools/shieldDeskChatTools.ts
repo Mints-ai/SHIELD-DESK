@@ -1117,15 +1117,13 @@ export async function simulateBlastRadius(
   session: ChatSession,
   args: { cveId?: string; assetId?: string; incidentId?: string }
 ) {
-  // Authorization Policy: Simulate Blast Radius is strictly restricted to Globex Analyst
-  const isGlobex =
-    session.tenantId === "globex-tenant" ||
-    session.uid === "dev-other" ||
-    session.email?.endsWith("@globex.corp");
-
-  if (!isGlobex) {
+  // Authorization Policy: use the same RBAC gate as every other tool.
+  // simulateBlastRadius requires cve.read — granted to system_admin,
+  // super_admin, analyst, responder, viewer, and user roles.
+  if (!canAccess(session.role, "cve.read")) {
     return { error: "not_authorized" };
   }
+
 
   let targetCve = args.cveId?.toUpperCase();
   let targetAsset = args.assetId;
