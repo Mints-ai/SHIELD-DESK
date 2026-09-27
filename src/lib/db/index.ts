@@ -48,14 +48,26 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
 }
 
 export async function checkDatabaseConnection(): Promise<boolean> {
-  if (!process.env.DATABASE_URL) return false;
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) return false;
+  // Use a dedicated one-shot Client (not the shared pool) so pgBouncer
+  // cold-pool slot acquisition doesn't inflate the latency unpredictably.
+  const { Client } = await import("pg");
+  const client = new Client({
+    connectionString,
+    connectionTimeoutMillis: 8000,
+    ssl: connectionString.includes("localhost")
+      ? false
+      : { rejectUnauthorized: false },
+  });
   try {
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Timeout")), 1500)
-    );
-    await Promise.race([getPool().query("SELECT 1"), timeout]);
+    await client.connect();
+    await client.query("SELECT 1");
     return true;
   } catch {
     return false;
+  } finally {
+    await client.end().catch(() => {});
   }
 }
+

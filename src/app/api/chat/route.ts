@@ -479,12 +479,6 @@ export async function POST(req: NextRequest) {
 
   if (toolResult && typeof toolResult === "object" && "error" in toolResult) {
     const code = (toolResult as { error: string }).error;
-    if (code === "not_authorized" && toolName === "simulateBlastRadius") {
-      return streamFixedMessage(
-        "You do not have permission to execute this operation. Simulate Blast Radius is restricted exclusively to the Globex Analyst persona.",
-        { session, question: message, toolName, outcome: "not_authorized" }
-      );
-    }
     const fixed = ERROR_MESSAGES[code] ?? "I couldn't complete that request.";
     return streamFixedMessage(fixed, {
       session,
@@ -493,6 +487,7 @@ export async function POST(req: NextRequest) {
       outcome: code,
     });
   }
+
 
 // High-accuracy fallback formatter for structured tool results when local LLM is offline/warming up
 function formatToolResultFallback(toolName: ToolName, toolResult: any): string {

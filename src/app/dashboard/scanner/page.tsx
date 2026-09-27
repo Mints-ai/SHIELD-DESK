@@ -205,13 +205,37 @@ export default function ScannerDashboardPage() {
         body: JSON.stringify({ action: "blast_radius", cve_id: cve.cve_id, host_id: cve.asset_id }),
       });
       const data = await res.json();
-      setAdvisorContent(JSON.stringify(data.blast_radius, null, 2));
+      const br = data.blast_radius;
+
+      if (br) {
+        const deps = Array.isArray(br.downstream_dependencies)
+          ? br.downstream_dependencies.map((d: string) => `  • ${d}`).join("\n")
+          : "  • No downstream dependencies recorded.";
+
+        const formatted = `Simulated Blast Radius Assessment for ${data.cve_id || cve.cve_id}:
+
+1. Target Asset & Scope: ${data.host_id || cve.asset_id}
+2. Direct Assets at Risk: ${br.direct_assets_at_risk ?? "N/A"}
+3. Downstream Dependencies:
+${deps}
+4. Network Exposure: ${br.network_exposure ?? "N/A"}
+5. Data Classification: ${br.data_classification ?? "N/A"}
+6. Remediation Urgency: ${br.remediation_urgency ?? "N/A"}
+7. Recommended Containment: ${br.automated_mitigation ?? "N/A"}
+
+Governance Note: Blast radius simulations are predictive models. Tier 2 host isolation requires human analyst authorization.`;
+
+        setAdvisorContent(formatted);
+      } else {
+        setAdvisorContent("Blast radius simulation returned no data. The AI Advisor service may be offline — check that it is running on port 8002.");
+      }
     } catch {
-      setAdvisorContent("Failed to simulate blast radius.");
+      setAdvisorContent("Failed to simulate blast radius. Please ensure the application server is running and try again.");
     } finally {
       setLoading(false);
     }
   };
+
 
   const generateRunbook = async (cve: CveFinding) => {
     setLoading(true);

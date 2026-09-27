@@ -24,7 +24,7 @@ const baseURL = process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1";
 export const ollama = new OpenAI({
   baseURL,
   apiKey: "ollama", // required by the SDK's shape; Ollama ignores it locally
-  timeout: 4000,
+  timeout: 60000,  // 60 s — local models can be slow on first token; 4 s was too tight
 });
 
-export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3:4b-instruct-2507-q4_K_M";
+export const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen3:4b";
