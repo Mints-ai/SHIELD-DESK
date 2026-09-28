@@ -43,6 +43,7 @@ const STATUS_RE = /\b(open|investigating|resolved|closed)\b/i;
 const INCIDENTS_WORD_RE = /\bincidents?\b/i;
 const THIS_RE = /\b(this|the current|current|selected|it|that|here)\b/i;
 const BLAST_RADIUS_RE = /\b(blast\s*radius|posture\s*(downgrade|simulation)|simulate\s*blast|impact\s*scope)\b/i;
+const ASSETS_RE = /\b(asset|assets|affected\s*asset|impacted\s*asset|compromised\s*(host|asset|endpoint)|which\s*(host|machine|server|endpoint|asset)|what\s*(asset|host|machine|server|endpoint))\b/i;
 
 // Strict whitelist regex for context parameters to prevent indirect injection
 const VALID_INCIDENT_ID_RE = /^INC-\d+$/i;
@@ -372,6 +373,17 @@ export async function POST(req: NextRequest) {
   } else if (incidentMatch) {
     toolName = "investigateIncident";
     toolArgs = { incidentId: incidentMatch[0].toUpperCase() };
+  // Asset / impacted host queries: "What assets are affected?", "Which hosts are compromised?"
+  } else if (ASSETS_RE.test(message)) {
+    if (sanitizedContext.currentIncidentId) {
+      toolName = "investigateIncident";
+      toolArgs = { incidentId: sanitizedContext.currentIncidentId };
+    } else {
+      return streamFixedMessage(
+        "Please select an incident first, or specify one (e.g. 'What assets are affected by INC-1042?') so I can look up the impacted hosts.",
+        { session, question: message, toolName: null, outcome: "missing_context" }
+      );
+    }
   // TC-CTX-01 / TC-CTX-03 / TC-CTX-04 / TC-CTX-05 / TC-CTX-10: Shorthand investigations
   } else if (mentionsThis && INVESTIGATE_RE.test(message)) {
     if (sanitizedContext.currentIncidentId) {
@@ -490,7 +502,7 @@ export async function POST(req: NextRequest) {
 
 
 // High-accuracy fallback formatter for structured tool results when local LLM is offline/warming up
-function formatToolResultFallback(toolName: ToolName, toolResult: any): string {
+function formatToolResultFallback(toolName: ToolName, toolResult: any, originalQuestion?: string): string {
   if (!toolResult) return "No data returned for this query.";
 
   if (toolName === "analyzeCve") {
@@ -516,6 +528,25 @@ Governance Advisory: All remediation playbooks require analyst validation and du
   if (toolName === "investigateIncident") {
     const inc = toolResult.incident || toolResult;
     const code = inc.incidentCode || inc.incident_code || "Incident";
+    const rawAssets = toolResult.affectedAssets || toolResult.assets || [];
+
+    // Asset-focused path: "What assets are affected?", "Which hosts are compromised?" etc.
+    if (ASSETS_RE.test(originalQuestion || "")) {
+      if (rawAssets.length === 0) {
+        return `No impacted assets have been recorded yet for ${code}. The incident may still be under initial triage.`;
+      }
+      const assetList = rawAssets
+        .map((a: any, i: number) => {
+          const host = a.hostname || a.host || String(a);
+          const type = a.asset_type || a.assetType || "Endpoint";
+          const ip   = a.ip_address || a.ip || "";
+          return `${i + 1}. ${host}${ip ? ` [${ip}]` : ""} — ${type}`;
+        })
+        .join("\n");
+      return `Impacted Assets for ${code} (${rawAssets.length} affected):\n\n${assetList}\n\nIncident: ${inc.title || "Untitled"} | Status: ${inc.status?.toUpperCase() || "UNKNOWN"} | Severity: ${inc.severity?.toUpperCase() || "UNKNOWN"}\n\nRecommended Action: Isolate affected endpoints and rotate credentials for all accounts with access to the compromised hosts.`;
+    }
+
+    // Full investigation report path
     const rawEvents = toolResult.events || toolResult.timeline || [];
     const timeline = rawEvents
       .map((t: any, i: number) => {
@@ -523,7 +554,6 @@ Governance Advisory: All remediation playbooks require analyst validation and du
         return `${i + 1}. [${timeStr}] ${t.description}`;
       })
       .join("\n");
-    const rawAssets = toolResult.affectedAssets || toolResult.assets || [];
     const assets = rawAssets
       .map((a: any) => `${a.hostname || a} (${a.asset_type || a.assetType || "Endpoint"})`)
       .join(", ") || "No compromised assets recorded";
@@ -644,7 +674,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
     });
   } catch {
     // High-accuracy offline fallback: synthesize deterministic response directly from structured tool result
-    const synthesized = formatToolResultFallback(toolName!, toolResult);
+    const synthesized = formatToolResultFallback(toolName!, toolResult, message);
     return streamFixedMessage(
       synthesized,
       { session, question: message, toolName, outcome: "tool_fallback_offline" }
