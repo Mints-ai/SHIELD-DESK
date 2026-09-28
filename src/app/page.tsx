@@ -81,8 +81,15 @@ export default function SOCDashboardPage() {
         const list = data?.incidents || [];
         setIncidents(list);
         if (list.length > 0) {
-          const firstCode = list[0].incident_code;
-          setActiveIncidentId(firstCode);
+          // Only auto-select the first incident if nothing is selected yet,
+          // or if the currently selected incident is not in the new filtered list.
+          // This lets users click any incident without the filter reload overwriting it.
+          const currentStillVisible = list.some(
+            (inc: IncidentSummary) => inc.incident_code === activeIncidentId
+          );
+          if (!activeIncidentId || !currentStillVisible) {
+            setActiveIncidentId(list[0].incident_code);
+          }
         } else {
           setActiveIncidentId(null);
           setSelectedIncident(null);
@@ -99,7 +106,7 @@ export default function SOCDashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, [activeUserId, filterSeverity, setActiveIncidentId]);
+  }, [activeUserId, filterSeverity, activeIncidentId, setActiveIncidentId]);
 
   // Fetch incident detail when activeIncidentId changes
   useEffect(() => {

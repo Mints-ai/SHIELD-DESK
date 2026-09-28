@@ -11,7 +11,6 @@ import {
   X,
   Trash2,
   ChevronDown,
-  Layers,
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -425,18 +424,7 @@ export function ChatWidget() {
               </div>
             </div>
 
-            {/* Active Context Banner */}
-            {activeIncidentId && (
-              <div className="shrink-0 px-3 py-1.5 bg-[var(--sd-bg-alt)] border-b border-[var(--sd-border)] flex items-center justify-between text-[11px] text-[var(--sd-pine)]">
-                <div className="flex items-center gap-1.5">
-                  <Layers className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
-                  <span>
-                    Active Context: <strong className="font-semibold text-[var(--sd-pine)] font-mono">{activeIncidentId}</strong>
-                  </span>
-                </div>
 
-              </div>
-            )}
 
             {/* Messages Area */}
             <div
