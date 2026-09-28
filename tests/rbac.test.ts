@@ -8,8 +8,8 @@ import {
   simulateBlastRadius,
   getMitigationPlan,
 } from "@/lib/tools";
+import type { ChatSession } from "@/lib/tools";
 import { canAccess, canExecuteTool } from "@/lib/permissions";
-import type { ChatSession } from "@/lib/auth/session";
 
 describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
   const acmeAnalyst: ChatSession = {
@@ -99,7 +99,7 @@ describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
     assert.strictEqual(canExecuteTool("system_admin", "unknownDestructiveTool"), false);
   });
 
-ot  it("Priority 1: simulateBlastRadius computes downstream dependencies, posture delta, and isolation (all roles with cve.read)", async () => {
+  it("Priority 1: simulateBlastRadius computes downstream dependencies, posture delta, and isolation (all roles with cve.read)", async () => {
     // 1. Authorization Gate (updated policy): All roles with cve.read can now run blast radius.
     //    Acme analyst (role: "user") has cve.read — must be ALLOWED (not denied).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
