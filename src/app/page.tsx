@@ -178,7 +178,7 @@ export default function SOCDashboardPage() {
       <TopNavBar />
 
       {/* Main Workspace Layout */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="sd-dashboard-content flex-1 flex overflow-hidden">
         {/* Left Sidebar: Incident Feed */}
         <aside className="w-[380px] shrink-0 border-r border-[var(--sd-border)] bg-[var(--sd-panel)] flex flex-col">
           {/* Feed Header & Filters */}

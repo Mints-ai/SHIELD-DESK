@@ -4,7 +4,6 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Shield,
   Database,
   Cpu,
   Lock,
@@ -86,14 +85,14 @@ export function TopNavBar() {
 
   return (
     <>
-      <header className="border-b border-[var(--sd-border)] bg-[var(--sd-panel)]/95 backdrop-blur-md sticky top-0 z-30 px-5 py-2.5 flex items-center justify-between transition-colors shadow-xs">
+      <header className="sticky top-0 z-50 flex min-h-16 items-center justify-between gap-3 border-b border-[var(--sd-border)] bg-[var(--sd-panel)]/95 px-3 py-2.5 shadow-xs backdrop-blur-md sm:px-5">
         {/* Brand & Platform Identifier */}
-        <div className="flex items-center gap-7">
+        <div className="flex min-w-0 items-center gap-3">
           <Link href="/" className="flex items-center gap-3 group cursor-pointer">
             <div className="relative flex h-9 w-9 items-center justify-center rounded-xl bg-white overflow-hidden shadow-xs group-hover:scale-105 transition-all duration-200 border border-[var(--sd-border)] p-1">
               <img src="/logo.png" alt="ShieldDesk" className="h-full w-full object-contain" />
             </div>
-            <div>
+            <div className="hidden min-w-0 md:block">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold tracking-tight text-[var(--sd-text)] font-sans">
                   Shield<span className="text-[#a48858]">Desk</span><span className="text-[9px] text-[#a48858] align-super">™</span>
@@ -107,51 +106,34 @@ export function TopNavBar() {
               </p>
             </div>
           </Link>
-
-          {/* Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-1">
-            {navLinks.map((link) => {
-              const Icon = link.icon;
-              const isActive =
-                link.href === "/"
-                  ? pathname === "/"
-                  : pathname?.startsWith(link.href);
-
-              return (
-                <Link
-                  key={link.href}
-                  href={link.href}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 cursor-pointer",
-                    isActive
-                      ? "bg-[var(--sd-pine)] text-[#f7f4ed] font-semibold shadow-xs"
-                      : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
-                  )}
-                >
-                  <Icon className={cn("h-3.5 w-3.5", isActive ? "text-[#f7f4ed]" : "text-[var(--sd-text-muted)]")} />
-                  <span>{link.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
         </div>
 
-        {/* Right Section: Approvals + Micro Status + Persona Switcher + Sign In */}
-        <div className="flex items-center gap-2.5">
-          {/* Pending Governance Approvals Pill */}
-          {pendingTokens.length > 0 && (
-            <button
-              onClick={() => {
-                setActiveModalToken(pendingTokens[0]);
-                setIsApprovalModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] text-xs font-semibold hover:bg-[var(--sd-warning-dim)]/80 transition-all cursor-pointer shadow-xs animate-pulse"
-              title="Click to review pending action requiring human sign-off"
-            >
-              <Lock className="h-3.5 w-3.5 text-[var(--sd-warning)]" />
-              <span>{pendingTokens.length} Pending Approval</span>
-            </button>
-          )}
+        {/* Right Section: Approvals + Micro Status + Persona Switcher */}
+        <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-2.5">
+          <button
+            onClick={() => {
+              if (pendingTokens.length === 0) return;
+              setActiveModalToken(pendingTokens[0]);
+              setIsApprovalModalOpen(true);
+            }}
+            disabled={pendingTokens.length === 0}
+            aria-label={`Approvals${pendingTokens.length > 0 ? `, ${pendingTokens.length} pending` : ""}`}
+            className={cn(
+              "relative flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold shadow-xs transition",
+              pendingTokens.length > 0
+                ? "border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)]/80 cursor-pointer"
+                : "border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] cursor-default"
+            )}
+            title={pendingTokens.length > 0 ? "Review pending approvals" : "No pending approvals"}
+          >
+            <Lock className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Approvals</span>
+            {pendingTokens.length > 0 && (
+              <span className="min-w-4 rounded-full bg-[var(--sd-danger)] px-1 text-center text-[10px] leading-4 text-white">
+                {pendingTokens.length}
+              </span>
+            )}
+          </button>
 
           {/* Micro Health Indicators */}
           <div className="hidden xl:flex items-center gap-3 px-2.5 py-1 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[10.5px]">
@@ -210,7 +192,7 @@ export function TopNavBar() {
                   key={userId}
                   onClick={() => setActiveUserId(userId)}
                   className={cn(
-                    "px-2.5 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer flex items-center gap-1.5",
+                    "flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium transition-all duration-150 cursor-pointer sm:px-2.5",
                     isSelected
                       ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs font-semibold"
                       : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
@@ -227,16 +209,15 @@ export function TopNavBar() {
                           : "bg-[var(--sd-pine-bright)]"
                     )}
                   />
-                  <span>{u.label}</span>
+                  <span className="hidden 2xl:inline">{u.label}</span>
                 </button>
               );
             })}
           </div>
 
-          {/* Public Auth / Login link */}
           <Link
             href="/login"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] px-2.5 py-1.5 text-xs font-medium text-[var(--sd-text)] shadow-xs transition hover:bg-[var(--sd-panel-hover)] sm:px-3"
             title="Sign In / Operator Identity"
           >
             <LogIn className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
@@ -244,6 +225,39 @@ export function TopNavBar() {
           </Link>
         </div>
       </header>
+
+      <aside className="sd-dashboard-nav group fixed bottom-0 left-0 top-16 z-40 w-14 overflow-hidden border-r border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs transition-[width] duration-200 ease-out hover:w-60 focus-within:w-60">
+        <nav aria-label="Dashboard" className="flex h-full flex-col gap-1 px-2 py-4">
+          <span className="mb-2 h-5 overflow-hidden whitespace-nowrap px-2 text-[10px] font-bold uppercase tracking-widest text-[var(--sd-text-dim)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+            Workspace
+          </span>
+          {navLinks.map((link) => {
+            const Icon = link.icon;
+            const isActive = link.href === "/" ? pathname === "/" : pathname?.startsWith(link.href);
+
+            return (
+              <Link
+                key={link.href}
+                href={link.href}
+                aria-label={link.label}
+                aria-current={isActive ? "page" : undefined}
+                title={link.label}
+                className={cn(
+                  "flex h-10 min-w-[2.5rem] items-center gap-3 overflow-hidden rounded-lg px-3 text-xs font-medium transition-colors",
+                  isActive
+                    ? "bg-[var(--sd-pine)] text-[#f7f4ed] font-semibold shadow-xs"
+                    : "text-[var(--sd-text-muted)] hover:bg-[var(--sd-panel-hover)] hover:text-[var(--sd-text)]"
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="whitespace-nowrap opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                  {link.label}
+                </span>
+              </Link>
+            );
+          })}
+        </nav>
+      </aside>
 
       {/* Approval Modal mounted globally */}
       <ApprovalModal

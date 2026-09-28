@@ -76,7 +76,7 @@ export default function CompliancePage() {
     <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 flex flex-col gap-6">
+      <main className="sd-dashboard-content flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 flex flex-col gap-6">
         {/* Top Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--sd-border)] pb-5">
           <div className="flex items-center gap-3">

@@ -15,6 +15,7 @@ import {
   Filter,
 } from "lucide-react";
 import { useChat } from "@/lib/context/ChatContext";
+import { TopNavBar } from "@/components/navigation/TopNavBar";
 
 interface PlanSummary {
   id: string;
@@ -100,8 +101,9 @@ export default function PlansIndexPage() {
 
   return (
     <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
+      <TopNavBar />
       {/* Top Header */}
-      <header className="border-b border-[var(--sd-border)] bg-[var(--sd-panel)] px-6 py-4 sticky top-0 z-10 shadow-xs">
+      <header className="border-b border-[var(--sd-border)] bg-[var(--sd-panel)] px-6 py-4 shadow-xs">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -139,7 +141,7 @@ export default function PlansIndexPage() {
       </header>
 
       {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="sd-dashboard-content max-w-7xl mx-auto px-6 py-8">
         {/* Search & Filters */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
           <div className="relative flex-1 w-full max-w-md">

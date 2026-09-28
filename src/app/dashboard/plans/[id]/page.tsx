@@ -15,6 +15,7 @@ import {
   Lock,
 } from "lucide-react";
 import { useChat } from "@/lib/context/ChatContext";
+import { TopNavBar } from "@/components/navigation/TopNavBar";
 import { AutonomyTierBadge } from "@/components/governance/AutonomyTierBadge";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
@@ -142,27 +143,33 @@ export default function PlanViewerPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col items-center justify-center gap-3">
-        <RefreshCw className="h-6 w-6 animate-spin text-[var(--sd-pine-bright)]" />
-        <span className="text-xs text-[var(--sd-text-muted)] font-mono">Loading mitigation plan...</span>
+      <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
+        <TopNavBar />
+        <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3">
+          <RefreshCw className="h-6 w-6 animate-spin text-[var(--sd-pine-bright)]" />
+          <span className="text-xs text-[var(--sd-text-muted)] font-mono">Loading mitigation plan...</span>
+        </main>
       </div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col items-center justify-center p-6">
-        <div className="max-w-md w-full p-6 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-4">
-          <AlertCircle className="h-10 w-10 text-[var(--sd-danger)] mx-auto" />
-          <h2 className="text-sm font-bold text-[var(--sd-beige-light)]">Inaccessible or Not Found</h2>
-          <p className="text-xs text-[var(--sd-text-muted)]">{error || "Could not retrieve plan data."}</p>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--sd-panel-raised)] text-xs font-semibold text-[var(--sd-beige)] hover:bg-[var(--sd-panel-hover)] transition"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" /> Return to SOC Console
-          </Link>
-        </div>
+      <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
+        <TopNavBar />
+        <main className="flex min-h-[calc(100vh-4rem)] items-center justify-center p-6">
+          <div className="max-w-md w-full p-6 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-4">
+            <AlertCircle className="h-10 w-10 text-[var(--sd-danger)] mx-auto" />
+            <h2 className="text-sm font-bold text-[var(--sd-beige-light)]">Inaccessible or Not Found</h2>
+            <p className="text-xs text-[var(--sd-text-muted)]">{error || "Could not retrieve plan data."}</p>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--sd-panel-raised)] text-xs font-semibold text-[var(--sd-beige)] hover:bg-[var(--sd-panel-hover)] transition"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Return to SOC Console
+            </Link>
+          </div>
+        </main>
       </div>
     );
   }
@@ -173,8 +180,11 @@ export default function PlanViewerPage() {
   const longTermTasks = tasks.filter((t) => t.horizon === "long_term");
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] p-6 md:p-10 font-sans print:p-0 print:bg-white print:text-black">
-      <div className="max-w-5xl mx-auto space-y-6">
+    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] font-sans print:p-0 print:bg-white print:text-black">
+      <div className="print:hidden">
+        <TopNavBar />
+      </div>
+      <div className="sd-dashboard-content max-w-5xl mx-auto p-6 md:p-10 space-y-6">
         {/* Navigation & Action Bar */}
         <div className="flex items-center justify-between print:hidden">
           <Link

@@ -22,6 +22,7 @@
   /* Accent & Deep Forest Greens */
   --sd-pine: #123826;
   --sd-pine-dark: #0a2217;
+  --sd-pine-hover: #1a4a32;
   --sd-pine-bright: #059669;
   --sd-pine-glow: rgba(18, 56, 38, 0.08);
 
@@ -69,6 +70,10 @@ body {
   letter-spacing: -0.012em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.sd-dashboard-content {
+  padding-left: calc(3.5rem + 1.5rem);
 }
 
 /* Subtle background ambient gradient */
