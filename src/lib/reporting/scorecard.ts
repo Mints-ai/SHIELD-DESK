@@ -11,11 +11,14 @@ export interface RiskScorecardData {
     beforeShieldDesk: number;
     withShieldDesk: number;
     reductionPct: number;
+    /** True: figures are industry-average estimates, not measured from this tenant's environment. */
+    isEstimated: boolean;
   };
   mttrMinutes: {
     beforeShieldDesk: number;
     withShieldDesk: number;
     reductionPct: number;
+    isEstimated: boolean;
   };
   autonomousActionRatio: {
     tier1AutoContained: number;
@@ -26,12 +29,20 @@ export interface RiskScorecardData {
   activeThreatsBlocked: number;
   endpointsProtected: number;
   complianceAssurancePct: number;
+  /**
+   * Estimated financial risk avoided. Computed from industry-average
+   * breach-cost data (IBM Cost of a Data Breach 2024), NOT from actual
+   * incident-cost records for this tenant.
+   */
   estimatedLossAvoidedUsd: string;
+  estimatedLossIsEstimated: boolean;
   threatDistribution: Array<{
     category: string;
     count: number;
     percentage: number;
   }>;
+  /** Disclaimer that must be surfaced whenever estimated figures are presented externally. */
+  dataDisclaimer: string;
 }
 
 export async function getExecutiveRiskScorecard(caller: SessionUser): Promise<RiskScorecardData> {
@@ -83,11 +94,13 @@ export async function getExecutiveRiskScorecard(caller: SessionUser): Promise<Ri
       beforeShieldDesk: 54,
       withShieldDesk: 1.8,
       reductionPct: 96.6,
+      isEstimated: true, // industry-average benchmark, not measured from this tenant
     },
     mttrMinutes: {
       beforeShieldDesk: 252, // 4.2 hours
       withShieldDesk: 6.4,
       reductionPct: 97.4,
+      isEstimated: true,
     },
     autonomousActionRatio: {
       tier1AutoContained: tier1Count,
@@ -98,12 +111,14 @@ export async function getExecutiveRiskScorecard(caller: SessionUser): Promise<Ri
     activeThreatsBlocked: totalIncidents + 14,
     endpointsProtected: agents.length,
     complianceAssurancePct: 96,
-    estimatedLossAvoidedUsd: "$1,450,000",
+    estimatedLossAvoidedUsd: "~$1,450,000 (estimated)",
+    estimatedLossIsEstimated: true,
     threatDistribution: [
       { category: "Lateral Movement & SMB Recon", count: 4, percentage: 38 },
       { category: "Known Exploited Vulnerabilities (KEV)", count: 3, percentage: 29 },
       { category: "Credential Stuffing & Brute Force", count: 2, percentage: 19 },
       { category: "Suspicious C2 Egress", count: 1, percentage: 14 },
     ],
+    dataDisclaimer: "⚠ MTTD/MTTR reduction figures and estimated loss avoided are based on industry-average benchmarks (IBM Cost of a Data Breach 2024), not measured from this tenant's environment. Do not present as tenant-specific metrics without empirical validation.",
   };
 }

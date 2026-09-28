@@ -4,6 +4,7 @@ import { query } from "@/lib/db";
 import { supabaseServer } from "@/lib/supabase/server";
 import { createSessionToken } from "@/lib/auth/token";
 import { verifyPassword } from "@/lib/auth/password";
+import { getTotpSecret, verifyTotpCode } from "@/lib/auth/totp";
 import type { ShieldDeskRole } from "@/lib/permissions";
 
 export async function POST(req: NextRequest) {
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { email, password, userId } = body;
+    const { email, password, userId, mfaCode } = body;
 
     let authenticatedUid: string | null = null;
     let tenantId = "acme-tenant";
@@ -122,6 +123,27 @@ export async function POST(req: NextRequest) {
 
     if (!authenticatedUid) {
       return NextResponse.json({ error: "Failed to authenticate operator." }, { status: 401 });
+    }
+
+    // MFA check: if the user has TOTP enrolled, the code MUST be present and valid.
+    // Dev persona quick-login bypasses MFA (dev-only paths already blocked in production above).
+    if (email && password) {
+      const totpSecret = await getTotpSecret(authenticatedUid);
+      if (totpSecret) {
+        if (!mfaCode) {
+          return NextResponse.json(
+            { error: "MFA required. Please enter your 6-digit TOTP code.", mfaRequired: true },
+            { status: 401 }
+          );
+        }
+        const mfaResult = await verifyTotpCode(authenticatedUid, String(mfaCode), totpSecret);
+        if (!mfaResult.valid) {
+          return NextResponse.json(
+            { error: mfaResult.reason ?? "Invalid MFA code.", mfaRequired: true },
+            { status: 401 }
+          );
+        }
+      }
     }
 
     // S2: Cryptographically sign session token (HMAC-SHA256)

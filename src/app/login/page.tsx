@@ -27,7 +27,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [orgName, setOrgName] = useState("");
   const [selectedUser, setSelectedUser] = useState<DevUserId>("dev-analyst");
-  const [mfaCode, setMfaCode] = useState("482910");
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaRequired, setMfaRequired] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -77,13 +78,18 @@ export default function LoginPage() {
         const res = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password, mfaCode }),
+          body: JSON.stringify({ email, password, mfaCode: mfaCode || undefined }),
         });
         const data = await res.json();
         if (res.ok) {
           router.push("/");
         } else {
-          setErrorMessage(data.error || "Authentication failed");
+          if (data.mfaRequired) {
+            setMfaRequired(true);
+            setErrorMessage("Enter your 6-digit TOTP code from your authenticator app.");
+          } else {
+            setErrorMessage(data.error || "Authentication failed");
+          }
         }
       } else {
         // Quick Persona Login
@@ -336,15 +342,20 @@ export default function LoginPage() {
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
                   <Fingerprint className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
-                  <span>Hardware MFA / TOTP Token</span>
+                  <span>TOTP / Authenticator App</span>
                 </label>
-                <span className="text-[10px] text-[var(--sd-pine)] font-mono font-semibold">FIDO2 Active</span>
+                <span className="text-[10px] text-[var(--sd-pine)] font-mono font-semibold">
+                  {mfaRequired ? "Code required ↓" : "Optional if enrolled"}
+                </span>
               </div>
               <input
                 type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
                 value={mfaCode}
-                onChange={(e) => setMfaCode(e.target.value)}
+                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 maxLength={6}
+                placeholder={mfaRequired ? "Enter 6-digit code" : "Leave blank if not enrolled"}
                 className="bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-sm font-mono tracking-widest text-center focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)] selection:bg-[var(--sd-pine)] selection:text-[#f7f4ed]"
               />
             </div>

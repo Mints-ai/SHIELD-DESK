@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Default/mock initial dataset representing active fleet scan state
+/**
+ * DEMO/FALLBACK DATA — returned when the live scan service (SCAN_SERVICE_URL)
+ * is unreachable. These CVE findings are illustrative examples drawn from real
+ * public CVE disclosures but do NOT represent the actual posture of this tenant.
+ * They MUST NOT be presented to a client as their real vulnerability findings.
+ * Replace by connecting a live Trivy / Gitleaks pipeline that writes to the
+ * `scan_results` database table.
+ */
 const MOCK_CVE_FINDINGS = [
   {
     cve_id: "CVE-2024-6387",
@@ -98,6 +105,15 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     status: "ok",
     serviceConnected: Boolean(liveScanStatus),
+    /**
+     * "demo" = fixture data returned because scan service is offline.
+     * "live" = data returned from the real scan pipeline.
+     * Check this field before surfacing results to clients.
+     */
+    dataMode: liveScanStatus ? "live" : "demo",
+    demoDataDisclaimer: liveScanStatus
+      ? null
+      : "⚠ DEMO DATA: The scan service is offline. Findings shown are illustrative examples, not real vulnerability data for this tenant.",
     tenantId: session.tenantId,
     metrics: {
       totalVulnerabilities: 4,

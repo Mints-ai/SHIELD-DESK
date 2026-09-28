@@ -51,6 +51,17 @@ export async function POST(
     if (msg.includes("KILL_SWITCH_ACTIVE")) {
       return NextResponse.json({ error: msg }, { status: 423 }); // Locked
     }
+    if (msg.includes("BLAST_RADIUS_EXCEEDED")) {
+      return NextResponse.json(
+        {
+          error: msg,
+          code: "BLAST_RADIUS_EXCEEDED",
+          downgraded_tier: "Tier 2",
+          requires_approval: true,
+        },
+        { status: 429 }
+      );
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

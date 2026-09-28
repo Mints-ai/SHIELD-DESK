@@ -21,7 +21,11 @@ export type Permission =
   | "incident.read"
   | "incident.investigate"
   | "cve.read"
-  | "incident.mitigate";
+  | "incident.mitigate"
+  // Approval tier gates — additive. Each role can approve up to its highest tier.
+  | "approve.tier1"  // low-risk reversible (Tier 1)
+  | "approve.tier2"  // host isolation / patching (Tier 2) — requires responder+
+  | "approve.tier3"; // break-glass / destructive (Tier 3) — requires super_admin+
 
 const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
   system_admin: [
@@ -31,6 +35,9 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
+    "approve.tier1",
+    "approve.tier2",
+    "approve.tier3",
   ],
   super_admin: [
     "MANAGE_USERS",
@@ -38,28 +45,44 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
+    "approve.tier1",
+    "approve.tier2",
+    "approve.tier3",
   ],
   responder: [
     "incident.read",
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
+    "approve.tier1",
+    "approve.tier2",
   ],
   analyst: [
     "incident.read",
     "incident.investigate",
     "cve.read",
+    // analysts can flag low-risk Tier 1 actions for auto-containment
+    "approve.tier1",
   ],
   viewer: [
     "incident.read",
     "cve.read",
+    // Viewers have READ only — they cannot approve any action.
   ],
   user: [
     "incident.read",
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
+    "approve.tier1",
   ],
+};
+
+/** Maps an AutonomyTier string to the Permission required to approve it. */
+export const TIER_APPROVE_PERMISSIONS: Record<string, Permission> = {
+  "Tier 1": "approve.tier1",
+  "Tier 2": "approve.tier2",
+  "Tier 3": "approve.tier3",
 };
 
 export const TOOL_PERMISSIONS: Record<string, Permission> = {

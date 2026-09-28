@@ -1,8 +1,8 @@
 import "server-only";
 import { query } from "@/lib/db";
-import { canAccess } from "@/lib/permissions";
+import { canAccess, TIER_APPROVE_PERMISSIONS } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
-import { classifyResponseTier, calculateModelConfidence, type AutonomyTier } from "./autonomyTier";
+import { classifyResponseTier, calculateModelConfidence, TIER_DEFINITIONS, type AutonomyTier } from "./autonomyTier";
 import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
 
 export interface ApprovalTokenRecord {
@@ -14,6 +14,7 @@ export interface ApprovalTokenRecord {
   status: "pending" | "approved" | "rejected" | "expired";
   requested_by: string;
   approved_by: string | null;
+  secondary_approved_by?: string | null; // Tier 3 second sign-off
   rejection_reason?: string | null;
   blast_radius: string;
   model_confidence: number;
@@ -165,7 +166,54 @@ export async function approveActionToken(
       };
     }
 
-    // 3. Anti-Replay check
+    // 3a. Per-tier permission gate — role must have the right to approve this tier
+    const tierPermission = TIER_APPROVE_PERMISSIONS[token.tier];
+    if (tierPermission && !canAccess(session.role, tierPermission)) {
+      return {
+        error: "insufficient_role",
+        message: `Your role '${session.role}' does not have permission to approve ${token.tier} actions. Required: ${tierPermission}.`,
+      };
+    }
+
+    // 3b. Tier 3 dual-approval: first approver records intent; second finalises.
+    if (token.tier === "Tier 3") {
+      const requiredRoles = ["super_admin", "system_admin"];
+      if (!requiredRoles.includes(session.role)) {
+        return {
+          error: "insufficient_role",
+          message: "Tier 3 break-glass actions require a Super Admin or System Admin to approve.",
+        };
+      }
+
+      if (!token.approved_by) {
+        // First approver — record but keep pending until second distinct super_admin signs off
+        await query(
+          `UPDATE approval_tokens SET approved_by = $1, updated_at = now() WHERE id = $2`,
+          [session.uid, token.id]
+        );
+        await query(
+          `INSERT INTO approval_audit_log (token_id, tenant_id, actor_id, action, details, created_at)
+           VALUES ($1, $2, $3, 'tier3_first_approval', $4, now())`,
+          [token.id, token.tenant_id, session.uid, `First Tier 3 approval by ${session.uid} (Role: ${session.role}). Awaiting second sign-off.`]
+        );
+        return {
+          success: false,
+          awaitingSecondApproval: true,
+          message: "First Tier 3 approval recorded. A second, distinct Super Admin must also approve before execution.",
+        };
+      }
+
+      // Second approver must be a different person
+      if (token.approved_by === session.uid) {
+        return {
+          error: "separation_of_duties_violation",
+          message: "Tier 3 dual-approval violation: both approvals must come from different administrators.",
+        };
+      }
+      // Fall through to standard approval path — this is the second approver finalising.
+    }
+
+    // 4. Anti-Replay check
     if (token.status !== "pending") {
       return {
         error: "token_already_processed",
@@ -225,6 +273,40 @@ export async function approveActionToken(
       };
     }
 
+    // Per-tier permission gate (mirrors DB path)
+    const tierPermission = TIER_APPROVE_PERMISSIONS[token.tier];
+    if (tierPermission && !canAccess(session.role, tierPermission)) {
+      return {
+        error: "insufficient_role",
+        message: `Your role '${session.role}' does not have permission to approve ${token.tier} actions.`,
+      };
+    }
+
+    // Tier 3 dual-approval in mock mode
+    if (token.tier === "Tier 3") {
+      const requiredRoles = ["super_admin", "system_admin"];
+      if (!requiredRoles.includes(session.role)) {
+        return {
+          error: "insufficient_role",
+          message: "Tier 3 break-glass actions require a Super Admin or System Admin to approve.",
+        };
+      }
+      if (!token.approved_by) {
+        token.approved_by = session.uid; // first approver — stay pending
+        return {
+          success: false,
+          awaitingSecondApproval: true,
+          message: "First Tier 3 approval recorded. A second, distinct Super Admin must also approve.",
+        };
+      }
+      if (token.approved_by === session.uid) {
+        return {
+          error: "separation_of_duties_violation",
+          message: "Tier 3 dual-approval violation: both approvals must come from different administrators.",
+        };
+      }
+    }
+
     if (token.status !== "pending") {
       return {
         error: "token_already_processed",
@@ -244,7 +326,7 @@ export async function approveActionToken(
     return {
       success: true,
       token,
-      executionStatus: "simulated_containment_successful",
+      executionStatus: "queued_for_execution",
       message: `Action '${token.action_type}' approved and dispatched under ${token.tier} governance.`,
     };
   }

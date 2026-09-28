@@ -6,8 +6,13 @@ import {
   getEndpointAgent,
   executeAgentCommand,
   triggerKillSwitch,
+  getQueuedCommandsForAgent,
+  recordCommandResult,
+  MOCK_HASH_CHAINS,
 } from "../src/lib/fleet/fleet";
 import { requestApprovalToken, approveActionToken } from "../src/lib/governance/approvalTokens";
+import { resetMockThrottle } from "../src/lib/governance/blastRadiusThrottle";
+import { signCommand, verifyCommandSignature } from "../src/lib/fleet/commandSigning";
 import type { SessionUser } from "../src/lib/auth/session";
 
 test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) => {
@@ -152,4 +157,110 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
     });
     assert.ok(disengageRes.affectedCount >= 1);
   });
+
+  await t.test("Blast-Radius Throttle: 6th Tier 1 command throws BLAST_RADIUS_EXCEEDED and audits downgrade", async () => {
+    resetMockThrottle();
+
+    // Fire 5 Tier 1 commands (all 5 must succeed)
+    for (let i = 0; i < 5; i++) {
+      const res = await executeAgentCommand({
+        agentId: "FIN-WS-042",
+        command: `block_ip 198.51.100.${10 + i}`,
+        tier: "Tier 1",
+        caller: acmeAnalyst,
+      });
+      assert.equal(res.success, true);
+    }
+
+    // 6th command must fail with BLAST_RADIUS_EXCEEDED
+    await assert.rejects(
+      async () => {
+        await executeAgentCommand({
+          agentId: "FIN-WS-042",
+          command: "block_ip 198.51.100.99",
+          tier: "Tier 1",
+          caller: acmeAnalyst,
+        });
+      },
+      /BLAST_RADIUS_EXCEEDED/
+    );
+
+    // Verify audit hash chain contains TIER1_THROTTLED_DOWNGRADED
+    const downgradeAudit = MOCK_HASH_CHAINS.find(
+      (e) => e.event_type === "TIER1_THROTTLED_DOWNGRADED"
+    );
+    assert.ok(downgradeAudit, "Must record TIER1_THROTTLED_DOWNGRADED audit event");
+  });
+
+  await t.test("Command Signing & Cryptographic Tamper Defense: verifies valid signature and rejects forged signature", async () => {
+    const payload = {
+      agentId: "FIN-WS-042",
+      command: "isolate_host",
+      nonce: "nonce-12345",
+      tier: "Tier 2",
+    };
+
+    const signature = signCommand(payload);
+    assert.ok(signature.length > 20, "Signature must be generated");
+
+    // Valid signature verification
+    const isValid = verifyCommandSignature({ ...payload, signature });
+    assert.equal(isValid, true, "Signature must be cryptographically valid");
+
+    // Tampered payload verification
+    const isTamperedCommandValid = verifyCommandSignature({
+      ...payload,
+      command: "kill_process 1", // Attacker modified command
+      signature,
+    });
+    assert.equal(isTamperedCommandValid, false, "Tampered command payload must fail verification");
+
+    // Forged signature verification
+    const isForgedSigValid = verifyCommandSignature({
+      ...payload,
+      signature: "forged-base64-signature==",
+    });
+    assert.equal(isForgedSigValid, false, "Forged signature must fail verification");
+  });
+
+  await t.test("Command Queue & Asynchronous Lifecycle: enqueues, polls, and reports execution result", async () => {
+    resetMockThrottle();
+
+    // 1. Enqueue a Tier 1 command
+    const res = await executeAgentCommand({
+      agentId: "FIN-WS-042",
+      command: "block_ip 203.0.113.5",
+      tier: "Tier 1",
+      caller: acmeAnalyst,
+    });
+    assert.equal(res.success, true);
+    assert.ok(res.commandId);
+
+    // Verify intent audit event AGENT_COMMAND_QUEUED was recorded
+    const queuedAudit = MOCK_HASH_CHAINS.find(
+      (e) => e.event_type === "AGENT_COMMAND_QUEUED" && (e.payload as any)?.commandId === res.commandId
+    );
+    assert.ok(queuedAudit, "AGENT_COMMAND_QUEUED audit event must be recorded before execution");
+
+    // 2. Agent polls for pending commands
+    const polled = await getQueuedCommandsForAgent("ea111111-1111-1111-1111-111111111111");
+    const matchingCmd = polled.find((c) => c.id === res.commandId);
+    assert.ok(matchingCmd, "Command must be delivered to polling agent");
+    assert.equal(matchingCmd.status, "delivered");
+
+    // 3. Agent reports execution result
+    await recordCommandResult({
+      commandId: res.commandId,
+      status: "executed",
+      output: "Host FIN-WS-042: firewall rule inserted to DROP 203.0.113.5",
+      snapshotId: "snap-finws042-test",
+    });
+
+    // 4. Verify AGENT_COMMAND_EXECUTED event is logged
+    const executedAudit = MOCK_HASH_CHAINS.find(
+      (e) => e.event_type === "AGENT_COMMAND_EXECUTED" && (e.payload as any)?.commandId === res.commandId
+    );
+    assert.ok(executedAudit, "AGENT_COMMAND_EXECUTED audit event must be recorded upon agent result");
+  });
 });
+

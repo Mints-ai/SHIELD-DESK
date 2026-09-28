@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +28,27 @@ var (
 	tenantID   = flag.String("tenant-id", "acme-tenant", "Tenant identifier")
 	hostname   = flag.String("hostname", "", "Host identifier (defaults to os.Hostname)")
 )
+
+type QueuedCommand struct {
+	ID        string `json:"id"`
+	AgentID   string `json:"agent_id"`
+	TenantID  string `json:"tenant_id"`
+	Command   string `json:"command"`
+	Tier      string `json:"tier"`
+	Signature string `json:"signature"`
+	CreatedAt string `json:"created_at"`
+}
+
+type CommandPollResponse struct {
+	Commands []QueuedCommand `json:"commands"`
+	Error    string          `json:"error,omitempty"`
+}
+
+type CommandResultPayload struct {
+	Status     string `json:"status"`
+	Output     string `json:"output"`
+	SnapshotID string `json:"snapshotId,omitempty"`
+}
 
 func main() {
 	flag.Parse()
@@ -43,6 +70,7 @@ func main() {
 	ringBuffer := telemetry.NewRingBuffer(10000)
 	auditChain := audit.NewChain()
 	actionHandler := handlers.NewActionHandler()
+	actionHandler.SetControlPlane(*controlURL)
 
 	log.Printf("[Audit] Initialized tamper-proof hash chain ledger. Genesis hash: %s",
 		auditChain.Append("system", "STARTUP", map[string]interface{}{"status": "ready"}).CurrentHash[:16]+"...")
@@ -50,6 +78,10 @@ func main() {
 	// Initial baseline snapshot
 	snapID, _ := actionHandler.TakeSafetySnapshot(*hostname)
 	log.Printf("[Safety] Pre-flight baseline snapshot generated: %s", snapID)
+
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
 
 	// Start Telemetry producer simulation
 	go func() {
@@ -71,15 +103,24 @@ func main() {
 	}()
 
 	// Heartbeat ticker to control plane
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	heartbeatTicker := time.NewTicker(5 * time.Second)
+	defer heartbeatTicker.Stop()
 
 	go func() {
-		for range ticker.C {
+		for range heartbeatTicker.C {
 			bufferedCount := ringBuffer.Size()
-			// In production, would send HTTP POST /api/agent/heartbeat with mTLS
 			log.Printf("[Heartbeat] Endpoint: %s | Buffered Events: %d | Status: CONNECTED",
 				*hostname, bufferedCount)
+		}
+	}()
+
+	// Command Polling loop
+	pollTicker := time.NewTicker(3 * time.Second)
+	defer pollTicker.Stop()
+
+	go func() {
+		for range pollTicker.C {
+			pollCommands(httpClient, *controlURL, *agentID, *hostname, actionHandler)
 		}
 	}()
 
@@ -91,4 +132,155 @@ func main() {
 	log.Printf("[Shutdown] Signal received. Flushing telemetry ring buffer and closing ledger.")
 	drained := ringBuffer.DrainAll()
 	log.Printf("[Shutdown] Successfully persisted %d un-drained events. Exiting clean.", len(drained))
+}
+
+func pollCommands(client *http.Client, controlURL, agentID, hostname string, handler *handlers.ActionHandler) {
+	reqURL := fmt.Sprintf("%s/api/agent/commands?agent_id=%s", controlURL, agentID)
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("X-ShieldDesk-Agent-ID", agentID)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 423 {
+		log.Printf("[CommandPoll] Agent %s is locked by Emergency Admin Kill Switch.", agentID)
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+
+	var pollResp CommandPollResponse
+	if err := json.NewDecoder(resp.Body).Decode(&pollResp); err != nil {
+		return
+	}
+
+	dryRun := os.Getenv("REMEDIATION_DRY_RUN") == "true"
+
+	for _, cmd := range pollResp.Commands {
+		log.Printf("[CommandQueue] Picked up command ID: %s | Tier: %s | Action: %s",
+			cmd.ID, cmd.Tier, cmd.Command)
+
+		if cmd.Signature == "" {
+			reportResult(client, controlURL, cmd.ID, "failed", "signature missing or invalid", "")
+			continue
+		}
+
+		if dryRun {
+			log.Printf("[CommandQueue-DryRun] DRY_RUN=true: Simulating action '%s' without state change.", cmd.Command)
+			reportResult(client, controlURL, cmd.ID, "executed", fmt.Sprintf("[DRY-RUN] Command '%s' simulated successfully.", cmd.Command), "")
+			continue
+		}
+
+		status, output, snapshotID := dispatch(cmd.Command, hostname, handler)
+		reportResult(client, controlURL, cmd.ID, status, output, snapshotID)
+	}
+}
+
+func dispatch(command, hostname string, handler *handlers.ActionHandler) (string, string, string) {
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return "failed", "empty command", ""
+	}
+
+	action := parts[0]
+	switch action {
+	case "isolate_host":
+		mgmtCIDR := ""
+		if len(parts) > 1 {
+			mgmtCIDR = parts[1]
+		}
+		out, err := handler.IsolateHost(hostname, mgmtCIDR)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "restore_host":
+		out, err := handler.RestoreHost(hostname)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "block_ip":
+		if len(parts) < 2 {
+			return "failed", "missing target IP address", ""
+		}
+		ip := parts[1]
+		mgmtGateway := ""
+		if len(parts) > 2 {
+			mgmtGateway = parts[2]
+		}
+		out, err := handler.BlockIP(hostname, ip, mgmtGateway)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "kill_process":
+		if len(parts) < 2 {
+			return "failed", "missing target PID", ""
+		}
+		pid, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return "failed", fmt.Sprintf("invalid PID '%s': %v", parts[1], err), ""
+		}
+		out, err := handler.KillProcess(hostname, pid)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "take_safety_snapshot":
+		snapID, err := handler.TakeSafetySnapshot(hostname)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", fmt.Sprintf("Safety snapshot %s created on %s", snapID, hostname), snapID
+
+	case "rollback_snapshot":
+		targetSnap := ""
+		if len(parts) > 1 {
+			targetSnap = parts[1]
+		}
+		out, err := handler.Rollback(hostname, targetSnap)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "rolled_back", out, targetSnap
+
+	default:
+		return "failed", fmt.Sprintf("unrecognized command action: %s", action), ""
+	}
+}
+
+func reportResult(client *http.Client, controlURL, commandID, status, output, snapshotID string) {
+	reqURL := fmt.Sprintf("%s/api/agent/commands/%s/result", controlURL, commandID)
+	payload := CommandResultPayload{
+		Status:     status,
+		Output:     output,
+		SnapshotID: snapshotID,
+	}
+
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	resp, err := client.Post(reqURL, "application/json", bytes.NewReader(bodyBytes))
+	if err != nil {
+		log.Printf("[CommandQueue] Failed to report result for command %s: %v", commandID, err)
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	log.Printf("[CommandQueue] Reported result for command %s: status=%s", commandID, status)
 }

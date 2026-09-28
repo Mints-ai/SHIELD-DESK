@@ -13,7 +13,17 @@ export interface IsoControl {
   status: ControlAutomationStatus;
   shieldDeskEnforcement: string;
   auditEvidenceSource: string;
+  /**
+   * Compliance percentage for this control.
+   * DATA SOURCE: Estimated baseline — derived from ShieldDesk feature coverage
+   * against ISO/IEC 27001:2022 control requirements. NOT computed from live telemetry.
+   * These values require a formal gap-assessment audit before being presented to
+   * an accreditation body or a client as binding compliance metrics.
+   */
   compliancePct: number;
+  /** Always "estimated_baseline" until replaced by a live measurement pipeline. */
+  dataSource: "estimated_baseline" | "live_telemetry";
+  isEstimated: boolean;
 }
 
 export const ISO_27001_CONTROLS: IsoControl[] = [
@@ -26,6 +36,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "Deterministic incident correlation engine auto-generates 3-horizon mitigation plans upon critical alert ingest.",
     auditEvidenceSource: "mitigation_plans, incident_events",
     compliancePct: 98,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.5.25",
@@ -36,6 +48,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "AIR agent classifies every proposed response into Autonomy Tiers 0-3 with dynamic confidence calibration.",
     auditEvidenceSource: "approval_tokens.model_confidence, autonomyTier.ts",
     compliancePct: 96,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.5.26",
@@ -46,6 +60,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "Tier 1 actions (IP block, snapshot) execute automatically; Tier 2/3 actions enforce human-in-the-loop sign-off.",
     auditEvidenceSource: "approval_audit_log, agent_command_logs",
     compliancePct: 92,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.5.28",
@@ -56,6 +72,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "Cryptographic hash-chaining (SHA-256) of every AI recommendation, approval token, and endpoint command.",
     auditEvidenceSource: "hash_chain_audit, db/schema.sql",
     compliancePct: 100,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.8.7",
@@ -66,6 +84,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "Endpoint Agent process scanner detects and terminates rogue processes (SIGKILL) with baseline process memory dump.",
     auditEvidenceSource: "endpoint_agents, agent_command_logs",
     compliancePct: 94,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.8.8",
@@ -76,6 +96,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "Python ML CVE engine correlates live CVE vulnerabilities against CVSS scores and CISA KEV catalogs for automated remediation planning.",
     auditEvidenceSource: "incident_cves, cve_ai_engine.py",
     compliancePct: 95,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.8.16",
@@ -86,6 +108,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "High-frequency telemetry stream from enrolled Universal Endpoint Agents buffered into 3-tier lake (Hot/Warm/Cold).",
     auditEvidenceSource: "endpoint_agents.eps, RingBuffer",
     compliancePct: 95,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.8.20",
@@ -96,6 +120,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "Automated host network interface isolation and microsegmentation firewall ACL injection across finance subnets.",
     auditEvidenceSource: "agent/pkg/handlers/actions.go",
     compliancePct: 88,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.8.24",
@@ -106,6 +132,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "mTLS gRPC transport channels and SHA-256 tamper-proof hash chains across all audit logs.",
     auditEvidenceSource: "hash_chain_audit, mTLS config",
     compliancePct: 98,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
   {
     code: "A.9.2",
@@ -116,6 +144,8 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     shieldDeskEnforcement: "Database-level constraint CHECK (approved_by IS NULL OR requested_by <> approved_by) preventing self-approval.",
     auditEvidenceSource: "db/schema.sql, approvalTokens.ts",
     compliancePct: 100,
+    dataSource: "estimated_baseline",
+    isEstimated: true,
   },
 ];
 
@@ -128,6 +158,12 @@ export interface ComplianceSummary {
   controls: IsoControl[];
   soc2Readiness: string;
   auditEvidenceCount: number;
+  /**
+   * True when any control's compliancePct is estimated rather than
+   * derived from live telemetry. Must be surfaced in any UI or report
+   * before presenting numbers to a client or auditor.
+   */
+  dataDisclaimer: string;
 }
 
 export async function getComplianceSummary(caller: SessionUser): Promise<ComplianceSummary> {
@@ -157,6 +193,7 @@ export async function getComplianceSummary(caller: SessionUser): Promise<Complia
     controls: ISO_27001_CONTROLS,
     soc2Readiness: avgScore >= 90 ? "AUDIT_READY" : "REMEDIATION_IN_PROGRESS",
     auditEvidenceCount: evidenceCount,
+    dataDisclaimer: "⚠ Compliance percentages are estimated baselines derived from ShieldDesk feature coverage, not live telemetry measurements. A formal gap-assessment audit is required before presenting these figures to an accreditation body or client.",
   };
 }
 
@@ -183,6 +220,6 @@ export async function exportAuditEvidencePackage(caller: SessionUser) {
       endpointAgents: agents,
       hashChainHead: MOCK_HASH_CHAINS[MOCK_HASH_CHAINS.length - 1]?.current_hash || "GENESIS",
     },
-    attestation: "All autonomous actions and human approvals comply with ISO/IEC 27001:2022 and SOC 2 Type II trust criteria.",
+    attestation: "[ESTIMATED BASELINE] Compliance percentages are derived from ShieldDesk feature coverage against ISO/IEC 27001:2022 control requirements and have not been validated by an external auditor. Do not present as binding compliance evidence without a formal gap-assessment audit.",
   };
 }
