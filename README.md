@@ -67,25 +67,25 @@ Then review and adjust the values in [.env.example](.env.example), especially th
 
 ### 3) Start the app
 
-#### Option A: Local full stack
+#### Option A: One-Command Full Stack (Recommended)
 
-The repo includes a PowerShell launcher for the main stack:
+Run the full stack with a single command:
 
-```powershell
-pwsh -File ./start.ps1
+```bash
+npm run start:all
 ```
 
-If you are on Windows PowerShell directly:
+This executes the launcher (`start.ps1` with execution policy bypass) and starts all services together in one command:
+
+- **ShieldDesk Next.js UI** on http://localhost:3000
+- **Python CVE / ML AI Service** on http://localhost:8000
+- **Ollama LLM Engine** on http://localhost:11434
+
+*Alternatively, if running directly in PowerShell:*
 
 ```powershell
 .\start.ps1
 ```
-
-This is intended to bring up the main services together, including:
-
-- Next.js app on http://localhost:3000
-- Python AI service on http://localhost:8000
-- Ollama on http://localhost:11434
 
 #### Option B: Manual startup
 
