@@ -130,12 +130,7 @@ export default function PlansIndexPage() {
               <Plus className="h-4 w-4" />
               <span>Generate New Plan</span>
             </button>
-            <Link
-              href="/"
-              className="px-3.5 py-2 rounded-xl border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition-colors"
-            >
-              Back to Live Queue
-            </Link>
+
           </div>
         </div>
       </header>
