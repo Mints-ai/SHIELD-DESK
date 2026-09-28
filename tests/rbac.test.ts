@@ -99,14 +99,16 @@ describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
     assert.strictEqual(canExecuteTool("system_admin", "unknownDestructiveTool"), false);
   });
 
-  it("Priority 1: simulateBlastRadius computes downstream dependencies, posture delta, and isolation (Globex Analyst only)", async () => {
-    // 1. Authorization Gate: Non-Globex analyst (Acme) must be rejected
+ot  it("Priority 1: simulateBlastRadius computes downstream dependencies, posture delta, and isolation (all roles with cve.read)", async () => {
+    // 1. Authorization Gate (updated policy): All roles with cve.read can now run blast radius.
+    //    Acme analyst (role: "user") has cve.read — must be ALLOWED (not denied).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const blockedAcme: any = await simulateBlastRadius(acmeAnalyst, { cveId: "CVE-2024-6387" });
-    assert.ok("error" in blockedAcme, "Acme analyst must be denied blast radius simulation");
-    assert.strictEqual(blockedAcme.error, "not_authorized", "Must return not_authorized error for Acme analyst");
+    const acmeRes: any = await simulateBlastRadius(acmeAnalyst, { cveId: "CVE-2024-6387" });
+    assert.ok(!("error" in acmeRes), "Acme analyst must be ALLOWED blast radius simulation under updated RBAC policy");
+    assert.ok(acmeRes.simulation, "Simulation object must be returned for Acme analyst");
+    assert.strictEqual(acmeRes.simulation.target_cve, "CVE-2024-6387");
 
-    // 2. Blast radius simulation succeeds for authorized Globex Analyst
+    // 2. Blast radius simulation also succeeds for Globex Analyst
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const cveRes: any = await simulateBlastRadius(globexAnalyst, { cveId: "CVE-2024-6387" });
     assert.ok(cveRes.simulation, "Simulation object must be returned for Globex analyst");
@@ -136,7 +138,8 @@ describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
     assert.ok(dynRes.simulation, "Must simulate dynamic arbitrary CVE");
     assert.strictEqual(dynRes.simulation.layers.length, 4);
 
-    // 3. Tenant Isolation: Globex user cannot simulate blast radius on Acme's INC-1042
+    // 3. Tenant Isolation still enforced: Globex user cannot simulate blast radius on Acme's INC-1042
+    //    (RBAC allows blast radius, but tenant isolation still blocks cross-tenant incident access)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const blockedRes: any = await simulateBlastRadius(globexAnalyst, { incidentId: "INC-1042" });
     assert.ok("error" in blockedRes, "Globex analyst must be denied access to Acme incident");
