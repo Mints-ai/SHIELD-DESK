@@ -20,7 +20,7 @@ test("ShieldDesk Phase 0 Security & Auth Hardening Suite", async (t) => {
   // -------------------------------------------------------------------------
   await t.test("S1: Dev persona quick-login is rejected with 401 in production", async () => {
     const originalEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+    (process.env as Record<string, string | undefined>).NODE_ENV = "production";
 
     try {
       const req = new NextRequest("http://localhost:3000/api/auth/login", {
@@ -34,7 +34,7 @@ test("ShieldDesk Phase 0 Security & Auth Hardening Suite", async (t) => {
       const data = await res.json();
       assert.match(data.error, /disabled in production/i);
     } finally {
-      process.env.NODE_ENV = originalEnv;
+      (process.env as Record<string, string | undefined>).NODE_ENV = originalEnv;
     }
   });
 
