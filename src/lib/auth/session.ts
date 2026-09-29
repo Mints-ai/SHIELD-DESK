@@ -5,6 +5,7 @@ import type { ShieldDeskRole } from "@/lib/permissions";
 import { supabaseServer } from "@/lib/supabase/server";
 import { verifySessionToken } from "@/lib/auth/token";
 import { DEV_USERS } from "@/lib/constants/devUsers";
+import { isDevPersonaAllowed } from "@/lib/config/environment";
 
 export interface ChatSession {
   uid: string;
@@ -86,9 +87,8 @@ export async function getSessionFromRequest(
     }
   }
 
-  // 4. Check X-ShieldDesk-User header (Dev & Test mode ONLY)
-  const isDevOrTest = process.env.NODE_ENV !== "production";
-  if (isDevOrTest) {
+  // 4. Check X-ShieldDesk-User header (Dev & Test mode ONLY — strictly disabled in production)
+  if (isDevPersonaAllowed()) {
     const devHeaderUid = req.headers.get("X-ShieldDesk-User");
     if (devHeaderUid && Object.prototype.hasOwnProperty.call(DEV_USERS, devHeaderUid)) {
       const devUser = DEV_USERS[devHeaderUid as keyof typeof DEV_USERS];

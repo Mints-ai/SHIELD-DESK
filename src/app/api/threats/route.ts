@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { shouldFailClosed, isDemoMode } from "@/lib/config/environment";
+import { getSessionFromRequest } from "@/lib/auth/session";
 
 const YARA_RULES = [
   {
@@ -110,16 +112,42 @@ const INGEST_TELEMETRY = {
   events_persisted_timescaledb: 148290,
 };
 
-import { getSessionFromRequest } from "@/lib/auth/session";
-
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // In production with FAIL_CLOSED=true, ensure telemetry pipeline is configured
+  if (shouldFailClosed()) {
+    const hasLiveTelemetry = Boolean(process.env.NATS_URL || process.env.TIMESCALE_URL);
+    if (!hasLiveTelemetry) {
+      return NextResponse.json(
+        {
+          error: "Telemetry lake / NATS JetStream detection pipeline is not connected. Fail-closed active in production.",
+          code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+          tenantId: session.tenantId,
+          yara_rules: [],
+          sigma_rules: [],
+          anomaly_baselines: [],
+          ingest_telemetry: {
+            active_agents_connected: 0,
+            events_per_minute: 0,
+            bus_status: "Disconnected",
+          },
+        },
+        { status: 503 }
+      );
+    }
+  }
+
   return NextResponse.json({
     status: "ok",
+    dataMode: isDemoMode() ? "demo" : "live",
+    demoMode: isDemoMode(),
+    demoDataDisclaimer: isDemoMode()
+      ? "⚠ DEMO DATA: Baseline and telemetry statistics are simulated benchmarks for evaluation."
+      : null,
     tenantId: session.tenantId,
     yara_rules: YARA_RULES,
     sigma_rules: SIGMA_RULES,
@@ -139,8 +167,16 @@ export async function POST(req: NextRequest) {
     const { action } = body;
 
     if (action === "simulate_burst") {
+      if (shouldFailClosed()) {
+        return NextResponse.json(
+          { error: "Synthetic anomaly burst simulation is prohibited in production mode." },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json({
         success: true,
+        _demo_mode: true,
         simulation: "Auth Failure Anomaly Spike",
         triggered_at: new Date().toISOString(),
         anomaly_metric: "Failed Authentications / Min",

@@ -159,6 +159,9 @@ export default function RiskScorecardPage() {
                 <h3 className="text-sm font-bold text-[var(--sd-pine)]">
                   Mean Time to Detect (MTTD)
                 </h3>
+                <span className="text-[10px] font-mono text-[var(--sd-text-muted)] border border-[var(--sd-border)] px-1.5 py-0.5 rounded">
+                  Benchmark Model
+                </span>
               </div>
               <span className="flex items-center gap-1 text-xs font-bold text-[var(--sd-success)] bg-[var(--sd-success-dim)] px-2 py-0.5 rounded border border-[var(--sd-success-border)] font-mono">
                 <TrendingDown className="h-3 w-3" />
@@ -195,6 +198,9 @@ export default function RiskScorecardPage() {
                 <h3 className="text-sm font-bold text-[var(--sd-pine)]">
                   Mean Time to Remediate (MTTR)
                 </h3>
+                <span className="text-[10px] font-mono text-[var(--sd-text-muted)] border border-[var(--sd-border)] px-1.5 py-0.5 rounded">
+                  Benchmark Model
+                </span>
               </div>
               <span className="flex items-center gap-1 text-xs font-bold text-[var(--sd-success)] bg-[var(--sd-success-dim)] px-2 py-0.5 rounded border border-[var(--sd-success-border)] font-mono">
                 <TrendingDown className="h-3 w-3" />

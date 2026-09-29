@@ -4,6 +4,7 @@ import { canAccess, TIER_APPROVE_PERMISSIONS } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
 import { classifyResponseTier, calculateModelConfidence, TIER_DEFINITIONS, type AutonomyTier } from "./autonomyTier";
 import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
+import { isDemoMode, shouldFailClosed } from "@/lib/config/environment";
 
 export interface ApprovalTokenRecord {
   id: string;
@@ -99,7 +100,13 @@ export async function requestApprovalToken(
     }).catch(() => {});
 
     return { token: tokenRecord };
-  } catch {
+  } catch (err) {
+    if (shouldFailClosed()) {
+      return {
+        error: "database_unavailable",
+        message: "Database unavailable to record approval token. Action aborted under production fail-closed policy.",
+      };
+    }
     // Dev fallback if database is offline
     const mockToken: ApprovalTokenRecord = {
       id: tokenId,
@@ -254,10 +261,16 @@ export async function approveActionToken(
     return {
       success: true,
       token: updated.rows[0],
-      executionStatus: "simulated_containment_successful",
+      executionStatus: isDemoMode() ? "simulated_containment_successful" : "queued_for_execution",
       message: `Action '${token.action_type}' approved and dispatched under ${token.tier} governance.`,
     };
-  } catch {
+  } catch (err) {
+    if (shouldFailClosed()) {
+      return {
+        error: "database_unavailable",
+        message: "Database unavailable to record token approval. Action aborted under production fail-closed policy.",
+      };
+    }
     // Dev fallback if database is offline
     const token = MOCK_APPROVAL_TOKENS[args.tokenId];
     if (!token) return { error: "not_found" };

@@ -397,7 +397,7 @@ export default function LoginPage() {
         {/* Security Footer Notice */}
         <div className="text-center text-[10px] text-[var(--sd-text-dim)] flex items-center justify-center gap-2 font-mono">
           <Lock className="h-3 w-3" />
-          <span>mTLS Encrypted &bull; ISO 27001 / SOC 2 Type II Certified Session</span>
+          <span>mTLS Encrypted &bull; ISO 27001 &amp; SOC 2 Readiness Architecture</span>
         </div>
       </div>
     </div>
