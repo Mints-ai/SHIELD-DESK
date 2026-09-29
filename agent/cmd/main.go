@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -34,6 +35,7 @@ var (
 	tenantID      = flag.String("tenant-id", "acme-tenant", "Tenant identifier")
 	hostname      = flag.String("hostname", "", "Host identifier (defaults to os.Hostname)")
 	publicKeyFlag = flag.String("public-key", "", "Path to control-plane RSA public key PEM file or raw PEM string")
+	enrollToken   = flag.String("enroll-token", "", "One-time enrollment token (sdt_...) for dynamic host provisioning")
 
 	controlPlanePubKey *rsa.PublicKey
 )
@@ -93,6 +95,22 @@ func main() {
 		Timeout: 10 * time.Second,
 	}
 
+	// Dynamic Provisioning: if -enroll-token or SHIELDDESK_ENROLL_TOKEN is specified
+	activeEnrollToken := *enrollToken
+	if activeEnrollToken == "" {
+		activeEnrollToken = os.Getenv("SHIELDDESK_ENROLL_TOKEN")
+	}
+	if activeEnrollToken != "" {
+		log.Printf("[Enrollment] Presenting enrollment token to control plane %s...", *controlURL)
+		enrolledAgentID, enrolledTenantID, err := enrollWithControlPlane(httpClient, *controlURL, activeEnrollToken, *hostname)
+		if err != nil {
+			log.Fatalf("[Enrollment Error] Host enrollment failed: %v", err)
+		}
+		*agentID = enrolledAgentID
+		*tenantID = enrolledTenantID
+		log.Printf("[Enrollment Success] Successfully provisioned: AgentID=%s, TenantID=%s", *agentID, *tenantID)
+	}
+
 	// Load Control Plane RSA-2048 public key for cryptographic command verification
 	pubKey, err := loadControlPlanePublicKey(httpClient, *controlURL, *publicKeyFlag)
 	if err != nil {
@@ -102,7 +120,7 @@ func main() {
 		log.Printf("[Security] Loaded control plane RSA-2048 public key successfully. Cryptographic signature verification ACTIVE.")
 	}
 
-	// Start Telemetry producer simulation
+	// Start Telemetry producer
 	go func() {
 		eventTypes := []string{"PROCESS_START", "NETWORK_CONNECT", "FILE_INTEGRITY_CHECK", "AUTH_ATTEMPT"}
 		for {
@@ -121,19 +139,36 @@ func main() {
 		}
 	}()
 
-	// Heartbeat ticker to control plane
+	// Heartbeat ticker to control plane (every 5 seconds)
 	heartbeatTicker := time.NewTicker(5 * time.Second)
 	defer heartbeatTicker.Stop()
 
 	go func() {
 		for range heartbeatTicker.C {
 			bufferedCount := ringBuffer.Size()
+			cpu := rand.Float64()*15 + 5
+			mem := rand.Float64()*10 + 40
+			eps := bufferedCount / 5
+			sendHeartbeat(httpClient, *controlURL, *agentID, *hostname, cpu, mem, eps)
 			log.Printf("[Heartbeat] Endpoint: %s | Buffered Events: %d | Status: CONNECTED",
 				*hostname, bufferedCount)
 		}
 	}()
 
-	// Command Polling loop
+	// Streaming Telemetry Flusher to control plane (every 10 seconds)
+	telemetryTicker := time.NewTicker(10 * time.Second)
+	defer telemetryTicker.Stop()
+
+	go func() {
+		for range telemetryTicker.C {
+			batch := ringBuffer.DrainAll()
+			if len(batch) > 0 {
+				flushTelemetry(httpClient, *controlURL, *agentID, batch)
+			}
+		}
+	}()
+
+	// Command Polling loop (every 3 seconds)
 	pollTicker := time.NewTicker(3 * time.Second)
 	defer pollTicker.Stop()
 
@@ -150,6 +185,9 @@ func main() {
 	<-sigChan
 	log.Printf("[Shutdown] Signal received. Flushing telemetry ring buffer and closing ledger.")
 	drained := ringBuffer.DrainAll()
+	if len(drained) > 0 {
+		flushTelemetry(httpClient, *controlURL, *agentID, drained)
+	}
 	log.Printf("[Shutdown] Successfully persisted %d un-drained events. Exiting clean.", len(drained))
 }
 
@@ -424,4 +462,111 @@ func reportResult(client *http.Client, controlURL, commandID, status, output, sn
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 	log.Printf("[CommandQueue] Reported result for command %s: status=%s", commandID, status)
+}
+
+type EnrollmentResponse struct {
+	Success  bool   `json:"success"`
+	AgentID  string `json:"agentId"`
+	TenantID string `json:"tenantId"`
+	Error    string `json:"error,omitempty"`
+}
+
+func enrollWithControlPlane(client *http.Client, controlURL, token, hostname string) (string, string, error) {
+	osType := runtime.GOOS
+	if osType != "windows" && osType != "darwin" {
+		osType = "linux"
+	}
+	payload := map[string]string{
+		"token":        token,
+		"hostname":     hostname,
+		"osType":       osType,
+		"agentVersion": version,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", "", err
+	}
+	resp, err := client.Post(controlURL+"/api/agent/enroll", "application/json", bytes.NewBuffer(data))
+	if err != nil {
+		return "", "", fmt.Errorf("network error during enrollment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("control plane rejected enrollment (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var enrollResp EnrollmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&enrollResp); err != nil {
+		return "", "", fmt.Errorf("malformed enrollment response: %w", err)
+	}
+	if !enrollResp.Success || enrollResp.AgentID == "" {
+		return "", "", fmt.Errorf("enrollment unsuccessful: %s", enrollResp.Error)
+	}
+	return enrollResp.AgentID, enrollResp.TenantID, nil
+}
+
+func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cpu, mem float64, eps int) {
+	payload := map[string]interface{}{
+		"agentId":     agentID,
+		"cpuUsage":    cpu,
+		"memoryUsage": mem,
+		"eps":         eps,
+		"status":      "connected",
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest("POST", controlURL+"/api/agent/heartbeat", bytes.NewBuffer(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-ShieldDesk-Agent-ID", agentID)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 423 {
+		log.Printf("[Heartbeat Alert] Kill switch is active for agent %s. Host commands blocked.", agentID)
+	}
+}
+
+func flushTelemetry(client *http.Client, controlURL, agentID string, events []telemetry.Event) {
+	if len(events) == 0 {
+		return
+	}
+	payloadEvents := make([]map[string]interface{}, len(events))
+	for i, e := range events {
+		payloadEvents[i] = map[string]interface{}{
+			"eventType": e.EventType,
+			"payload":   e.Payload,
+			"timestamp": e.Timestamp.Format(time.RFC3339),
+		}
+	}
+	body := map[string]interface{}{
+		"agentId": agentID,
+		"events":  payloadEvents,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest("POST", controlURL+"/api/agent/telemetry", bytes.NewBuffer(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-ShieldDesk-Agent-ID", agentID)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
 }

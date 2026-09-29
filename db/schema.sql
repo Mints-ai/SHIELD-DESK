@@ -242,6 +242,39 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_status ON agent_commands (ag
 CREATE INDEX IF NOT EXISTS idx_agent_commands_tenant_created ON agent_commands (tenant_id, created_at);
 
 -- ---------------------------------------------------------------------------
+-- Endpoint Enrollment Tokens
+-- Short-lived, single-use, tenant-bound tokens for endpoint provisioning.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS endpoint_enrollment_tokens (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id     text NOT NULL,
+  token_hash    text NOT NULL UNIQUE,
+  label         text,
+  expires_at    timestamptz NOT NULL,
+  max_uses      integer NOT NULL DEFAULT 1,
+  used_count    integer NOT NULL DEFAULT 0,
+  created_by    text NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  revoked_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_tenant ON endpoint_enrollment_tokens (tenant_id);
+
+-- ---------------------------------------------------------------------------
+-- Endpoint High-Frequency Telemetry Ingestion
+-- Stores streaming telemetry batches from enrolled endpoint agents.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS endpoint_telemetry (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id      uuid NOT NULL REFERENCES endpoint_agents(id) ON DELETE CASCADE,
+  tenant_id     text NOT NULL,
+  event_type    text NOT NULL,
+  payload       jsonb NOT NULL,
+  timestamp     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_telemetry_agent_time ON endpoint_telemetry (agent_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_telemetry_tenant_time ON endpoint_telemetry (tenant_id, timestamp DESC);
+
+-- ---------------------------------------------------------------------------
 -- Layer 3/4: Hash-Chained Tamper-Proof Audit Vault
 -- Cryptographically chains events (prev_hash + payload -> current_hash)
 -- for SOC 2 / ISO 27001 auditor verification.
