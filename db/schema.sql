@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS agent_commands (
   tier          text NOT NULL CHECK (tier IN ('Tier 0', 'Tier 1', 'Tier 2', 'Tier 3')),
   token_id      uuid REFERENCES approval_tokens(id),
   signature     text NOT NULL,
+  nonce         text,
   status        text NOT NULL DEFAULT 'queued'
                 CHECK (status IN ('queued', 'delivered', 'executed', 'failed', 'rolled_back')),
   result        jsonb,
@@ -236,6 +237,7 @@ CREATE TABLE IF NOT EXISTS agent_commands (
   delivered_at  timestamptz,
   completed_at  timestamptz
 );
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS nonce text;
 CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_status ON agent_commands (agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_agent_commands_tenant_created ON agent_commands (tenant_id, created_at);
 

@@ -242,11 +242,22 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
     );
     assert.ok(queuedAudit, "AGENT_COMMAND_QUEUED audit event must be recorded before execution");
 
+    // Verify Section 3 (P0 Audit Truthfulness): AGENT_COMMAND_EXECUTED must NOT be fabricated at queue time
+    const prematureExecutionAudit = MOCK_HASH_CHAINS.find(
+      (e) => e.event_type === "AGENT_COMMAND_EXECUTED" && (e.payload as any)?.commandId === res.commandId
+    );
+    assert.equal(
+      prematureExecutionAudit,
+      undefined,
+      "Audit trail must NEVER record AGENT_COMMAND_EXECUTED before the remote agent reports back"
+    );
+
     // 2. Agent polls for pending commands
     const polled = await getQueuedCommandsForAgent("ea111111-1111-1111-1111-111111111111");
     const matchingCmd = polled.find((c) => c.id === res.commandId);
     assert.ok(matchingCmd, "Command must be delivered to polling agent");
     assert.equal(matchingCmd.status, "delivered");
+    assert.ok(matchingCmd.signature, "Command must contain cryptographic signature");
 
     // 3. Agent reports execution result
     await recordCommandResult({
@@ -256,11 +267,22 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
       snapshotId: "snap-finws042-test",
     });
 
-    // 4. Verify AGENT_COMMAND_EXECUTED event is logged
+    // 4. Verify AGENT_COMMAND_EXECUTED event is logged exclusively upon real execution
     const executedAudit = MOCK_HASH_CHAINS.find(
       (e) => e.event_type === "AGENT_COMMAND_EXECUTED" && (e.payload as any)?.commandId === res.commandId
     );
     assert.ok(executedAudit, "AGENT_COMMAND_EXECUTED audit event must be recorded upon agent result");
+    assert.equal((executedAudit.payload as any)?.status, "executed");
+  });
+
+  await t.test("API: GET /api/fleet/public-key returns control plane RSA-2048 public key", async () => {
+    const { GET: publicKeyGET } = await import("../src/app/api/fleet/public-key/route");
+    const res = await publicKeyGET();
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.algorithm, "RSA-SHA256");
+    assert.equal(body.keySize, 2048);
+    assert.ok(body.publicKey.includes("BEGIN PUBLIC KEY"), "Must return valid PEM public key");
   });
 });
 

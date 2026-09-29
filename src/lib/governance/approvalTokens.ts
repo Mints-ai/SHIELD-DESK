@@ -5,6 +5,7 @@ import type { ChatSession } from "@/lib/auth/session";
 import { classifyResponseTier, calculateModelConfidence, TIER_DEFINITIONS, type AutonomyTier } from "./autonomyTier";
 import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
 import { isDemoMode, shouldFailClosed } from "@/lib/config/environment";
+import { getTotpSecret } from "@/lib/auth/totp";
 
 export interface ApprovalTokenRecord {
   id: string;
@@ -218,6 +219,24 @@ export async function approveActionToken(
         };
       }
       // Fall through to standard approval path — this is the second approver finalising.
+    }
+
+    // 3c. Mandatory MFA enforcement for administrative/privileged approvers in production
+    if (shouldFailClosed()) {
+      try {
+        const mfaSecret = await getTotpSecret(session.uid);
+        if (!mfaSecret) {
+          return {
+            error: "mfa_required",
+            message: "MFA enrollment is mandatory for approving containment actions in production. Please enroll in TOTP MFA first.",
+          };
+        }
+      } catch {
+        return {
+          error: "mfa_verification_failed",
+          message: "Failed to verify approver MFA enrollment under fail-closed security policy.",
+        };
+      }
     }
 
     // 4. Anti-Replay check

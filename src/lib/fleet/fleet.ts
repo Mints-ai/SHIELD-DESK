@@ -34,6 +34,7 @@ export interface AgentCommandQueueRecord {
   tier: "Tier 0" | "Tier 1" | "Tier 2" | "Tier 3";
   token_id: string | null;
   signature: string;
+  nonce?: string | null;
   status: "queued" | "delivered" | "executed" | "failed" | "rolled_back";
   result?: Record<string, unknown> | null;
   snapshot_id?: string | null;
@@ -441,6 +442,7 @@ export async function executeAgentCommand({
     tier,
     token_id: tokenId || null,
     signature,
+    nonce,
     status: "queued",
     snapshot_id: snapshotId || null,
     created_at: new Date().toISOString(),
@@ -448,14 +450,22 @@ export async function executeAgentCommand({
 
   try {
     await query(
-      `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, status, snapshot_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
-      [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.status, queueRecord.snapshot_id]
+      `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now());`,
+      [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id]
     );
   } catch {
-    MOCK_AGENT_COMMANDS.push(queueRecord);
-    if (tier === "Tier 1") {
-      recordMockThrottleCommand(caller.tenant_id, "Tier 1");
+    try {
+      await query(
+        `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, status, snapshot_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
+        [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.status, queueRecord.snapshot_id]
+      );
+    } catch {
+      MOCK_AGENT_COMMANDS.push(queueRecord);
+      if (tier === "Tier 1") {
+        recordMockThrottleCommand(caller.tenant_id, "Tier 1");
+      }
     }
   }
 
@@ -471,10 +481,11 @@ export async function executeAgentCommand({
       tokenId: tokenId || null,
       commandId: commandLogId,
       signature,
+      nonce,
     },
   });
 
-  // Simulate command execution outcome for local test / simulation feedback
+  // Provide initial status & simulation feedback
   let output = "";
   if (command.startsWith("isolate_host")) {
     output = `Network interface isolated successfully on ${agent.hostname}. Outbound/inbound traffic disabled except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
@@ -499,6 +510,7 @@ export async function executeAgentCommand({
     output = `Command '${command}' queued for agent delivery on ${agent.hostname}.`;
   }
 
+  // Record initial queued command state in agent_command_logs as pending
   const logRecord: AgentCommandLogRecord = {
     id: commandLogId,
     agent_id: agent.id,
@@ -506,7 +518,7 @@ export async function executeAgentCommand({
     command,
     tier,
     token_id: tokenId || null,
-    status: "succeeded",
+    status: "pending",
     output,
     executed_by: caller.id,
     executed_at: new Date().toISOString(),
@@ -522,19 +534,9 @@ export async function executeAgentCommand({
     MOCK_COMMAND_LOGS.push(logRecord);
   }
 
-  // Tamper-proof hash-chain append
-  await recordHashChainEvent({
-    tenantId: caller.tenant_id,
-    eventType: "AGENT_COMMAND_EXECUTED",
-    actorId: caller.id,
-    payload: {
-      agentId: agent.id,
-      command,
-      tier,
-      tokenId: tokenId || null,
-      snapshotId: snapshotId || null,
-    },
-  });
+  // NOTE (Audit Compliance): AGENT_COMMAND_EXECUTED is intentionally NOT recorded here.
+  // The command has only been queued; execution is recorded in the tamper-proof hash chain
+  // exclusively when recordCommandResult() receives the agent's signed result.
 
   return {
     success: true,
@@ -589,6 +591,7 @@ export async function recordCommandResult({
   output: string;
   snapshotId?: string;
 }): Promise<void> {
+  const logStatus = status === "executed" ? "succeeded" : status;
   try {
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
@@ -597,6 +600,15 @@ export async function recordCommandResult({
        RETURNING *;`,
       [status, JSON.stringify({ output }), snapshotId || null, commandId]
     );
+
+    // Update command log to reflect true execution status and output
+    await query(
+      `UPDATE agent_command_logs
+       SET status = $1, output = $2
+       WHERE id = $3;`,
+      [logStatus, output, commandId]
+    );
+
     const cmd = rows[0];
     if (cmd) {
       await recordHashChainEvent({
@@ -613,6 +625,12 @@ export async function recordCommandResult({
       cmd.result = { output };
       if (snapshotId) cmd.snapshot_id = snapshotId;
       cmd.completed_at = new Date().toISOString();
+
+      const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
+      if (log) {
+        log.status = logStatus as "succeeded" | "failed" | "rolled_back";
+        log.output = output;
+      }
 
       await recordHashChainEvent({
         tenantId: cmd.tenant_id,

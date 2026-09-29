@@ -2,7 +2,13 @@ package main
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
@@ -22,11 +28,14 @@ import (
 )
 
 var (
-	version    = "0.4.2"
-	controlURL = flag.String("control-url", "http://localhost:3000", "ShieldDesk control-plane base URL")
-	agentID    = flag.String("agent-id", "ea111111-1111-1111-1111-111111111111", "Enrolled Endpoint Agent ID")
-	tenantID   = flag.String("tenant-id", "acme-tenant", "Tenant identifier")
-	hostname   = flag.String("hostname", "", "Host identifier (defaults to os.Hostname)")
+	version       = "0.4.2"
+	controlURL    = flag.String("control-url", "http://localhost:3000", "ShieldDesk control-plane base URL")
+	agentID       = flag.String("agent-id", "ea111111-1111-1111-1111-111111111111", "Enrolled Endpoint Agent ID")
+	tenantID      = flag.String("tenant-id", "acme-tenant", "Tenant identifier")
+	hostname      = flag.String("hostname", "", "Host identifier (defaults to os.Hostname)")
+	publicKeyFlag = flag.String("public-key", "", "Path to control-plane RSA public key PEM file or raw PEM string")
+
+	controlPlanePubKey *rsa.PublicKey
 )
 
 type QueuedCommand struct {
@@ -36,6 +45,7 @@ type QueuedCommand struct {
 	Command   string `json:"command"`
 	Tier      string `json:"tier"`
 	Signature string `json:"signature"`
+	Nonce     string `json:"nonce,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -81,6 +91,15 @@ func main() {
 
 	httpClient := &http.Client{
 		Timeout: 10 * time.Second,
+	}
+
+	// Load Control Plane RSA-2048 public key for cryptographic command verification
+	pubKey, err := loadControlPlanePublicKey(httpClient, *controlURL, *publicKeyFlag)
+	if err != nil {
+		log.Printf("[Security Warning] Could not initialize control plane public key at startup: %v. Signature verification will attempt on-demand retrieval.", err)
+	} else {
+		controlPlanePubKey = pubKey
+		log.Printf("[Security] Loaded control plane RSA-2048 public key successfully. Cryptographic signature verification ACTIVE.")
 	}
 
 	// Start Telemetry producer simulation
@@ -168,10 +187,36 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 		log.Printf("[CommandQueue] Picked up command ID: %s | Tier: %s | Action: %s",
 			cmd.ID, cmd.Tier, cmd.Command)
 
-		if cmd.Signature == "" {
-			reportResult(client, controlURL, cmd.ID, "failed", "signature missing or invalid", "")
+		// 1. Resolve nonce and agentID for canonical payload construction
+		nonce := cmd.Nonce
+		if nonce == "" {
+			nonce = cmd.ID
+		}
+
+		targetAgentID := cmd.AgentID
+		if targetAgentID == "" {
+			targetAgentID = agentID
+		}
+
+		// 2. On-demand public key retrieval if not cached
+		if controlPlanePubKey == nil {
+			var keyErr error
+			controlPlanePubKey, keyErr = loadControlPlanePublicKey(client, controlURL, *publicKeyFlag)
+			if keyErr != nil {
+				log.Printf("[Security Error] Failed to obtain control-plane public key: %v", keyErr)
+				reportResult(client, controlURL, cmd.ID, "failed", fmt.Sprintf("cryptographic public key unavailable: %v", keyErr), "")
+				continue
+			}
+		}
+
+		// 3. Cryptographically verify RSA-SHA256 signature
+		if err := verifyCommandSignature(controlPlanePubKey, targetAgentID, cmd.Command, nonce, cmd.Tier, cmd.Signature); err != nil {
+			log.Printf("[Security Alert] REJECTED: Cryptographic signature verification failed for command %s: %v", cmd.ID, err)
+			reportResult(client, controlURL, cmd.ID, "failed", fmt.Sprintf("cryptographic signature verification failed: %v", err), "")
 			continue
 		}
+
+		log.Printf("[Security] VERIFIED: RSA-SHA256 signature valid for command %s (Tier: %s)", cmd.ID, cmd.Tier)
 
 		if dryRun {
 			log.Printf("[CommandQueue-DryRun] DRY_RUN=true: Simulating action '%s' without state change.", cmd.Command)
@@ -182,6 +227,102 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 		status, output, snapshotID := dispatch(cmd.Command, hostname, handler)
 		reportResult(client, controlURL, cmd.ID, status, output, snapshotID)
 	}
+}
+
+// verifyCommandSignature cryptographically verifies an RSA-SHA256 signature against the canonical format:
+// agentId|command|nonce|tier
+func verifyCommandSignature(pubKey *rsa.PublicKey, agentID, command, nonce, tier, signatureBase64 string) error {
+	if pubKey == nil {
+		return fmt.Errorf("control-plane public key not initialized")
+	}
+	if signatureBase64 == "" {
+		return fmt.Errorf("signature missing or empty")
+	}
+
+	canonical := fmt.Sprintf("%s|%s|%s|%s", agentID, command, nonce, tier)
+	sigBytes, err := base64.StdEncoding.DecodeString(signatureBase64)
+	if err != nil {
+		return fmt.Errorf("failed to decode base64 signature: %w", err)
+	}
+
+	digest := sha256.Sum256([]byte(canonical))
+	if err := rsa.VerifyPKCS1v15(pubKey, crypto.SHA256, digest[:], sigBytes); err != nil {
+		return fmt.Errorf("RSA-PKCS1v15 verification failed: %w", err)
+	}
+	return nil
+}
+
+// parseRSAPublicKeyPEM decodes PEM bytes and extracts the RSA public key
+func parseRSAPublicKeyPEM(pemBytes []byte) (*rsa.PublicKey, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, fmt.Errorf("no valid PEM block found")
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
+	}
+
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("parsed key is not an RSA public key")
+	}
+	return rsaPub, nil
+}
+
+// loadControlPlanePublicKey attempts loading the public key from flag/PEM, file, environment, or control-plane HTTP API
+func loadControlPlanePublicKey(client *http.Client, controlURL, pathOrPEM string) (*rsa.PublicKey, error) {
+	// 1. Direct PEM string passed via flag
+	if strings.Contains(pathOrPEM, "-----BEGIN PUBLIC KEY-----") {
+		return parseRSAPublicKeyPEM([]byte(pathOrPEM))
+	}
+
+	// 2. File path passed via flag
+	if pathOrPEM != "" {
+		data, err := os.ReadFile(pathOrPEM)
+		if err == nil {
+			return parseRSAPublicKeyPEM(data)
+		}
+	}
+
+	// 3. Environment variable CONTROL_PLANE_PUBLIC_KEY
+	if envKey := os.Getenv("CONTROL_PLANE_PUBLIC_KEY"); envKey != "" {
+		if strings.Contains(envKey, "-----BEGIN PUBLIC KEY-----") {
+			return parseRSAPublicKeyPEM([]byte(envKey))
+		}
+		if data, err := os.ReadFile(envKey); err == nil {
+			return parseRSAPublicKeyPEM(data)
+		}
+	}
+
+	// 4. On-demand fetch from control plane endpoint (/api/fleet/public-key)
+	fetchURL := fmt.Sprintf("%s/api/fleet/public-key", controlURL)
+	req, err := http.NewRequest("GET", fetchURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch public key from %s: %w", fetchURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("control plane returned HTTP %d for public key", resp.StatusCode)
+	}
+
+	var keyResp struct {
+		PublicKey string `json:"publicKey"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&keyResp); err != nil {
+		return nil, fmt.Errorf("failed to decode public key response: %w", err)
+	}
+	if keyResp.PublicKey == "" {
+		return nil, fmt.Errorf("empty public key returned by control plane")
+	}
+
+	return parseRSAPublicKeyPEM([]byte(keyResp.PublicKey))
 }
 
 func dispatch(command, hostname string, handler *handlers.ActionHandler) (string, string, string) {
