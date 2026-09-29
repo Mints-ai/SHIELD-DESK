@@ -214,8 +214,27 @@ export async function POST(req: NextRequest) {
     const taskId = crypto.randomUUID();
     let planId = body.planId;
 
-    // If no planId specified, attempt to associate with the tenant's active plan
-    if (!planId) {
+    // If planId specified, verify it belongs to caller's tenant
+    if (planId) {
+      try {
+        const checkSql = canAccess(session.role, "VIEW_CROSS_TENANT")
+          ? "SELECT id, tenant_id FROM mitigation_plans WHERE id = $1 LIMIT 1"
+          : "SELECT id, tenant_id FROM mitigation_plans WHERE id = $1 AND tenant_id = $2 LIMIT 1";
+        const checkParams = canAccess(session.role, "VIEW_CROSS_TENANT")
+          ? [planId]
+          : [planId, session.tenantId];
+        const planCheck = await query<{ id: string; tenant_id: string }>(checkSql, checkParams);
+        if (planCheck.rows.length === 0 && !isDemoModeActive()) {
+          return NextResponse.json(
+            { error: "Mitigation plan not found" },
+            { status: 404 }
+          );
+        }
+      } catch {
+        // In demo mode with DB offline, allow proceeding
+      }
+    } else {
+      // If no planId specified, attempt to associate with the tenant's active plan
       try {
         const planRes = await query<{ id: string }>(
           "SELECT id FROM mitigation_plans WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1",

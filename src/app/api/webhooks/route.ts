@@ -27,6 +27,7 @@ const WEBHOOK_ENDPOINTS = [
 ];
 
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -94,7 +95,8 @@ export async function POST(req: NextRequest) {
       latency_ms: 42,
       message: "Test webhook delivered successfully with verified HMAC-SHA256 signature.",
     });
-  } catch {
+  } catch (err) {
+    trackError(err, { route: "POST /api/webhooks", tenantId: session.tenantId });
     return NextResponse.json({ error: "Failed to dispatch test webhook" }, { status: 500 });
   }
 }

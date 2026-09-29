@@ -43,7 +43,7 @@ function base64UrlDecode(str: string): string {
  * Format: <base64url(payload)>.<base64url(signature)>
  */
 export function createSessionToken(
-  user: { uid: string; tenantId: string; role: ShieldDeskRole },
+  user: { uid: string; tenantId: string; role: ShieldDeskRole; email?: string },
   ttlSeconds = 7 * 86400
 ): string {
   const now = Math.floor(Date.now() / 1000);

@@ -134,8 +134,11 @@ export async function validateAndConsumeEnrollmentToken(rawToken: string): Promi
   }
 }
 
+import { issueEndpointCertificate } from "@/lib/fleet/certificates";
+
 /**
  * Enrolls a new endpoint agent into the fleet using a valid enrollment token.
+ * Issues an X.509 client certificate for mTLS authentication.
  */
 export async function enrollEndpointAgent({
   rawToken,
@@ -143,16 +146,26 @@ export async function enrollEndpointAgent({
   ipAddress,
   osType,
   agentVersion = "0.4.2",
+  clientPublicKeyPem,
 }: {
   rawToken: string;
   hostname: string;
   ipAddress: string;
   osType: OsType;
   agentVersion?: string;
+  clientPublicKeyPem?: string;
 }): Promise<{
   success: boolean;
   agentId?: string;
   tenantId?: string;
+  certificate?: {
+    certificatePem: string;
+    caCertificatePem: string;
+    serialNumber: string;
+    fingerprintSha256: string;
+    expiresAt: string;
+    privateKeyPem?: string;
+  };
   error?: string;
 }> {
   const tokenValidation = await validateAndConsumeEnrollmentToken(rawToken);
@@ -190,6 +203,27 @@ export async function enrollEndpointAgent({
     });
   }
 
+  // Issue X.509 endpoint certificate
+  let certResult: {
+    certificatePem: string;
+    caCertificatePem: string;
+    serialNumber: string;
+    fingerprintSha256: string;
+    expiresAt: string;
+    privateKeyPem?: string;
+  } | undefined;
+
+  try {
+    certResult = await issueEndpointCertificate({
+      agentId,
+      tenantId,
+      clientPublicKeyPem,
+      validityDays: 90,
+    });
+  } catch (certErr) {
+    console.warn(`[Cert] Warning issuing certificate for agent ${agentId}:`, certErr);
+  }
+
   await recordHashChainEvent({
     tenantId,
     eventType: "ENDPOINT_AGENT_ENROLLED",
@@ -200,6 +234,7 @@ export async function enrollEndpointAgent({
       ipAddress,
       osType,
       agentVersion,
+      certificateSerial: certResult?.serialNumber,
     },
   });
 
@@ -207,5 +242,6 @@ export async function enrollEndpointAgent({
     success: true,
     agentId,
     tenantId,
+    certificate: certResult,
   };
 }

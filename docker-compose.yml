@@ -32,12 +32,24 @@ services:
   # 2. Python Vulnerability Intelligence Microservice (Port 8000)
   cve-engine:
     build:
-      context: ./services/scan
+      context: ./ai-chat-desk
       dockerfile: Dockerfile
     container_name: shielddesk-cve-engine
     restart: unless-stopped
     ports:
       - "8000:8000"
+    networks:
+      - shielddesk-network
+
+  # 2b. Trivy & Gitleaks Vulnerability Scanner (Port 8001)
+  scan-service:
+    build:
+      context: ./services/scan
+      dockerfile: Dockerfile
+    container_name: shielddesk-scan-service
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
     networks:
       - shielddesk-network
 

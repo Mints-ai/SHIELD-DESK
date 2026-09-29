@@ -6,6 +6,8 @@ import { createSessionToken } from "@/lib/auth/token";
 import { verifyPassword } from "@/lib/auth/password";
 import { getTotpSecret, verifyTotpCode } from "@/lib/auth/totp";
 import type { ShieldDeskRole } from "@/lib/permissions";
+import { isDevPersonaAllowed } from "@/lib/config/environment";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function POST(req: NextRequest) {
   // S7: Rate limit login attempts (max 10 attempts per minute per IP)
@@ -99,7 +101,7 @@ export async function POST(req: NextRequest) {
     }
     // 2. Dev Persona Quick-Login (S1: Strictly blocked in production)
     else if (userId) {
-      if (process.env.NODE_ENV === "production") {
+      if (!isDevPersonaAllowed()) {
         return NextResponse.json(
           { error: "Dev persona login is disabled in production environments." },
           { status: 401 }
@@ -173,6 +175,7 @@ export async function POST(req: NextRequest) {
 
     return res;
   } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/auth/login" });
     const msg = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

@@ -98,6 +98,8 @@ export function canAccess(role: string, permission: Permission): boolean {
   return Boolean(perms?.includes(permission));
 }
 
+export const hasPermission = canAccess;
+
 export function canExecuteTool(role: string, toolName: string): boolean {
   const requiredPermission = TOOL_PERMISSIONS[toolName];
   if (!requiredPermission) return false;

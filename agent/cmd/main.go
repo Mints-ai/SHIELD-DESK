@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -120,22 +119,34 @@ func main() {
 		log.Printf("[Security] Loaded control plane RSA-2048 public key successfully. Cryptographic signature verification ACTIVE.")
 	}
 
-	// Start Telemetry producer
+	// Initialize native telemetry collector (SD-012, SD-013)
+	collector := telemetry.NewCollector()
+
+	// Start Real Telemetry producer
 	go func() {
-		eventTypes := []string{"PROCESS_START", "NETWORK_CONNECT", "FILE_INTEGRITY_CHECK", "AUTH_ATTEMPT"}
 		for {
-			evt := telemetry.Event{
-				ID:        fmt.Sprintf("evt-%d", time.Now().UnixNano()),
+			// Real Process Anomalies
+			anomalies := collector.DetectProcessAnomalies()
+			for _, evt := range anomalies {
+				ringBuffer.Push(evt)
+			}
+
+			// Real Host System Metrics
+			metrics := collector.HarvestMetrics()
+			metricsEvt := telemetry.Event{
+				ID:        fmt.Sprintf("evt-metric-%d", time.Now().UnixNano()),
 				Timestamp: time.Now().UTC(),
-				EventType: eventTypes[rand.Intn(len(eventTypes))],
+				EventType: "SYSTEM_METRICS",
 				Payload: map[string]interface{}{
-					"cpu_pct": rand.Float64()*40 + 10,
-					"mem_pct": rand.Float64()*30 + 50,
-					"pid":     rand.Intn(9000) + 1000,
+					"cpu_pct":  metrics.CPUPercent,
+					"mem_pct":  metrics.MemPercent,
+					"platform": metrics.Platform,
+					"uptime":   metrics.UptimeSec,
 				},
 			}
-			ringBuffer.Push(evt)
-			time.Sleep(500 * time.Millisecond)
+			ringBuffer.Push(metricsEvt)
+
+			time.Sleep(2 * time.Second)
 		}
 	}()
 
@@ -146,12 +157,11 @@ func main() {
 	go func() {
 		for range heartbeatTicker.C {
 			bufferedCount := ringBuffer.Size()
-			cpu := rand.Float64()*15 + 5
-			mem := rand.Float64()*10 + 40
+			metrics := collector.HarvestMetrics()
 			eps := bufferedCount / 5
-			sendHeartbeat(httpClient, *controlURL, *agentID, *hostname, cpu, mem, eps)
-			log.Printf("[Heartbeat] Endpoint: %s | Buffered Events: %d | Status: CONNECTED",
-				*hostname, bufferedCount)
+			sendHeartbeat(httpClient, *controlURL, *agentID, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			log.Printf("[Heartbeat] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | Buffered Events: %d | Status: CONNECTED",
+				*hostname, metrics.CPUPercent, metrics.MemPercent, bufferedCount)
 		}
 	}()
 
@@ -464,11 +474,21 @@ func reportResult(client *http.Client, controlURL, commandID, status, output, sn
 	log.Printf("[CommandQueue] Reported result for command %s: status=%s", commandID, status)
 }
 
+type CertificatePayload struct {
+	CertificatePEM    string `json:"certificatePem"`
+	CACertificatePEM  string `json:"caCertificatePem"`
+	SerialNumber      string `json:"serialNumber"`
+	FingerprintSHA256 string `json:"fingerprintSha256"`
+	ExpiresAt         string `json:"expiresAt"`
+	PrivateKeyPEM     string `json:"privateKeyPem,omitempty"`
+}
+
 type EnrollmentResponse struct {
-	Success  bool   `json:"success"`
-	AgentID  string `json:"agentId"`
-	TenantID string `json:"tenantId"`
-	Error    string `json:"error,omitempty"`
+	Success     bool                `json:"success"`
+	AgentID     string              `json:"agentId"`
+	TenantID    string              `json:"tenantId"`
+	Certificate *CertificatePayload `json:"certificate,omitempty"`
+	Error       string              `json:"error,omitempty"`
 }
 
 func enrollWithControlPlane(client *http.Client, controlURL, token, hostname string) (string, string, error) {
@@ -504,6 +524,18 @@ func enrollWithControlPlane(client *http.Client, controlURL, token, hostname str
 	if !enrollResp.Success || enrollResp.AgentID == "" {
 		return "", "", fmt.Errorf("enrollment unsuccessful: %s", enrollResp.Error)
 	}
+
+	// Persist X.509 client certificate if issued by control plane (SD-008)
+	if enrollResp.Certificate != nil && enrollResp.Certificate.CertificatePEM != "" {
+		_ = os.WriteFile("agent.crt", []byte(enrollResp.Certificate.CertificatePEM), 0644)
+		_ = os.WriteFile("ca.crt", []byte(enrollResp.Certificate.CACertificatePEM), 0644)
+		if enrollResp.Certificate.PrivateKeyPEM != "" {
+			_ = os.WriteFile("agent.key", []byte(enrollResp.Certificate.PrivateKeyPEM), 0600)
+		}
+		log.Printf("[Security] Issued X.509 client certificate for mTLS. Serial: %s | Fingerprint: %s",
+			enrollResp.Certificate.SerialNumber, enrollResp.Certificate.FingerprintSHA256)
+	}
+
 	return enrollResp.AgentID, enrollResp.TenantID, nil
 }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
+import { trackError } from "@/lib/observability/errorTracker";
 
 /**
  * POST /api/agent/heartbeat
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest) {
       });
     }
   } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/agent/heartbeat" });
     const msg = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

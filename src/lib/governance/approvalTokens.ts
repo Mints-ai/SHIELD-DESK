@@ -72,6 +72,17 @@ export async function requestApprovalToken(
   const blastRadius = args.blastRadius || "Target Host / Subnet";
 
   try {
+    const taskSql = canAccess(session.role, "VIEW_CROSS_TENANT")
+      ? "SELECT id, tenant_id FROM mitigation_tasks WHERE id = $1 LIMIT 1"
+      : "SELECT id, tenant_id FROM mitigation_tasks WHERE id = $1 AND tenant_id = $2 LIMIT 1";
+    const taskParams = canAccess(session.role, "VIEW_CROSS_TENANT")
+      ? [args.taskId]
+      : [args.taskId, session.tenantId];
+    const taskCheck = await query<{ id: string; tenant_id: string }>(taskSql, taskParams);
+    if (taskCheck.rows.length === 0 && !isDemoMode()) {
+      return { error: "task_not_found" };
+    }
+
     const insertResult = await query<ApprovalTokenRecord>(
       `INSERT INTO approval_tokens (
         id, tenant_id, task_id, action_type, tier, status, requested_by, blast_radius, model_confidence, expires_at, created_at, updated_at

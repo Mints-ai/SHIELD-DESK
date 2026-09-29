@@ -29,6 +29,11 @@ process.env.SHIELDDESK_INGEST_API_KEYS = JSON.stringify({
   "test-acme-ingest-key": "acme-tenant",
   "test-globex-ingest-key": "globex-tenant",
 });
+process.env.SCAN_SERVICE_URL = "http://127.0.0.1:59999";
+process.env.PYTHON_AI_SERVICE_URL = "http://127.0.0.1:59999";
+process.env.AI_ADVISOR_URL = "http://127.0.0.1:59999";
+process.env.SENTRY_DSN = "";
+process.env.NEXT_PUBLIC_SENTRY_DSN = "";
 
 // Clean up background DB pools or open handles so test runner exits promptly
 process.on("beforeExit", () => {

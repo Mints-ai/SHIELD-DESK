@@ -590,14 +590,27 @@ export async function recordCommandResult({
   status,
   output,
   snapshotId,
+  agentId,
 }: {
   commandId: string;
   status: "executed" | "failed" | "rolled_back";
   output: string;
   snapshotId?: string;
-}): Promise<void> {
+  agentId?: string;
+}): Promise<{ success: boolean; notFound?: boolean; unauthorized?: boolean }> {
   const logStatus = status === "executed" ? "succeeded" : status;
   try {
+    // If agentId specified, verify ownership
+    if (agentId) {
+      const existing = await query<AgentCommandQueueRecord>(
+        `SELECT id, agent_id, tenant_id FROM agent_commands WHERE id = $1 LIMIT 1`,
+        [commandId]
+      );
+      if (existing.rows.length > 0 && existing.rows[0].agent_id !== agentId) {
+        return { success: false, unauthorized: true };
+      }
+    }
+
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
        SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = now()
@@ -605,6 +618,36 @@ export async function recordCommandResult({
        RETURNING *;`,
       [status, JSON.stringify({ output }), snapshotId || null, commandId]
     );
+
+    if (rows.length === 0) {
+      // Check mock store fallback
+      const cmd = MOCK_AGENT_COMMANDS.find((c) => c.id === commandId);
+      if (!cmd) {
+        return { success: false, notFound: true };
+      }
+      if (agentId && cmd.agent_id !== agentId) {
+        return { success: false, unauthorized: true };
+      }
+      cmd.status = status;
+      cmd.result = { output };
+      if (snapshotId) cmd.snapshot_id = snapshotId;
+      cmd.completed_at = new Date().toISOString();
+
+      const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
+      if (log) {
+        log.status = logStatus as "succeeded" | "failed" | "rolled_back";
+        log.output = output;
+      }
+
+      await recordHashChainEvent({
+        tenantId: cmd.tenant_id,
+        eventType: "AGENT_COMMAND_EXECUTED",
+        actorId: `agent:${cmd.agent_id}`,
+        payload: { commandId, status, snapshotId, output },
+      });
+
+      return { success: true };
+    }
 
     // Update command log to reflect true execution status and output
     await query(
@@ -623,27 +666,35 @@ export async function recordCommandResult({
         payload: { commandId, status, snapshotId, output },
       });
     }
+
+    return { success: true };
   } catch {
     const cmd = MOCK_AGENT_COMMANDS.find((c) => c.id === commandId);
-    if (cmd) {
-      cmd.status = status;
-      cmd.result = { output };
-      if (snapshotId) cmd.snapshot_id = snapshotId;
-      cmd.completed_at = new Date().toISOString();
-
-      const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
-      if (log) {
-        log.status = logStatus as "succeeded" | "failed" | "rolled_back";
-        log.output = output;
-      }
-
-      await recordHashChainEvent({
-        tenantId: cmd.tenant_id,
-        eventType: "AGENT_COMMAND_EXECUTED",
-        actorId: `agent:${cmd.agent_id}`,
-        payload: { commandId, status, snapshotId, output },
-      });
+    if (!cmd) {
+      return { success: false, notFound: true };
     }
+    if (agentId && cmd.agent_id !== agentId) {
+      return { success: false, unauthorized: true };
+    }
+    cmd.status = status;
+    cmd.result = { output };
+    if (snapshotId) cmd.snapshot_id = snapshotId;
+    cmd.completed_at = new Date().toISOString();
+
+    const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
+    if (log) {
+      log.status = logStatus as "succeeded" | "failed" | "rolled_back";
+      log.output = output;
+    }
+
+    await recordHashChainEvent({
+      tenantId: cmd.tenant_id,
+      eventType: "AGENT_COMMAND_EXECUTED",
+      actorId: `agent:${cmd.agent_id}`,
+      payload: { commandId, status, snapshotId, output },
+    });
+
+    return { success: true };
   }
 }
 

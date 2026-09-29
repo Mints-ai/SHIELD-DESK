@@ -5,6 +5,7 @@ import { supabaseServer } from "@/lib/supabase/server";
 import { createSessionToken } from "@/lib/auth/token";
 import { hashPassword } from "@/lib/auth/password";
 import type { ShieldDeskRole } from "@/lib/permissions";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function POST(req: NextRequest) {
   const forwarded = req.headers.get("x-forwarded-for");
@@ -102,6 +103,7 @@ export async function POST(req: NextRequest) {
 
     return res;
   } catch (err: unknown) {
+    trackError(err, { route: "POST /api/auth/signup" });
     const msg = err instanceof Error ? err.message : "Internal error during registration";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

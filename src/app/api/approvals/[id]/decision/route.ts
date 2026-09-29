@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { approveActionToken, rejectActionToken } from "@/lib/governance/approvalTokens";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function POST(
   req: NextRequest,
@@ -48,7 +49,8 @@ export async function POST(
       { error: "Invalid action. Must be 'approve' or 'reject'." },
       { status: 400 }
     );
-  } catch {
+  } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/approvals/[id]/decision", userId: session.uid, tenantId: session.tenantId });
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 }

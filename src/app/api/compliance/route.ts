@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { getComplianceSummary, exportAuditEvidencePackage } from "@/lib/compliance/iso27001";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function GET(req: NextRequest) {
   try {
@@ -23,6 +24,7 @@ export async function GET(req: NextRequest) {
     const summary = await getComplianceSummary(caller);
     return NextResponse.json(summary);
   } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/compliance" });
     const msg = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

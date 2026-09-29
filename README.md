@@ -6,7 +6,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql)](https://www.postgresql.org/)
 [![Sentry](https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry)](https://sentry.io/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
-[![Tests](https://img.shields.io/badge/Tests-80%2F80_Passing-brightgreen?style=flat)]()
+[![Tests](https://img.shields.io/badge/Tests-90%2F90_Passing-brightgreen?style=flat)]()
 [![License](https://img.shields.io/badge/License-Proprietary-red?style=flat)]()
 
 **ShieldDesk™** is an enterprise-grade, AI-assisted Security Operations Center (SOC) control plane designed to ingest and normalize security alerts, investigate incidents, simulate attack blast radius, formulate 3-horizon remediation plans, enforce dual-admin human governance, and dispatch cryptographically signed containment commands to an endpoint agent fleet.
@@ -306,9 +306,23 @@ Visit **http://localhost:3000** to access the SOC console.
 
 ---
 
+### 3. Environment Secrets & Key Rotation Protocol
+
+Before deploying or handing off to another maintainer or production environment:
+1. **Rotate Supabase Service Role Keys**: If a live Supabase project was used during development, navigate to your Supabase Project Settings -> API and regenerate the `SUPABASE_SERVICE_ROLE_KEY` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+2. **Generate Cryptographic Session Secret**: Generate a cryptographically strong 64-character random string for cookie signature verification:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+   Set this value as `SHIELDDESK_SESSION_SECRET` in `.env.local` / production environment variables.
+3. **Configure Ingest & Webhook Secrets**: Set strong unique strings for `SHIELDDESK_INGEST_API_KEY` and `SHIELDDESK_WEBHOOK_SECRET`.
+4. **Configure Sentry DSN**: Provide your team's Sentry DSN in `SENTRY_DSN` and `NEXT_PUBLIC_SENTRY_DSN`.
+
+---
+
 ## 12. Automated Testing & Verification
 
-ShieldDesk maintains a rigorous automated test suite with **80 passing unit and integration tests across 10 test suites**:
+ShieldDesk maintains a rigorous automated test suite with **90 passing unit and integration tests across 11 test suites**:
 
 ```bash
 npm test
@@ -325,6 +339,7 @@ npm test
 8. `tests/ingest.test.ts`: Alert ingest HMAC signature validation and cross-tenant ingest spoofing defense.
 9. `tests/security-injection.test.ts`: Adversarial prompt injection defense, SQL injection protection, and regex secret redactor verification.
 10. `tests/tasks-and-observability.test.ts`: Task board database persistence, viewer role gating (`403 Forbidden`), and Sentry `trackError` instrumentation.
+11. `tests/agent-endpoints-security.test.ts`: Enrolled agent authorization, 404 anti-enumeration on missing agents/commands, 403 agent mismatch defense, and kill switch enforcement.
 
 TypeScript static analysis validation:
 ```bash
@@ -382,7 +397,7 @@ shielddesk/
 ├── db/
 │   ├── schema.sql                 # Complete DDL: 15 tables, constraints, RLS policies
 │   └── seed.sql                   # Realistic multi-tenant incident and agent fixtures
-├── tests/                         # Node.js native test harness (80 automated tests)
+├── tests/                         # Node.js native test harness (90 automated tests across 11 suites)
 ├── sentry.client.config.ts        # Client Sentry error and performance monitoring
 ├── sentry.server.config.ts        # Server Sentry error tracking
 ├── sentry.edge.config.ts          # Edge Sentry error tracking
@@ -394,7 +409,7 @@ shielddesk/
 
 ## 14. Useful Reference Documentation
 
-- [WORKING_README.md](WORKING_README.md) — Detailed operational run guide, architecture diagrams, and state machines.
+- [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) — Master 53-Section Implementation Plan, Engineering Tickets (SD-001 to SD-030), and Production Release Gates.
 - [SHIELDDESK_PROJECT_GUIDE.md](SHIELDDESK_PROJECT_GUIDE.md) — AI Copilot intent routing, tool pipeline, and ML engine details.
 - [BLAST_RADIUS_README.md](BLAST_RADIUS_README.md) — Attack graph algorithms, CVSS posture degradation, and blast radius models.
 - [CHECKLIST.md](CHECKLIST.md) — Production readiness audit and feature delivery checklist.

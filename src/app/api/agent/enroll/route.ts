@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enrollEndpointAgent } from "@/lib/fleet/enrollment";
 import type { OsType } from "@/lib/fleet/fleet";
+import { trackError } from "@/lib/observability/errorTracker";
 
 /**
  * POST /api/agent/enroll
@@ -9,7 +10,7 @@ import type { OsType } from "@/lib/fleet/fleet";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { token, hostname, ipAddress, osType, agentVersion } = body;
+    const { token, hostname, ipAddress, osType, agentVersion, publicKey } = body;
 
     if (!token || typeof token !== "string") {
       return NextResponse.json({ error: "Missing or invalid enrollment token" }, { status: 400 });
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest) {
       ipAddress: clientIp,
       osType: resolvedOsType,
       agentVersion: typeof agentVersion === "string" ? agentVersion : "0.4.2",
+      clientPublicKeyPem: typeof publicKey === "string" ? publicKey.trim() : undefined,
     });
 
     if (!result.success) {
@@ -42,9 +44,11 @@ export async function POST(req: NextRequest) {
       success: true,
       agentId: result.agentId,
       tenantId: result.tenantId,
+      certificate: result.certificate,
       message: "Agent enrolled successfully and bound to tenant",
     });
   } catch (err: unknown) {
+    trackError(err, { route: "POST /api/agent/enroll" });
     const msg = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

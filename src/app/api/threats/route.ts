@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { shouldFailClosed, isDemoMode } from "@/lib/config/environment";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { trackError } from "@/lib/observability/errorTracker";
 
 const YARA_RULES = [
   {
@@ -197,7 +198,8 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
-  } catch {
+  } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/threats", userId: session.uid, tenantId: session.tenantId });
     return NextResponse.json({ error: "Failed to process threat request" }, { status: 500 });
   }
 }

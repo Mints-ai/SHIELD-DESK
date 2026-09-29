@@ -9,6 +9,7 @@ export interface TrackedErrorContext {
   userId?: string;
   tenantId?: string;
   endpoint?: string;
+  route?: string;
   component?: string;
   extra?: Record<string, unknown>;
 }
@@ -45,8 +46,9 @@ export function trackError(error: unknown, context: TrackedErrorContext = {}): s
         if (context.tenantId) {
           scope.setTag("tenantId", context.tenantId);
         }
-        if (context.endpoint) {
-          scope.setTag("endpoint", context.endpoint);
+        const effectiveEndpoint = context.endpoint || context.route;
+        if (effectiveEndpoint) {
+          scope.setTag("endpoint", effectiveEndpoint);
         }
         if (context.component) {
           scope.setTag("component", context.component);

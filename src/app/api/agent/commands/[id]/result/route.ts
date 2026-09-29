@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordCommandResult } from "@/lib/fleet/fleet";
+import { trackError } from "@/lib/observability/errorTracker";
 
 /**
  * POST /api/agent/commands/:id/result
@@ -15,6 +16,7 @@ export async function POST(
     const body = await req.json();
 
     const { status, output = "", snapshotId } = body;
+    const agentId = body.agentId || req.headers.get("x-shielddesk-agent-id") || undefined;
 
     if (!status || !["executed", "failed", "rolled_back"].includes(status)) {
       return NextResponse.json(
@@ -23,15 +25,28 @@ export async function POST(
       );
     }
 
-    await recordCommandResult({
+    const res = await recordCommandResult({
       commandId: id,
       status,
       output: typeof output === "string" ? output : JSON.stringify(output),
       snapshotId: typeof snapshotId === "string" ? snapshotId : undefined,
+      agentId,
     });
+
+    if (res.notFound) {
+      return NextResponse.json({ error: "Command not found" }, { status: 404 });
+    }
+
+    if (res.unauthorized) {
+      return NextResponse.json(
+        { error: "Forbidden: Command does not belong to reporting agent" },
+        { status: 403 }
+      );
+    }
 
     return NextResponse.json({ success: true, commandId: id, status });
   } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/agent/commands/[id]/result" });
     const msg = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

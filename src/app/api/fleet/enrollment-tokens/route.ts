@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { createEnrollmentToken } from "@/lib/fleet/enrollment";
+import { trackError } from "@/lib/observability/errorTracker";
 
 /**
  * POST /api/fleet/enrollment-tokens
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
       tenantId: session.tenantId,
     });
   } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/fleet/enrollment-tokens" });
     const msg = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
