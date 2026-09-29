@@ -154,7 +154,10 @@ func main() {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgresql://postgres:postgres@localhost:5432/shielddesk"
+		if os.Getenv("APP_ENV") == "production" {
+			log.Fatal().Msg("FATAL: DATABASE_URL environment variable is required in production")
+		}
+		dbURL = "postgresql://localhost:5432/shielddesk?sslmode=disable"
 	}
 
 	log.Info().Msg("[ShieldDesk-Threat] Initializing Go Threat Detection & Anomaly Service...")
