@@ -199,57 +199,56 @@ export function MfaSetupPanel({ initialEnrolled = false }: MfaSetupPanelProps) {
         </div>
       )}
 
-      {/* ── Success ───────────────────────────────────────────────────────── */}
+      {/* ── Success: active MFA banner ────────────────────────────────────── */}
       {(step === "enrolled" || (enrolled && step === "idle")) && (
-        <div className="flex flex-col gap-3">
-          <div className="p-3 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 shrink-0" />
-            <span>MFA is active. Your account requires a TOTP code on every login.</span>
-          </div>
+        <div className="p-3 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          <span>MFA is active. Your account requires a TOTP code on every login.</span>
+        </div>
+      )}
 
-          {/* Disable toggle */}
-          {step !== "disabling" && (
+      {/* ── Disable toggle — only when not already entering the disabling flow ── */}
+      {(step === "enrolled" || (enrolled && step === "idle")) && (
+        <button
+          onClick={() => { setStep("disabling"); setErrorMsg(null); }}
+          className="flex items-center justify-center gap-2 w-full py-2 rounded-xl border border-[var(--sd-danger-border)] text-[var(--sd-danger)] text-xs font-semibold hover:bg-[var(--sd-danger-dim)] transition cursor-pointer"
+        >
+          <ShieldOff className="h-3.5 w-3.5" />
+          <span>Disable MFA</span>
+        </button>
+      )}
+
+      {/* ── Disabling confirmation form ───────────────────────────────────── */}
+      {step === "disabling" && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs text-[var(--sd-text-muted)]">
+            Enter your current TOTP code to confirm removal:
+          </p>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={6}
+            placeholder="Current 6-digit code"
+            value={disableCode}
+            onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            className="bg-[var(--sd-bg)] border border-[var(--sd-danger-border)] rounded-xl px-3 py-2 text-sm font-mono tracking-widest text-center focus:outline-none text-[var(--sd-text)]"
+          />
+          <div className="flex gap-2">
             <button
-              onClick={() => { setStep("disabling"); setErrorMsg(null); }}
-              className="flex items-center justify-center gap-2 w-full py-2 rounded-xl border border-[var(--sd-danger-border)] text-[var(--sd-danger)] text-xs font-semibold hover:bg-[var(--sd-danger-dim)] transition cursor-pointer"
+              onClick={() => { setStep("enrolled"); setErrorMsg(null); }}
+              className="flex-1 py-2 rounded-xl border border-[var(--sd-border)] text-[var(--sd-text-muted)] text-xs font-semibold hover:bg-[var(--sd-panel-raised)] transition cursor-pointer"
             >
-              <ShieldOff className="h-3.5 w-3.5" />
-              <span>Disable MFA</span>
+              Cancel
             </button>
-          )}
-
-          {step === "disabling" && (
-            <div className="flex flex-col gap-2">
-              <p className="text-xs text-[var(--sd-text-muted)]">
-                Enter your current TOTP code to confirm removal:
-              </p>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="Current 6-digit code"
-                value={disableCode}
-                onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                className="bg-[var(--sd-bg)] border border-[var(--sd-danger-border)] rounded-xl px-3 py-2 text-sm font-mono tracking-widest text-center focus:outline-none text-[var(--sd-text)]"
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { setStep("enrolled"); setErrorMsg(null); }}
-                  className="flex-1 py-2 rounded-xl border border-[var(--sd-border)] text-[var(--sd-text-muted)] text-xs font-semibold hover:bg-[var(--sd-panel-raised)] transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={disableMfa}
-                  disabled={loading || disableCode.length !== 6}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-[var(--sd-danger)] text-white text-xs font-bold transition cursor-pointer disabled:opacity-50"
-                >
-                  {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
-                  <span>Confirm Disable</span>
-                </button>
-              </div>
-            </div>
-          )}
+            <button
+              onClick={disableMfa}
+              disabled={loading || disableCode.length !== 6}
+              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-[var(--sd-danger)] text-white text-xs font-bold transition cursor-pointer disabled:opacity-50"
+            >
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
+              <span>Confirm Disable</span>
+            </button>
+          </div>
         </div>
       )}
     </div>
