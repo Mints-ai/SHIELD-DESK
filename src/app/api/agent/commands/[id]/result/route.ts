@@ -18,17 +18,18 @@ export async function POST(
     const { status, output = "", snapshotId, verified } = body;
     const agentId = body.agentId || req.headers.get("x-shielddesk-agent-id") || undefined;
 
-    const validStatuses = ["executed", "failed", "rolled_back", "verified", "acknowledged", "executing"];
+    const validStatuses = ["executed", "succeeded", "failed", "rolled_back", "verified", "acknowledged", "executing"];
     if (!status || !validStatuses.includes(status)) {
       return NextResponse.json(
-        { error: "Valid status ('executed', 'failed', 'rolled_back', 'verified', 'acknowledged', 'executing') is required" },
+        { error: "Valid status ('executed', 'succeeded', 'failed', 'rolled_back', 'verified', 'acknowledged', 'executing') is required" },
         { status: 400 }
       );
     }
+    const normalizedStatus = status === "succeeded" ? "executed" : status;
 
     const res = await recordCommandResult({
       commandId: id,
-      status,
+      status: normalizedStatus as "executed" | "failed" | "rolled_back" | "verified" | "acknowledged" | "executing",
       output: typeof output === "string" ? output : JSON.stringify(output),
       snapshotId: typeof snapshotId === "string" ? snapshotId : undefined,
       agentId,

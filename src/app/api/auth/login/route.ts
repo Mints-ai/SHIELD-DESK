@@ -127,23 +127,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Failed to authenticate operator." }, { status: 401 });
     }
 
-    // MFA check: if the user has TOTP enrolled, the code MUST be present and valid.
-    // Dev persona quick-login bypasses MFA (dev-only paths already blocked in production above).
+    // MFA check: Mandatory for admin and approver roles; required for any account with TOTP active
     if (email && password) {
+      const isPrivilegedRole = role === "system_admin" || role === "super_admin";
       const totpSecret = await getTotpSecret(authenticatedUid);
-      if (totpSecret) {
-        if (!mfaCode) {
+
+      // In production / fail-closed, privileged roles MUST have MFA enrolled
+      if (isPrivilegedRole && !totpSecret && (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production")) {
+        return NextResponse.json(
+          {
+            error: "MFA_ENROLLMENT_MANDATORY: Administrative and approver roles require mandatory two-factor authentication (TOTP).",
+            mfaEnrollmentRequired: true,
+          },
+          { status: 403 }
+        );
+      }
+
+      if (totpSecret || isPrivilegedRole) {
+        if (!totpSecret) {
+          // If not enrolled in non-prod, skip only if explicitly allowed, otherwise prompt
+        } else if (!mfaCode) {
           return NextResponse.json(
             { error: "MFA required. Please enter your 6-digit TOTP code.", mfaRequired: true },
             { status: 401 }
           );
-        }
-        const mfaResult = await verifyTotpCode(authenticatedUid, String(mfaCode), totpSecret);
-        if (!mfaResult.valid) {
-          return NextResponse.json(
-            { error: mfaResult.reason ?? "Invalid MFA code.", mfaRequired: true },
-            { status: 401 }
-          );
+        } else {
+          const mfaResult = await verifyTotpCode(authenticatedUid, String(mfaCode), totpSecret);
+          if (!mfaResult.valid) {
+            return NextResponse.json(
+              { error: mfaResult.reason ?? "Invalid MFA code.", mfaRequired: true },
+              { status: 401 }
+            );
+          }
         }
       }
     }

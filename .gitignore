@@ -46,3 +46,7 @@ next-env.d.ts
 pgdata/
 package-lock.json
 
+# compiled agent binaries & backups
+agent/bin/
+*.dump
+backup_drill_*/

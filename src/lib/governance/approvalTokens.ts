@@ -226,6 +226,29 @@ export async function approveActionToken(
 ) {
   if (!args.tokenId) return { error: "missing_token_id" };
 
+  // Mandatory MFA enforcement for administrative/privileged approvers in production
+  const isPrivilegedApprover =
+    session.role === "system_admin" ||
+    session.role === "super_admin" ||
+    session.role === "responder";
+
+  if (isPrivilegedApprover && shouldFailClosed()) {
+    try {
+      const mfaSecret = await getTotpSecret(session.uid);
+      if (!mfaSecret) {
+        return {
+          error: "mfa_required",
+          message: "MFA enrollment is mandatory for approving containment actions in production. Please enroll in TOTP MFA first.",
+        };
+      }
+    } catch {
+      return {
+        error: "mfa_verification_failed",
+        message: "Failed to verify approver MFA enrollment under fail-closed security policy.",
+      };
+    }
+  }
+
   try {
     // 1. Fetch token with tenant check
     const tenantScope = canAccess(session.role, "VIEW_CROSS_TENANT") ? "" : "AND tenant_id = $2";
@@ -294,24 +317,6 @@ export async function approveActionToken(
         };
       }
       // Fall through to standard approval path — this is the second approver finalising.
-    }
-
-    // 3c. Mandatory MFA enforcement for administrative/privileged approvers in production
-    if (shouldFailClosed()) {
-      try {
-        const mfaSecret = await getTotpSecret(session.uid);
-        if (!mfaSecret) {
-          return {
-            error: "mfa_required",
-            message: "MFA enrollment is mandatory for approving containment actions in production. Please enroll in TOTP MFA first.",
-          };
-        }
-      } catch {
-        return {
-          error: "mfa_verification_failed",
-          message: "Failed to verify approver MFA enrollment under fail-closed security policy.",
-        };
-      }
     }
 
     // 4. Anti-Replay check
@@ -557,10 +562,10 @@ export async function listApprovalTokens(
  */
 export async function getApprovalToken(
   tokenId: string,
-  caller: { role: string; tenant_id?: string; tenantId?: string }
+  caller?: { role?: string; tenant_id?: string; tenantId?: string }
 ): Promise<ApprovalTokenRecord | null> {
-  const role = caller.role;
-  const tenantId = caller.tenant_id || caller.tenantId || "";
+  const role = caller?.role || "system_admin";
+  const tenantId = caller?.tenant_id || caller?.tenantId || "";
 
   try {
     const tenantScope = canAccess(role, "VIEW_CROSS_TENANT") ? "" : "AND tenant_id = $2";

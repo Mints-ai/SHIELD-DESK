@@ -3,6 +3,7 @@ package handlers
 import (
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -25,6 +26,16 @@ func TestActionHandler_TakeSafetySnapshot(t *testing.T) {
 
 	if snap.ID != snapID {
 		t.Errorf("Snapshot ID mismatch: expected %s, got %s", snapID, snap.ID)
+	}
+}
+
+func TestActionHandler_SetControlPlane(t *testing.T) {
+	handler := NewActionHandler()
+	targetURL := "https://control.shielddesk.internal:8443"
+	handler.SetControlPlane(targetURL)
+
+	if handler.controlPlaneURL != targetURL {
+		t.Errorf("Expected control plane URL %s, got %s", targetURL, handler.controlPlaneURL)
 	}
 }
 
@@ -79,5 +90,29 @@ func TestActionHandler_Rollback_NotFound(t *testing.T) {
 	_, err := handler.Rollback("TEST-HOST-01", "non-existent-snapshot-id")
 	if err == nil {
 		t.Error("Expected error when rolling back to non-existent snapshot, got nil")
+	}
+}
+
+func TestActionHandler_ConcurrentSnapshots(t *testing.T) {
+	handler := NewActionHandler()
+	var wg sync.WaitGroup
+	errCh := make(chan error, 10)
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, err := handler.TakeSafetySnapshot("CONCURRENT-HOST")
+			if err != nil {
+				errCh <- err
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Errorf("Concurrent snapshot error: %v", err)
 	}
 }

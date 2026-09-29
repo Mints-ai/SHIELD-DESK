@@ -238,6 +238,7 @@ describe("ShieldDesk Closed-Loop EDR/SOC Integration Test Suite", () => {
       { tokenId }
     );
     assert.equal(leadApprove.success, true);
+    assert.ok(leadApprove.token);
     assert.equal(leadApprove.token.status, "approved");
     assert.equal(leadApprove.token.approved_by, TEST_APPROVER.id);
   });

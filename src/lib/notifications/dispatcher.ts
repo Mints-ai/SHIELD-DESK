@@ -5,7 +5,7 @@
  */
 
 export interface SecurityAlertNotification {
-  type: "incident_ingested" | "approval_required" | "plan_generated" | "kill_switch_engaged";
+  type: "incident_ingested" | "incident_created" | "threat_detected" | "approval_required" | "plan_generated" | "kill_switch_engaged";
   tenantId: string;
   title: string;
   description: string;
