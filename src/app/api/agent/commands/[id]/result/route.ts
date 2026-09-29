@@ -15,12 +15,13 @@ export async function POST(
     const { id } = await params;
     const body = await req.json();
 
-    const { status, output = "", snapshotId } = body;
+    const { status, output = "", snapshotId, verified } = body;
     const agentId = body.agentId || req.headers.get("x-shielddesk-agent-id") || undefined;
 
-    if (!status || !["executed", "failed", "rolled_back"].includes(status)) {
+    const validStatuses = ["executed", "failed", "rolled_back", "verified", "acknowledged", "executing"];
+    if (!status || !validStatuses.includes(status)) {
       return NextResponse.json(
-        { error: "Valid status ('executed', 'failed', 'rolled_back') is required" },
+        { error: "Valid status ('executed', 'failed', 'rolled_back', 'verified', 'acknowledged', 'executing') is required" },
         { status: 400 }
       );
     }
@@ -31,6 +32,7 @@ export async function POST(
       output: typeof output === "string" ? output : JSON.stringify(output),
       snapshotId: typeof snapshotId === "string" ? snapshotId : undefined,
       agentId,
+      verified: Boolean(verified),
     });
 
     if (res.notFound) {

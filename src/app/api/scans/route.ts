@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { shouldFailClosed, isDemoMode } from "@/lib/config/environment";
+import { shouldFailClosed, isDemoMode, isProduction } from "@/lib/config/environment";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
 
@@ -88,6 +88,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const isDemoRequested =
+    req.nextUrl.searchParams.get("mode") === "demo" ||
+    req.nextUrl.searchParams.get("dataMode") === "demo";
+
+  if (isProduction() && isDemoRequested) {
+    return NextResponse.json({ error: "Demo mode disabled in production" }, { status: 403 });
+  }
+
   const scanServiceUrl = process.env.SCAN_SERVICE_URL || "http://localhost:8001";
   let liveScanStatus = null;
 
@@ -123,6 +131,11 @@ export async function GET(req: NextRequest) {
       },
       { status: 503 }
     );
+  }
+
+  const dataMode = liveScanStatus ? "live" : "demo";
+  if (isProduction() && dataMode === "demo") {
+    return NextResponse.json({ error: "Demo mode disabled in production" }, { status: 403 });
   }
 
   return NextResponse.json({
@@ -185,6 +198,10 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { action } = body;
+
+    if (isProduction() && (body.dataMode === "demo" || body._demo_mode === true || body.demo === true)) {
+      return NextResponse.json({ error: "Demo mode disabled in production" }, { status: 403 });
+    }
 
     const scanServiceUrl = process.env.SCAN_SERVICE_URL || "http://localhost:8001";
 

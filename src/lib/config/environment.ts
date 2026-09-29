@@ -37,24 +37,42 @@ export function isProduction(): boolean {
 
 /**
  * True if demo/simulation fixtures and fallback data are permitted.
+ * Strictly forbidden in production environments under any circumstances.
  * Defaults to true in development/test, false in production.
- * Can be explicitly overridden via process.env.DEMO_MODE ("true" | "false").
+ * Can be explicitly overridden via process.env.DEMO_MODE ("true" | "false") in non-production.
  */
 export function isDemoMode(): boolean {
+  if (isProduction()) return false;
   if (process.env.DEMO_MODE === "true") return true;
   if (process.env.DEMO_MODE === "false") return false;
-  return !isProduction();
+  return true;
 }
 
 export const isDemoModeActive = isDemoMode;
 
-
 /**
  * True if the application must fail closed when dependencies are unreachable,
  * rather than returning simulated results.
+ * ALWAYS true in production.
  */
 export function shouldFailClosed(): boolean {
-  return isProduction() && !isDemoMode();
+  return isProduction() || process.env.FAIL_CLOSED === "true";
+}
+
+/**
+ * Controls whether endpoint command simulation is permitted.
+ * Policy:
+ * - PRODUCTION_SIMULATION: always false (cannot be overridden)
+ * - STAGING_SIMULATION: false by default, must be explicitly enabled
+ * - DEV_SIMULATION: true by default in development unless set to false
+ */
+export function isSimulationAllowed(): boolean {
+  if (isProduction()) return false;
+  if (process.env.APP_ENV === "staging") {
+    return process.env.STAGING_SIMULATION === "true";
+  }
+  if (process.env.DEV_SIMULATION === "false") return false;
+  return isDemoMode();
 }
 
 /**
@@ -75,5 +93,6 @@ export function getClientEnvironmentMetadata() {
     isDemoMode: isDemoMode(),
     failClosed: shouldFailClosed(),
     devPersonasAllowed: isDevPersonaAllowed(),
+    simulationAllowed: isSimulationAllowed(),
   };
 }
