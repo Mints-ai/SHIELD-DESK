@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { shouldFailClosed, isDemoMode } from "@/lib/config/environment";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
+import { getActiveDetectionRules, toggleDetectionRule } from "@/lib/detection/engine";
+import { query } from "@/lib/db";
 
 const YARA_RULES = [
   {
@@ -142,6 +144,31 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const engineRules = getActiveDetectionRules();
+
+  // Try to query real telemetry count from DB
+  let liveEventsCount = INGEST_TELEMETRY.events_persisted_timescaledb;
+  let liveConnectedAgents = INGEST_TELEMETRY.active_agents_connected;
+
+  try {
+    const telRes = await query<{ count: string }>(
+      `SELECT count(*) FROM endpoint_telemetry WHERE tenant_id = $1`,
+      [session.tenantId]
+    );
+    if (telRes.rows.length > 0) {
+      liveEventsCount = parseInt(telRes.rows[0].count, 10);
+    }
+    const agentRes = await query<{ count: string }>(
+      `SELECT count(*) FROM endpoint_agents WHERE tenant_id = $1 AND status = 'connected'`,
+      [session.tenantId]
+    );
+    if (agentRes.rows.length > 0) {
+      liveConnectedAgents = parseInt(agentRes.rows[0].count, 10);
+    }
+  } catch {
+    // DB offline fallback
+  }
+
   return NextResponse.json({
     status: "ok",
     dataMode: isDemoMode() ? "demo" : "live",
@@ -150,10 +177,15 @@ export async function GET(req: NextRequest) {
       ? "⚠ DEMO DATA: Baseline and telemetry statistics are simulated benchmarks for evaluation."
       : null,
     tenantId: session.tenantId,
+    detection_rules: engineRules,
     yara_rules: YARA_RULES,
     sigma_rules: SIGMA_RULES,
     anomaly_baselines: ANOMALY_BASELINES,
-    ingest_telemetry: INGEST_TELEMETRY,
+    ingest_telemetry: {
+      ...INGEST_TELEMETRY,
+      active_agents_connected: liveConnectedAgents,
+      events_persisted_timescaledb: liveEventsCount,
+    },
   });
 }
 
@@ -190,9 +222,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "toggle_rule") {
+      const toggled = toggleDetectionRule(body.rule_id, Boolean(body.enabled));
       return NextResponse.json({
         success: true,
         rule_id: body.rule_id,
+        toggled,
         new_status: body.enabled ? "ACTIVE" : "DISABLED",
       });
     }
@@ -203,3 +237,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to process threat request" }, { status: 500 });
   }
 }
+

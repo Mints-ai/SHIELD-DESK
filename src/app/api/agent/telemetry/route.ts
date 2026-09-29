@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
+import { evaluateTelemetryBatch } from "@/lib/detection/engine";
 
 interface TelemetryEventPayload {
   eventType: string;
@@ -13,6 +14,7 @@ interface TelemetryEventPayload {
  * POST /api/agent/telemetry
  * Streaming telemetry ingestion endpoint for enrolled Universal Endpoint Agents.
  * Buffers and writes event batches into the endpoint_telemetry table.
+ * Evaluates real-time detection rules (Sigma/YARA) and correlates threats into incidents.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -25,23 +27,27 @@ export async function POST(req: NextRequest) {
 
     const events: TelemetryEventPayload[] = Array.isArray(body.events) ? body.events : [];
     if (events.length === 0) {
-      return NextResponse.json({ success: true, ingested: 0 });
+      return NextResponse.json({ success: true, ingested: 0, detections: [] });
     }
 
-    // Resolve agent tenant
+    // Resolve agent tenant and hostname
     let tenantId: string | null = null;
+    let hostname: string = "UNKNOWN-HOST";
+
     try {
-      const { rows } = await query<{ tenant_id: string }>(
-        "SELECT tenant_id FROM endpoint_agents WHERE id = $1 LIMIT 1",
+      const { rows } = await query<{ tenant_id: string; hostname: string }>(
+        "SELECT tenant_id, hostname FROM endpoint_agents WHERE id = $1 LIMIT 1",
         [agentId]
       );
       if (rows.length > 0) {
         tenantId = rows[0].tenant_id;
+        hostname = rows[0].hostname;
       }
     } catch {
       const agent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId);
       if (agent) {
         tenantId = agent.tenant_id;
+        hostname = agent.hostname;
       }
     }
 
@@ -49,7 +55,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Agent not registered or invalid" }, { status: 404 });
     }
 
-    // Insert batch into endpoint_telemetry
+    // 1. Insert batch into endpoint_telemetry
     try {
       for (const evt of events) {
         await query(
@@ -68,11 +74,21 @@ export async function POST(req: NextRequest) {
       // Offline fallback: events buffered in memory / ring buffer
     }
 
+    // 2. Real-Time Threat Detection & Incident Correlation
+    const detections = await evaluateTelemetryBatch(events, {
+      agentId,
+      tenantId,
+      hostname,
+    });
+
     return NextResponse.json({
       success: true,
       ingested: events.length,
+      detectionsCount: detections.length,
+      detections,
       agentId,
       tenantId,
+      hostname,
     });
   } catch (err: unknown) {
     trackError(err, { endpoint: "/api/agent/telemetry" });
@@ -80,3 +96,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+

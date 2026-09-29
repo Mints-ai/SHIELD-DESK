@@ -877,6 +877,21 @@ export async function recordCommandResult({
         actorId: `agent:${cmd.agent_id}`,
         payload: { commandId, status: effectiveStatus, snapshotId, output },
       });
+
+      if (cmd.token_id) {
+        try {
+          const token = await getApprovalToken(cmd.token_id);
+          if (token && token.incident_id) {
+            await query(
+              `INSERT INTO incident_events (incident_id, occurred_at, description)
+               VALUES ($1, now(), $2)`,
+              [token.incident_id, `Endpoint remediation verified: ${cmd.command} executed by agent ${cmd.agent_id}. Status: ${effectiveStatus}. Output: ${output.slice(0, 150)}`]
+            );
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
     }
 
     return { success: true };
@@ -905,6 +920,21 @@ export async function recordCommandResult({
       actorId: `agent:${cmd.agent_id}`,
       payload: { commandId, status: effectiveStatus, snapshotId, output },
     });
+
+    if (cmd.token_id) {
+      try {
+        const token = await getApprovalToken(cmd.token_id);
+        if (token && token.incident_id) {
+          await query(
+            `INSERT INTO incident_events (incident_id, occurred_at, description)
+             VALUES ($1, now(), $2)`,
+            [token.incident_id, `Endpoint remediation verified: ${cmd.command} executed by agent ${cmd.agent_id}. Status: ${effectiveStatus}. Output: ${output.slice(0, 150)}`]
+          );
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
 
     return { success: true };
   }
@@ -940,6 +970,8 @@ export async function recordHashChainEvent({
     created_at: new Date().toISOString(),
   };
 
+  MOCK_HASH_CHAINS.push(record);
+
   try {
     await query(
       `INSERT INTO hash_chain_audit (id, tenant_id, event_type, actor_id, payload, prev_hash, current_hash)
@@ -947,7 +979,7 @@ export async function recordHashChainEvent({
       [record.id, record.tenant_id, record.event_type, record.actor_id, JSON.stringify(record.payload), record.prev_hash, record.current_hash]
     );
   } catch {
-    MOCK_HASH_CHAINS.push(record);
+    // Database offline mode
   }
 
   return record;

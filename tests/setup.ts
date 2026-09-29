@@ -17,6 +17,7 @@ const originalRequire = (Module.prototype as any).require;
 };
 
 // Set test secrets for cryptographically verified testing
+process.env.DATABASE_URL = "";
 process.env.NEXT_PUBLIC_SUPABASE_URL = "";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "";
@@ -34,6 +35,10 @@ process.env.PYTHON_AI_SERVICE_URL = "http://127.0.0.1:59999";
 process.env.AI_ADVISOR_URL = "http://127.0.0.1:59999";
 process.env.SENTRY_DSN = "";
 process.env.NEXT_PUBLIC_SENTRY_DSN = "";
+process.env.DISCORD_WEBHOOK_URL = "";
+process.env.SLACK_WEBHOOK_URL = "";
+process.env.TEAMS_WEBHOOK_URL = "";
+process.env.SECURITY_WEBHOOK_URL = "";
 
 // Clean up background DB pools or open handles so test runner exits promptly
 process.on("beforeExit", () => {
