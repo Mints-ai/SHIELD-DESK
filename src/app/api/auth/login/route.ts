@@ -6,6 +6,7 @@ import { createSessionToken } from "@/lib/auth/token";
 import { verifyPassword } from "@/lib/auth/password";
 import { getTotpSecret, verifyTotpCode } from "@/lib/auth/totp";
 import type { ShieldDeskRole } from "@/lib/permissions";
+import { recordThreatAlert } from "@/lib/alerts/threatAlertStore";
 
 export async function POST(req: NextRequest) {
   // S7: Rate limit login attempts (max 10 attempts per minute per IP)
@@ -14,6 +15,12 @@ export async function POST(req: NextRequest) {
   const rateLimit = checkRateLimit(`login:${clientIp}`, { limit: 10, windowMs: 60000 });
 
   if (!rateLimit.allowed) {
+    recordThreatAlert({
+      targetUser: "unknown",
+      clientIp,
+      failureReason: "Exceeded rate limit (>10 attempts/min)",
+      severity: "high",
+    });
     return NextResponse.json(
       { error: "Too many login attempts. Please wait before retrying." },
       { status: 429, headers: { "Retry-After": "60" } }
@@ -44,6 +51,11 @@ export async function POST(req: NextRequest) {
         });
 
         if (error || !data.user) {
+          recordThreatAlert({
+            targetUser: email,
+            clientIp,
+            failureReason: error?.message || "Invalid email or password",
+          });
           return NextResponse.json(
             { error: error?.message || "Invalid email or password." },
             { status: 401 }
@@ -69,6 +81,11 @@ export async function POST(req: NextRequest) {
 
           const user = dbUser.rows[0];
           if (!user || !user.password_hash) {
+            recordThreatAlert({
+              targetUser: email,
+              clientIp,
+              failureReason: "Account not found or password not configured",
+            });
             // Fail closed: reject unknown email or user without password hash
             return NextResponse.json(
               { error: "Invalid email or password." },
@@ -78,6 +95,11 @@ export async function POST(req: NextRequest) {
 
           const isValid = await verifyPassword(password, user.password_hash);
           if (!isValid) {
+            recordThreatAlert({
+              targetUser: email,
+              clientIp,
+              failureReason: "Incorrect password entered",
+            });
             return NextResponse.json(
               { error: "Invalid email or password." },
               { status: 401 }
@@ -138,6 +160,11 @@ export async function POST(req: NextRequest) {
         }
         const mfaResult = await verifyTotpCode(authenticatedUid, String(mfaCode), totpSecret);
         if (!mfaResult.valid) {
+          recordThreatAlert({
+            targetUser: email,
+            clientIp,
+            failureReason: mfaResult.reason ?? "Invalid MFA verification token",
+          });
           return NextResponse.json(
             { error: mfaResult.reason ?? "Invalid MFA code.", mfaRequired: true },
             { status: 401 }

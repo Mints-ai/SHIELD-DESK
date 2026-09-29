@@ -111,12 +111,22 @@ const INGEST_TELEMETRY = {
 };
 
 import { getSessionFromRequest } from "@/lib/auth/session";
+import {
+  getThreatAlertsForUser,
+  recordThreatAlert,
+  acknowledgeThreatAlert,
+  resetThreatAlerts,
+} from "@/lib/alerts/threatAlertStore";
 
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Auth alerts are strictly routed only to System Admin (dev-admin) and Globex Analyst (dev-other)
+  const userAlerts = getThreatAlertsForUser(session.uid);
+  const canViewAuthAlerts = session.uid === "dev-admin" || session.uid === "dev-other";
 
   return NextResponse.json({
     status: "ok",
@@ -125,6 +135,8 @@ export async function GET(req: NextRequest) {
     sigma_rules: SIGMA_RULES,
     anomaly_baselines: ANOMALY_BASELINES,
     ingest_telemetry: INGEST_TELEMETRY,
+    security_alerts: userAlerts,
+    can_view_auth_alerts: canViewAuthAlerts,
   });
 }
 
@@ -139,6 +151,15 @@ export async function POST(req: NextRequest) {
     const { action } = body;
 
     if (action === "simulate_burst") {
+      // Record a critical invalid login burst alert targeted at System Admin & Globex Analyst
+      const burstAlert = recordThreatAlert({
+        targetUser: "admin@acme.corp",
+        clientIp: "192.168.1.105 (Berlin, DE)",
+        failureReason: "3 Consecutive Failed Passwords (Off-Hours Anomaly Spike)",
+        severity: "critical",
+        type: "brute_force_spike",
+      });
+
       return NextResponse.json({
         success: true,
         simulation: "Auth Failure Anomaly Spike",
@@ -149,7 +170,22 @@ export async function POST(req: NextRequest) {
         sigma_deviation: "+4.8σ above baseline",
         alert_dispatched: true,
         alert_subject: "alerts.tenant_acme.auth_anomaly_burst",
+        alert: burstAlert,
       });
+    }
+
+    if (action === "acknowledge_alert") {
+      const ok = acknowledgeThreatAlert(body.alert_id, session.uid);
+      return NextResponse.json({
+        success: ok,
+        alert_id: body.alert_id,
+        status: "acknowledged",
+      });
+    }
+
+    if (action === "reset_alerts") {
+      resetThreatAlerts();
+      return NextResponse.json({ success: true, message: "Alerts reset" });
     }
 
     if (action === "toggle_rule") {
@@ -165,3 +201,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to process threat request" }, { status: 500 });
   }
 }
+

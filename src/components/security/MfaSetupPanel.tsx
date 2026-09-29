@@ -199,8 +199,8 @@ export function MfaSetupPanel({ initialEnrolled = false }: MfaSetupPanelProps) {
         </div>
       )}
 
-      {/* ── Success ───────────────────────────────────────────────────────── */}
-      {(step === "enrolled" || (enrolled && step === "idle")) && (
+      {/* ── Success & Disabling ────────────────────────────────────────── */}
+      {(step === "enrolled" || step === "disabling" || (enrolled && step === "idle")) && (
         <div className="flex flex-col gap-3">
           <div className="p-3 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
