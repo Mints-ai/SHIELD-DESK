@@ -81,12 +81,31 @@ export default function PlansIndexPage() {
   ];
 
   useEffect(() => {
-    // In a live environment, fetch from API or use fallback
-    const timer = setTimeout(() => {
-      setPlans(fallbackPlans);
-      setIsLoading(false);
-    }, 250);
-    return () => clearTimeout(timer);
+    let isMounted = true;
+    async function fetchPlans() {
+      setIsLoading(true);
+      try {
+        const res = await fetch("/api/plans", {
+          headers: { "X-ShieldDesk-User": activeUserId },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) {
+            setPlans(data.plans || []);
+          }
+        } else {
+          if (isMounted) setPlans(activeUserId === "dev-other" ? [] : fallbackPlans);
+        }
+      } catch {
+        if (isMounted) setPlans(activeUserId === "dev-other" ? [] : fallbackPlans);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+    fetchPlans();
+    return () => {
+      isMounted = false;
+    };
   }, [activeUserId]);
 
   const filteredPlans = plans.filter((p) => {

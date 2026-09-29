@@ -46,6 +46,9 @@ export function isDemoMode(): boolean {
   return !isProduction();
 }
 
+export const isDemoModeActive = isDemoMode;
+
+
 /**
  * True if the application must fail closed when dependencies are unreachable,
  * rather than returning simulated results.

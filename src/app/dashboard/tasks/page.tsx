@@ -101,13 +101,35 @@ export default function SOCTaskBoardPage() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskTier, setNewTaskTier] = useState<"Tier 1" | "Tier 2" | "Tier 3">("Tier 2");
 
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   useEffect(() => {
-    // If Globex tenant (isolation check), show empty task board
-    if (activeUserId === "dev-other") {
-      setTasks([]);
-    } else {
-      setTasks(SEED_TASKS);
+    let isMounted = true;
+    async function loadTasks() {
+      setIsLoading(true);
+      try {
+        const res = await fetch("/api/tasks", {
+          headers: { "X-ShieldDesk-User": activeUserId },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) {
+            setTasks(data.tasks || []);
+          }
+        } else {
+          if (isMounted) setTasks(activeUserId === "dev-other" ? [] : SEED_TASKS);
+        }
+      } catch {
+        if (isMounted) setTasks(activeUserId === "dev-other" ? [] : SEED_TASKS);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
     }
+    loadTasks();
+    return () => {
+      isMounted = false;
+    };
   }, [activeUserId]);
 
   const handleOpenApproval = async (task: MitigationTaskItem) => {
@@ -158,25 +180,64 @@ export default function SOCTaskBoardPage() {
     );
   };
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTaskTitle.trim()) return;
+    if (!newTaskTitle.trim() || isSubmitting) return;
 
-    const newTask: MitigationTaskItem = {
-      id: crypto.randomUUID(),
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      horizon: "immediate",
-      title: newTaskTitle.trim(),
-      description: "Analyst-initiated custom mitigation task",
-      tier: newTaskTier,
-      status: "pending",
-      blast_radius: "Target Workstation Scope",
-      incident_code: "INC-1042",
-    };
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({
+          title: newTaskTitle.trim(),
+          description: "Analyst-initiated custom mitigation task",
+          tier: newTaskTier,
+          horizon: "immediate",
+          blastRadius: "Target Workstation Scope",
+        }),
+      });
 
-    setTasks((prev) => [newTask, ...prev]);
-    setNewTaskTitle("");
-    setIsCreatingTask(false);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.task) {
+          setTasks((prev) => [data.task, ...prev]);
+        }
+      } else {
+        const fallbackTask: MitigationTaskItem = {
+          id: crypto.randomUUID(),
+          plan_id: "p1111111-1111-1111-1111-111111111111",
+          horizon: "immediate",
+          title: newTaskTitle.trim(),
+          description: "Analyst-initiated custom mitigation task",
+          tier: newTaskTier,
+          status: "pending",
+          blast_radius: "Target Workstation Scope",
+          incident_code: "INC-1042",
+        };
+        setTasks((prev) => [fallbackTask, ...prev]);
+      }
+    } catch {
+      const fallbackTask: MitigationTaskItem = {
+        id: crypto.randomUUID(),
+        plan_id: "p1111111-1111-1111-1111-111111111111",
+        horizon: "immediate",
+        title: newTaskTitle.trim(),
+        description: "Analyst-initiated custom mitigation task",
+        tier: newTaskTier,
+        status: "pending",
+        blast_radius: "Target Workstation Scope",
+        incident_code: "INC-1042",
+      };
+      setTasks((prev) => [fallbackTask, ...prev]);
+    } finally {
+      setIsSubmitting(false);
+      setNewTaskTitle("");
+      setIsCreatingTask(false);
+    }
   };
 
   const filteredTasks = tasks.filter((t) => {

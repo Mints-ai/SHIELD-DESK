@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { shouldFailClosed, isDemoMode } from "@/lib/config/environment";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { trackError } from "@/lib/observability/errorTracker";
 
 /**
  * DEMO/FALLBACK DATA — returned when running in DEMO_MODE and the live scan
@@ -339,6 +340,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: "Unknown action specified" }, { status: 400 });
   } catch (err: unknown) {
+    trackError(err, {
+      endpoint: "/api/scans",
+      userId: session.uid,
+      tenantId: session.tenantId,
+    });
     const message = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

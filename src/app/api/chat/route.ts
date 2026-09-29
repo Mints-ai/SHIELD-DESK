@@ -3,6 +3,7 @@ import { ollama, OLLAMA_MODEL } from "@/lib/ai/ollama";
 import { getSessionFromRequest, type ChatSession } from "@/lib/auth/session";
 import { canExecuteTool } from "@/lib/permissions";
 import { query } from "@/lib/db";
+import { trackError } from "@/lib/observability/errorTracker";
 import {
   CHAT_TOOLS,
   getIncidents,
@@ -696,6 +697,12 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         }
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       } catch (err) {
+        trackError(err, {
+          endpoint: "/api/chat (stream)",
+          userId: session.uid,
+          tenantId: session.tenantId,
+          component: "ChatStream",
+        });
         console.error("Stream error:", err);
       } finally {
         controller.close();

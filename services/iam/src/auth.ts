@@ -5,12 +5,14 @@ import qrcode from "qrcode";
 import crypto from "crypto";
 import { setCache, getCache } from "./redis.js";
 
+// DEPRECATION NOTICE: This microservice is deprecated and superseded by
+// the native Next.js App Router auth layer in src/lib/auth/.
 const JWT_SECRET = (() => {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
   if (process.env.NODE_ENV === "production") {
     throw new Error("FATAL: JWT_SECRET environment variable is required in production mode.");
   }
-  return "shielddesk_ephemeral_dev_secret_key";
+  return crypto.randomBytes(32).toString("hex");
 })();
 const ACCESS_TOKEN_EXPIRY = "1h";
 const SALT_ROUNDS = 12;

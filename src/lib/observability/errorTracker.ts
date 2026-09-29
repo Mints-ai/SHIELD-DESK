@@ -3,6 +3,8 @@
  * Captures, formats, and dispatches uncaught exceptions to configured monitoring backends.
  */
 
+import * as Sentry from "@sentry/nextjs";
+
 export interface TrackedErrorContext {
   userId?: string;
   tenantId?: string;
@@ -32,9 +34,32 @@ export function trackError(error: unknown, context: TrackedErrorContext = {}): s
   // Structured stdout logging for log shippers (Fluentbit, Datadog agent, Grafana Loki)
   console.error(`[SHIELDDESK_ERROR] ${JSON.stringify(payload)}`);
 
-  // Optional: If Sentry DSN is configured, forward to Sentry
-  if (process.env.SENTRY_DSN) {
-    // Forwarding hook
+  // Forward to Sentry if configured
+  const sentryDsn = process.env.SENTRY_DSN || process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (sentryDsn) {
+    try {
+      Sentry.withScope((scope) => {
+        if (context.userId) {
+          scope.setUser({ id: context.userId });
+        }
+        if (context.tenantId) {
+          scope.setTag("tenantId", context.tenantId);
+        }
+        if (context.endpoint) {
+          scope.setTag("endpoint", context.endpoint);
+        }
+        if (context.component) {
+          scope.setTag("component", context.component);
+        }
+        scope.setExtra("errorId", errorId);
+        if (context.extra) {
+          scope.setExtras(context.extra);
+        }
+        Sentry.captureException(error);
+      });
+    } catch {
+      // Avoid recursive crash if Sentry client encounters an error
+    }
   }
 
   // Optional: If Security Alert Webhook is configured, notify SecOps team
