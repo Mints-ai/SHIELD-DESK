@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "tsx --test tests/*.test.ts",
+    "test:sentry": "tsx scripts/trigger-sentry-event.ts",
     "start:all": "powershell -ExecutionPolicy Bypass -File ./start.ps1"
   },
   "dependencies": {
