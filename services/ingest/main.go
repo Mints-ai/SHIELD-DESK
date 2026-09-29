@@ -144,6 +144,109 @@ func (s *IngestServer) SendEvents(stream ingestv1.IngestService_SendEventsServer
 	}
 }
 
+// ---------------------------------------------------------------------------
+// AgentServer implements bidirectional Heartbeat & Command Streaming (SD-011)
+// ---------------------------------------------------------------------------
+
+type AgentServer struct {
+	ingestv1.UnimplementedAgentServiceServer
+	publisher *EventPublisher
+	rdb       *redis.Client
+}
+
+func NewAgentServer(pub *EventPublisher, rdb *redis.Client) *AgentServer {
+	return &AgentServer{
+		publisher: pub,
+		rdb:       rdb,
+	}
+}
+
+// StreamHeartbeat handles bidirectional agent ping/pong and delivers emergency kill switches.
+func (s *AgentServer) StreamHeartbeat(stream ingestv1.AgentService_StreamHeartbeatServer) error {
+	for {
+		ping, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			log.Warn().Err(err).Msg("[Agent-Heartbeat] Stream interrupted")
+			return err
+		}
+
+		// Check if kill switch is active in Redis
+		killSwitch := false
+		if s.rdb != nil {
+			val, _ := s.rdb.Get(context.Background(), fmt.Sprintf("fleet:kill_switch:%s", ping.TenantId)).Result()
+			if val == "true" || val == "1" {
+				killSwitch = true
+			}
+			valAgent, _ := s.rdb.Get(context.Background(), fmt.Sprintf("fleet:kill_switch:agent:%s", ping.AgentId)).Result()
+			if valAgent == "true" || valAgent == "1" {
+				killSwitch = true
+			}
+		}
+
+		log.Debug().
+			Str("agent_id", ping.AgentId).
+			Str("tenant_id", ping.TenantId).
+			Float64("cpu_pct", ping.CpuUsagePct).
+			Float64("mem_pct", ping.MemoryUsagePct).
+			Int32("procs", ping.ProcessCount).
+			Msg("[Agent-Heartbeat] Heartbeat received")
+
+		err = stream.Send(&ingestv1.HeartbeatPong{
+			Acknowledged:             true,
+			Timestamp:                time.Now().UnixMilli(),
+			NextIntervalSec:          15,
+			KillSwitchEngaged:        killSwitch,
+			CertificateRenewalNeeded: false,
+		})
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// StreamCommands delivers signed commands to the agent and consumes execution results.
+func (s *AgentServer) StreamCommands(stream ingestv1.AgentService_StreamCommandsServer) error {
+	for {
+		result, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			log.Warn().Err(err).Msg("[Agent-Commands] Command stream closed")
+			return err
+		}
+
+		log.Info().
+			Str("command_id", result.CommandId).
+			Str("agent_id", result.AgentId).
+			Str("status", result.Status).
+			Int64("duration_ms", result.DurationMs).
+			Msg("[Agent-Commands] Execution result received")
+
+		// Publish command execution result event to NATS JetStream
+		if s.publisher != nil {
+			_ = s.publisher.PublishEvent(&ingestv1.AgentEvent{
+				TenantId:  result.TenantId,
+				AssetId:   result.AgentId,
+				EventType: "command_result",
+				Timestamp: result.ExecutedAt,
+				Payload: map[string]string{
+					"command_id":  result.CommandId,
+					"status":      result.Status,
+					"output":      result.ExecutionOutput,
+					"error":       result.ErrorMessage,
+					"snapshot_id": result.SnapshotId,
+					"result_hash": result.ResultHash,
+				},
+				AgentVersion: "1.0.0",
+			})
+		}
+	}
+}
+
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
@@ -213,6 +316,9 @@ func main() {
 	grpcServer := grpc.NewServer(grpcOpts...)
 	ingestServer := NewIngestServer(publisher, rdb)
 	ingestv1.RegisterIngestServiceServer(grpcServer, ingestServer)
+
+	agentServer := NewAgentServer(publisher, rdb)
+	ingestv1.RegisterAgentServiceServer(grpcServer, agentServer)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
 	if err != nil {
