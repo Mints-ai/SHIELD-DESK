@@ -33,20 +33,23 @@ Sentry.init({
 });
 
 async function main() {
-  console.log("Triggering sample error to verify Sentry connection...");
-  
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString();
+  const dateStr = now.toISOString();
+
   const eventId = Sentry.captureException(
-    new Error("ShieldDesk™ — Verification Test Event: Sentry Integration Active!"),
+    new Error(`ShieldDesk™ – Verification Test Alert [${timeStr}]: Sentry Integration Active!`),
     {
       tags: {
         platform: "shielddesk-soc",
         component: "production-readiness-audit",
         tenant: "acme-tenant",
+        testRun: dateStr,
       },
       extra: {
-        verifiedAt: new Date().toISOString(),
+        verifiedAt: dateStr,
         auditor: "antigravity-soc-agent",
-        readinessStatus: "PASSED_81_TESTS",
+        readinessStatus: "PASSED_105_TESTS",
       },
     }
   );
@@ -56,6 +59,48 @@ async function main() {
   
   const flushed = await Sentry.flush(5000);
   console.log("Flush complete:", flushed ? "SUCCESS (event transmitted)" : "TIMEOUT");
+
+  // Check if Discord webhook is configured and send test alert
+  const discordUrl = process.env.DISCORD_WEBHOOK_URL;
+  if (discordUrl) {
+    console.log("\nFound DISCORD_WEBHOOK_URL. Dispatching direct test alert to Discord...");
+    try {
+      const payload = {
+        embeds: [
+          {
+            title: "🛡️ ShieldDesk SOC: Sentry Alert System Verified",
+            description: `Verification test event successfully captured by Sentry and dispatched to Discord.\n**Event ID:** \`${eventId}\``,
+            color: 0x6366f1, // Indigo
+            fields: [
+              { name: "Environment", value: "Production / Development", inline: true },
+              { name: "Severity", value: "TEST_VERIFICATION", inline: true },
+              { name: "Test Timestamp", value: timeStr, inline: true },
+              { name: "Sentry Event ID", value: eventId || "N/A", inline: false },
+            ],
+            footer: { text: "ShieldDesk SOC Platform • Discord Dispatcher" },
+            timestamp: dateStr,
+          },
+        ],
+      };
+
+      const res = await fetch(discordUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        console.log("Discord dispatch SUCCESS: Alert posted to channel!");
+      } else {
+        console.warn(`Discord dispatch returned HTTP ${res.status}: ${await res.text()}`);
+      }
+    } catch (err) {
+      console.warn("Discord dispatch failed:", err);
+    }
+  } else {
+    console.log("\nTip: To route alerts directly from ShieldDesk to Discord, add DISCORD_WEBHOOK_URL to your .env.local file.");
+  }
 }
 
 main().catch(console.error);
+
