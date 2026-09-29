@@ -202,19 +202,19 @@ export function TopNavBar() {
           {/* Environment Mode Badge */}
           {envMeta.isDemoMode ? (
             <div
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-mono font-medium"
-              title="Demo Mode: Falling back to illustrative test fixtures when live background daemons are unreachable."
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-600 text-xs font-mono font-semibold shadow-xs"
+              title="Demo Environment: Simulated/illustrative fixtures active. No real host modifications."
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
-              <span className="hidden xl:inline">Demo Mode</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+              <span>DEMO ENVIRONMENT</span>
             </div>
           ) : (
             <div
-              className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs font-mono font-medium"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 text-xs font-mono font-medium shadow-xs"
               title="Production Mode: Live SOC telemetry and fail-closed safety boundary enabled."
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              <span className="hidden xl:inline">Live SOC</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="hidden sm:inline">LIVE SOC</span>
             </div>
           )}
 

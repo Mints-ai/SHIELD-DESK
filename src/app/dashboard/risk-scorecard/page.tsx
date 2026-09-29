@@ -14,6 +14,7 @@ import {
   DollarSign,
   Layers,
   CheckCircle,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -87,13 +88,24 @@ export default function RiskScorecardPage() {
           </div>
         </div>
 
+        {/* Estimation & Benchmarking Disclaimer Banner */}
+        {scorecard?.dataDisclaimer && (
+          <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-900 text-xs leading-relaxed flex items-start gap-3 shadow-xs">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold">Benchmarking & Estimation Notice: </span>
+              {scorecard.dataDisclaimer}
+            </div>
+          </div>
+        )}
+
         {/* Hero Posture Grade & ROI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           {/* Posture Grade Card */}
           <div className="p-6 rounded-2xl border border-[var(--sd-border)] bg-white flex items-center justify-between shadow-xs">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
-                Security Posture Grade
+                Security Posture Index (Simulated Benchmark)
               </span>
               <div className="flex items-baseline gap-3 my-1">
                 <span className="text-5xl font-black text-[var(--sd-pine)] font-mono">
@@ -104,7 +116,7 @@ export default function RiskScorecardPage() {
                 </span>
               </div>
               <p className="text-[11px] text-[var(--sd-text-muted)]">
-                Based on mean time to detect/contain, active fleet coverage, and zero policy breaches.
+                Based on benchmark dwell time, fleet baseline coverage, and zero policy breaches.
               </p>
             </div>
             <div className="h-16 w-16 rounded-2xl bg-[var(--sd-bg-alt)] border border-[var(--sd-border)] flex items-center justify-center shrink-0">
@@ -116,7 +128,7 @@ export default function RiskScorecardPage() {
           <div className="p-6 rounded-2xl border border-[var(--sd-border)] bg-white flex items-center justify-between shadow-xs">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
-                Estimated Loss Avoided
+                Estimated Loss Avoided (Benchmark Model)
               </span>
               <div className="text-3xl font-extrabold text-[var(--sd-pine)] font-mono my-1">
                 {scorecard?.estimatedLossAvoidedUsd || "$1,450,000"}
@@ -134,13 +146,13 @@ export default function RiskScorecardPage() {
           <div className="p-6 rounded-2xl border border-[var(--sd-border)] bg-white flex items-center justify-between shadow-xs">
             <div className="flex flex-col gap-1">
               <span className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
-                Threats Contained (24h)
+                Threats Contained (24h Simulated)
               </span>
               <div className="text-3xl font-extrabold text-[var(--sd-pine)] font-mono my-1">
                 {scorecard?.activeThreatsBlocked ?? 16} <span className="text-xs font-normal text-[var(--sd-text-muted)]">Events</span>
               </div>
               <p className="text-[11px] text-[var(--sd-text-muted)]">
-                100% of detected reconnaissance and lateral SMB bursts isolated with zero confirmed exfiltration.
+                Detected reconnaissance and lateral SMB bursts isolated in test environment with zero exfiltration.
               </p>
             </div>
             <div className="h-16 w-16 rounded-2xl bg-[var(--sd-bg-alt)] border border-[var(--sd-border)] flex items-center justify-center shrink-0">
@@ -157,7 +169,7 @@ export default function RiskScorecardPage() {
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-[var(--sd-pine)]" />
                 <h3 className="text-sm font-bold text-[var(--sd-pine)]">
-                  Mean Time to Detect (MTTD)
+                  Benchmark Mean Time to Detect (MTTD)
                 </h3>
                 <span className="text-[10px] font-mono text-[var(--sd-text-muted)] border border-[var(--sd-border)] px-1.5 py-0.5 rounded">
                   Benchmark Model
@@ -165,7 +177,7 @@ export default function RiskScorecardPage() {
               </div>
               <span className="flex items-center gap-1 text-xs font-bold text-[var(--sd-success)] bg-[var(--sd-success-dim)] px-2 py-0.5 rounded border border-[var(--sd-success-border)] font-mono">
                 <TrendingDown className="h-3 w-3" />
-                {scorecard?.mttdMinutes.reductionPct ?? 96.6}% Speedup
+                {scorecard?.mttdMinutes.reductionPct ?? 96.6}% Projected Speedup
               </span>
             </div>
 
@@ -178,7 +190,7 @@ export default function RiskScorecardPage() {
               </div>
 
               <div className="p-3.5 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)]">
-                <span className="text-[10px] uppercase font-mono text-[var(--sd-success)] font-semibold">With ShieldDesk</span>
+                <span className="text-[10px] uppercase font-mono text-[var(--sd-success)] font-semibold">With ShieldDesk Model</span>
                 <div className="text-2xl font-bold font-mono text-[var(--sd-success)] mt-1">
                   {scorecard?.mttdMinutes.withShieldDesk ?? 1.8} <span className="text-xs">min</span>
                 </div>
@@ -186,7 +198,7 @@ export default function RiskScorecardPage() {
             </div>
 
             <p className="text-xs text-[var(--sd-text-muted)] leading-relaxed">
-              Automated high-frequency telemetry ingestion and multi-horizon correlation cut dwell time from 54 minutes to under 2 minutes.
+              Automated high-frequency telemetry ingestion and multi-horizon correlation cut dwell time from 54 minutes to under 2 minutes in benchmark testing.
             </p>
           </div>
 
@@ -196,7 +208,7 @@ export default function RiskScorecardPage() {
               <div className="flex items-center gap-2">
                 <Zap className="h-4 w-4 text-[var(--sd-pine)]" />
                 <h3 className="text-sm font-bold text-[var(--sd-pine)]">
-                  Mean Time to Remediate (MTTR)
+                  Benchmark Mean Time to Remediate (MTTR)
                 </h3>
                 <span className="text-[10px] font-mono text-[var(--sd-text-muted)] border border-[var(--sd-border)] px-1.5 py-0.5 rounded">
                   Benchmark Model
@@ -204,7 +216,7 @@ export default function RiskScorecardPage() {
               </div>
               <span className="flex items-center gap-1 text-xs font-bold text-[var(--sd-success)] bg-[var(--sd-success-dim)] px-2 py-0.5 rounded border border-[var(--sd-success-border)] font-mono">
                 <TrendingDown className="h-3 w-3" />
-                {scorecard?.mttrMinutes.reductionPct ?? 97.4}% Speedup
+                {scorecard?.mttrMinutes.reductionPct ?? 97.4}% Projected Speedup
               </span>
             </div>
 
@@ -217,7 +229,7 @@ export default function RiskScorecardPage() {
               </div>
 
               <div className="p-3.5 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)]">
-                <span className="text-[10px] uppercase font-mono text-[var(--sd-success)] font-semibold">With ShieldDesk</span>
+                <span className="text-[10px] uppercase font-mono text-[var(--sd-success)] font-semibold">With ShieldDesk Model</span>
                 <div className="text-2xl font-bold font-mono text-[var(--sd-success)] mt-1">
                   {scorecard?.mttrMinutes.withShieldDesk ?? 6.4} <span className="text-xs">min</span>
                 </div>
@@ -225,7 +237,7 @@ export default function RiskScorecardPage() {
             </div>
 
             <p className="text-xs text-[var(--sd-text-muted)] leading-relaxed">
-              Tier 1 autonomous containment actions and one-click Tier 2 human sign-off tokens prevent manual response latency.
+              Tier 1 autonomous containment actions and one-click Tier 2 human sign-off tokens prevent manual response latency in benchmark tests.
             </p>
           </div>
         </div>
