@@ -332,7 +332,7 @@ export async function POST(req: NextRequest) {
         snapshot_created: `snap-lvm-${Date.now().toString(36)}`,
         os_type: body.os_type || "linux",
         dry_run: Boolean(body.dry_run),
-        status: body.dry_run ? "DRY_RUN_PASSED" : "PATCH_APPLIED_AND_VERIFIED",
+        status: body.dry_run ? "DRY_RUN_PASSED" : "SIMULATED_PATCH_APPLIED",
         packages_updated: body.packages || ["openssh-server", "libwebp7"],
         verification_log: "Pre-patch LVM snapshot created. Package signature verified. Daemons restarted without degradation (Simulated Demo Mode).",
       });

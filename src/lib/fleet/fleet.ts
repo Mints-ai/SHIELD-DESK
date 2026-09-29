@@ -4,6 +4,7 @@ import { canAccess } from "@/lib/permissions";
 import { getApprovalToken } from "@/lib/governance/approvalTokens";
 import { checkThrottle, recordMockThrottleCommand } from "@/lib/governance/blastRadiusThrottle";
 import { signCommand } from "@/lib/fleet/commandSigning";
+import { isDemoMode } from "@/lib/config/environment";
 import crypto from "crypto";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
@@ -487,27 +488,31 @@ export async function executeAgentCommand({
 
   // Provide initial status & simulation feedback
   let output = "";
-  if (command.startsWith("isolate_host")) {
-    output = `Network interface isolated successfully on ${agent.hostname}. Outbound/inbound traffic disabled except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
-    agent.status = "isolated";
-    agent.safety_snapshot_id = snapshotId || null;
-  } else if (command.startsWith("restore_host")) {
-    output = `Network interface restored on ${agent.hostname}. Restored baseline routing table.`;
-    agent.status = "connected";
-  } else if (command.startsWith("block_ip")) {
-    const ip = command.split(" ")[1] || "198.51.100.4";
-    output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Snapshot ${snapshotId} registered.`;
-  } else if (command.startsWith("kill_process")) {
-    const pid = command.split(" ")[1] || "4812";
-    output = `Process ${pid} terminated via SIGKILL on ${agent.hostname}. Process dump captured for forensics.`;
-  } else if (command.startsWith("take_safety_snapshot")) {
-    output = `Filesystem & network state snapshot ${snapshotId} taken successfully on ${agent.hostname}.`;
-    agent.safety_snapshot_id = snapshotId || null;
-  } else if (command.startsWith("rollback_snapshot")) {
-    output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} on ${agent.hostname}.`;
-    agent.status = "connected";
+  if (!isDemoMode()) {
+    output = `Command '${command}' cryptographically signed (Tier: ${tier}, Nonce: ${nonce.substring(0, 8)}...) and enqueued for agent delivery. Awaiting signed host execution report.`;
   } else {
-    output = `Command '${command}' queued for agent delivery on ${agent.hostname}.`;
+    if (command.startsWith("isolate_host")) {
+      output = `Network interface isolated successfully (Simulated Demo Mode) on ${agent.hostname}. Outbound/inbound traffic disabled except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
+      agent.status = "isolated";
+      agent.safety_snapshot_id = snapshotId || null;
+    } else if (command.startsWith("restore_host")) {
+      output = `Network interface restored (Simulated Demo Mode) on ${agent.hostname}. Restored baseline routing table.`;
+      agent.status = "connected";
+    } else if (command.startsWith("block_ip")) {
+      const ip = command.split(" ")[1] || "198.51.100.4";
+      output = `Local firewall rule inserted (Simulated Demo Mode) on ${agent.hostname}: DROP all traffic to/from ${ip}. Snapshot ${snapshotId} registered.`;
+    } else if (command.startsWith("kill_process")) {
+      const pid = command.split(" ")[1] || "4812";
+      output = `Process ${pid} terminated via SIGKILL (Simulated Demo Mode) on ${agent.hostname}. Process dump captured for forensics.`;
+    } else if (command.startsWith("take_safety_snapshot")) {
+      output = `Filesystem & network state snapshot ${snapshotId} taken successfully (Simulated Demo Mode) on ${agent.hostname}.`;
+      agent.safety_snapshot_id = snapshotId || null;
+    } else if (command.startsWith("rollback_snapshot")) {
+      output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} (Simulated Demo Mode) on ${agent.hostname}.`;
+      agent.status = "connected";
+    } else {
+      output = `Command '${command}' queued for agent delivery on ${agent.hostname} (Demo Mode).`;
+    }
   }
 
   // Record initial queued command state in agent_command_logs as pending

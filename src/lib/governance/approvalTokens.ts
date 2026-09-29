@@ -280,7 +280,7 @@ export async function approveActionToken(
     return {
       success: true,
       token: updated.rows[0],
-      executionStatus: isDemoMode() ? "simulated_containment_successful" : "queued_for_execution",
+      executionStatus: "queued_for_execution",
       message: `Action '${token.action_type}' approved and dispatched under ${token.tier} governance.`,
     };
   } catch (err) {

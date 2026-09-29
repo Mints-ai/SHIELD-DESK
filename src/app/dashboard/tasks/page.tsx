@@ -207,32 +207,11 @@ export default function SOCTaskBoardPage() {
           setTasks((prev) => [data.task, ...prev]);
         }
       } else {
-        const fallbackTask: MitigationTaskItem = {
-          id: crypto.randomUUID(),
-          plan_id: "p1111111-1111-1111-1111-111111111111",
-          horizon: "immediate",
-          title: newTaskTitle.trim(),
-          description: "Analyst-initiated custom mitigation task",
-          tier: newTaskTier,
-          status: "pending",
-          blast_radius: "Target Workstation Scope",
-          incident_code: "INC-1042",
-        };
-        setTasks((prev) => [fallbackTask, ...prev]);
+        const errBody = await res.json().catch(() => null);
+        console.error("Task creation failed:", errBody?.error || "Server rejected task creation");
       }
-    } catch {
-      const fallbackTask: MitigationTaskItem = {
-        id: crypto.randomUUID(),
-        plan_id: "p1111111-1111-1111-1111-111111111111",
-        horizon: "immediate",
-        title: newTaskTitle.trim(),
-        description: "Analyst-initiated custom mitigation task",
-        tier: newTaskTier,
-        status: "pending",
-        blast_radius: "Target Workstation Scope",
-        incident_code: "INC-1042",
-      };
-      setTasks((prev) => [fallbackTask, ...prev]);
+    } catch (err) {
+      console.error("Network error during task creation:", err);
     } finally {
       setIsSubmitting(false);
       setNewTaskTitle("");
