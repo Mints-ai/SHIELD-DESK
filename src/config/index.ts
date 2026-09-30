@@ -7,10 +7,10 @@ let cachedConfig: ShieldDeskConfig | null = null;
  * In production/staging, results are cached. In test mode, process.env is evaluated dynamically.
  */
 export function getConfig(): ShieldDeskConfig {
-  if (process.env.NODE_ENV === "test" || !cachedConfig) {
-    return validateEnvironment(process.env);
+  if (cachedConfig) {
+    return cachedConfig;
   }
-  return cachedConfig;
+  return validateEnvironment(process.env);
 }
 
 /**

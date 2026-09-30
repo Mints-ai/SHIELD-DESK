@@ -1,7 +1,8 @@
+$schema: https://api.gitbook.com/gitbook-docs.yaml
 site:
-  title: ShieldDesk Documentation
-  description: User guide and engineering docs for the ShieldDesk Autonomous SOC platform by Mints Global.
+  title: "ShieldDesk Documentation"
   structure:
-    - space: ShieldDesk Docs
-      ref: main
-      path: docs/
+    - key: shielddesk-docs
+      title: "ShieldDesk Documentation"
+      content:
+        directory: "./docs"
