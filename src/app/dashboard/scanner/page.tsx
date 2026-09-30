@@ -75,7 +75,7 @@ export default function ScannerDashboardPage() {
         headers: { "X-ShieldDesk-User": activeUserId },
       });
       const data = await res.json();
-      if (data.cveFindings) setCves(data.cveFindings);
+      if (data.findings) setCves(data.findings);
       if (data.secretFindings) setSecrets(data.secretFindings);
       setServiceConnected(Boolean(data.serviceConnected));
     } catch (err) {
@@ -102,7 +102,10 @@ export default function ScannerDashboardPage() {
         body: JSON.stringify({ action: "cve_scan", target_path: "/app", scan_type: "full" }),
       });
       const data = await res.json();
-      setScanResult(`Scan Completed: ${data.message || "4 vulnerabilities verified."}`);
+      if (data.findings && Array.isArray(data.findings)) {
+        setCves(data.findings);
+      }
+      setScanResult(`Scan Completed: ${data.message || `${data.findings?.length || 0} vulnerabilities found.`}`);
     } catch {
       setScanResult("Scan finished with local cached signatures.");
     } finally {
@@ -192,9 +195,24 @@ export default function ScannerDashboardPage() {
     ]);
   };
 
+  const handleDismissScan = () => {
+    setScanResult(null);
+    setCves([]);
+  };
+
+  const handleViewVulnerabilities = () => {
+    setActiveTab("cve");
+    setTimeout(() => {
+      const el = document.getElementById("findings-tabs");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 50);
+  };
+
   const runBlastRadius = async (cve: CveFinding) => {
     setLoading(true);
-    setAdvisorTitle(`Blast Radius Simulation: ${cve.cve_id} (${cve.package_name})`);
+    setAdvisorTitle(`Impact Analysis: ${cve.cve_id} (${cve.package_name})`);
     try {
       const res = await fetch("/api/ai/advisor", {
         method: "POST",
@@ -212,7 +230,7 @@ export default function ScannerDashboardPage() {
           ? br.downstream_dependencies.map((d: string) => `  • ${d}`).join("\n")
           : "  • No downstream dependencies recorded.";
 
-        const formatted = `Simulated Blast Radius Assessment for ${data.cve_id || cve.cve_id}:
+        const formatted = `Impact Assessment for ${data.cve_id || cve.cve_id}:
 
 1. Target Asset & Scope: ${data.host_id || cve.asset_id}
 2. Direct Assets at Risk: ${br.direct_assets_at_risk ?? "N/A"}
@@ -223,14 +241,14 @@ ${deps}
 6. Remediation Urgency: ${br.remediation_urgency ?? "N/A"}
 7. Recommended Containment: ${br.automated_mitigation ?? "N/A"}
 
-Governance Note: Blast radius simulations are predictive models. Tier 2 host isolation requires human analyst authorization.`;
+Governance Note: Impact analysis simulations are predictive models. Tier 2 host isolation requires human analyst authorization.`;
 
         setAdvisorContent(formatted);
       } else {
-        setAdvisorContent("Blast radius simulation returned no data. The AI Advisor service may be offline — check that it is running on port 8002.");
+        setAdvisorContent("Impact analysis returned no data. The AI Advisor service may be offline — check that it is running on port 8002.");
       }
     } catch {
-      setAdvisorContent("Failed to simulate blast radius. Please ensure the application server is running and try again.");
+      setAdvisorContent("Failed to perform impact analysis. Please ensure the application server is running and try again.");
     } finally {
       setLoading(false);
     }
@@ -239,7 +257,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
   const generateRunbook = async (cve: CveFinding) => {
     setLoading(true);
-    setAdvisorTitle(`Remediation Runbook: ${cve.cve_id}`);
+    setAdvisorTitle(`Recovery Runbook: ${cve.cve_id}`);
     try {
       const res = await fetch("/api/ai/advisor", {
         method: "POST",
@@ -250,7 +268,9 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         body: JSON.stringify({ action: "generate_runbook", cve_id: cve.cve_id, host_id: cve.asset_id }),
       });
       const data = await res.json();
-      setAdvisorContent(data.runbook || "No runbook returned.");
+      const raw = data.runbook || "No runbook returned.";
+      const clean = raw.split("\n").map((l: string) => l.replace(/^[#*\s]+/, "").replace(/[`*]/g, "")).filter((l: string) => !l.startsWith("```")).join("\n");
+      setAdvisorContent(clean);
     } catch {
       setAdvisorContent("Failed to generate runbook.");
     } finally {
@@ -305,14 +325,25 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
         {/* Scan Status Toast Banner */}
         {scanResult && (
-          <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-xs text-[var(--sd-pine-bright)] flex items-center justify-between">
-            <span>{scanResult}</span>
-            <button
-              onClick={() => setScanResult(null)}
-              className="text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono text-xs cursor-pointer"
-            >
-              Dismiss
-            </button>
+          <div className="p-3 rounded-lg border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-xs text-[var(--sd-danger)] flex items-center justify-between gap-4 font-medium shadow-xs">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)] shrink-0" />
+              <span>{scanResult}</span>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                onClick={handleViewVulnerabilities}
+                className="text-[var(--sd-danger)] hover:underline font-semibold text-xs cursor-pointer"
+              >
+                View Vulnerabilities →
+              </button>
+              <button
+                onClick={handleDismissScan}
+                className="text-[var(--sd-danger)]/70 hover:text-[var(--sd-danger)] font-mono text-xs cursor-pointer font-semibold"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
 
@@ -356,7 +387,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         </div>
 
         {/* Tab Controls */}
-        <div className="flex items-center gap-2 border-b border-[var(--sd-border)]">
+        <div id="findings-tabs" className="flex items-center gap-2 border-b border-[var(--sd-border)] scroll-mt-6">
           <button
             onClick={() => setActiveTab("cve")}
             className={cn(
@@ -413,72 +444,85 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         {/* Tab 1: Trivy Vulnerability Findings */}
         {activeTab === "cve" && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3.5">
-              {cves.map((cve) => (
-                <div
-                  key={cve.cve_id}
-                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
+            {cves.length === 0 ? (
+              <div className="p-12 text-center rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-3">
+                <CheckCircle2 className="h-8 w-8 text-[var(--sd-pine-bright)] mx-auto" />
+                <h3 className="text-sm font-semibold text-[var(--sd-text)]">No Vulnerabilities Displayed</h3>
+                <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
+                  Findings have been dismissed. Click &quot;Trigger Trivy Scan&quot; above to run a fresh scan and display findings.
+                </p>
+                <button
+                  onClick={triggerTrivyScan}
+                  disabled={loading}
+                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold cursor-pointer disabled:opacity-50"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className={cn(
-                          "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
-                          cve.severity === "CRITICAL"
-                            ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
-                            : "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                  <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                  <span>Trigger Trivy Scan</span>
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3.5">
+                {cves.map((cve, index) => (
+                  <div
+                    key={`${cve.cve_id}-${index}`}
+                    className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
+                            cve.severity === "CRITICAL"
+                              ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
+                              : "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                          )}
+                        >
+                          {cve.severity}
+                        </span>
+                        <span className="font-mono text-sm font-bold text-[var(--sd-text)]">
+                          {cve.cve_id}
+                        </span>
+                        {cve.asset_id && (
+                          <span className="text-xs text-[var(--sd-text-muted)]">
+                            Target: <code className="text-[var(--sd-text)] font-semibold">{cve.asset_id}</code>
+                          </span>
                         )}
-                      >
-                        {cve.severity}
-                      </span>
-                      <span className="font-mono text-sm font-bold text-[var(--sd-text)]">
-                        {cve.cve_id}
-                      </span>
-                      <span className="text-xs text-[var(--sd-text-muted)]">
-                        Target: <code className="text-[var(--sd-text)] font-semibold">{cve.asset_id}</code>
-                      </span>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-3 text-xs font-mono">
-                      <span className="text-[var(--sd-danger)] font-bold">
-                        CVSS {cve.cvss_score}
-                      </span>
-                      <span className="text-[var(--sd-warning)]">
-                        EPSS {(cve.epss_score * 100).toFixed(0)}% Exploit Prob
-                      </span>
-                    </div>
-                  </div>
+                    <p className="text-xs text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
 
-                  <p className="text-xs text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-xs">
+                      <div className="flex items-center gap-3 text-[var(--sd-text-muted)]">
+                        <span>Package: <code className="text-[var(--sd-text)] font-semibold">{cve.package_name}</code></span>
+                        {cve.installed_version && (
+                          <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
+                        )}
+                      </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-xs">
-                    <div className="flex items-center gap-3 text-[var(--sd-text-muted)]">
-                      <span>Package: <strong className="text-[var(--sd-text)]">{cve.package_name}</strong></span>
-                      <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
-                      <span>Fixed in: <code className="bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] px-1.5 py-0.5 rounded border border-[var(--sd-pine-border)]">{cve.fixed_version}</code></span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => runBlastRadius(cve)}
-                        className="px-2.5 py-1 rounded-md border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
-                        <span>Simulate Blast Radius</span>
-                      </button>
-
-                      <button
-                        onClick={() => generateRunbook(cve)}
-                        className="px-2.5 py-1 rounded-md bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <FileCode className="h-3 w-3" />
-                        <span>Claude Runbook</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => runBlastRadius(cve)}
+                          disabled={loading}
+                          className="px-2.5 py-1 rounded-md bg-[var(--sd-bg)] hover:bg-[var(--sd-panel)] text-[var(--sd-text)] border border-[var(--sd-border)] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
+                          <span>Impact Analysis</span>
+                        </button>
+                        <button
+                          onClick={() => generateRunbook(cve)}
+                          disabled={loading}
+                          className="px-2.5 py-1 rounded-md bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                        >
+                          <FileCode className="h-3 w-3" />
+                          <span>Recovery Runbook</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

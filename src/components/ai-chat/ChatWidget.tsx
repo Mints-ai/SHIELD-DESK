@@ -28,7 +28,6 @@ interface ChatMessage {
 const GLOBEX_SUGGESTIONS = [
   "Simulate Blast Radius for CVE-2024-6387",
   "Check for leaked secrets and exposed tokens",
-  "Run Trivy container scan on fleet",
   "Show me todays critical incidents",
 ];
 
@@ -36,7 +35,6 @@ const DEFAULT_SUGGESTIONS = [
   "Show me todays critical incidents",
   "Investigate INC-1042",
   "Generate automated remediation runbook",
-  "Run Trivy container scan on fleet",
   "Check for leaked secrets and exposed tokens",
 ];
 
@@ -265,11 +263,13 @@ export function ChatWidget() {
         "What is the mitigation plan?",
         "What assets are affected?",
         ...(canSimulateBlastRadius ? ["Simulate Blast Radius for CVE-2024-6387"] : []),
+        "Run a full Trivy vulnerability scan",
         "Show me todays critical incidents",
       ]
     : canSimulateBlastRadius
       ? [
           "Simulate Blast Radius for CVE-2024-6387",
+          "Run a full Trivy vulnerability scan",
           ...DEFAULT_SUGGESTIONS,
         ]
       : DEFAULT_SUGGESTIONS;
@@ -449,9 +449,9 @@ export function ChatWidget() {
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--sd-pine)] text-left px-1 flex items-center gap-1 font-mono">
                       <Sparkles className="h-3 w-3 text-[var(--sd-pine)]" /> Suggested Inquiries
                     </span>
-                    {dynamicSuggestions.map((s) => (
+                    {dynamicSuggestions.map((s, index) => (
                       <button
-                        key={s}
+                        key={`${s}-${index}`}
                         onClick={() => sendMessage(s)}
                         className="px-3 py-2 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[11px] text-[var(--sd-text)] hover:text-[var(--sd-pine)] hover:border-[var(--sd-border-strong)] transition-all text-left cursor-pointer flex items-center justify-between shadow-xs"
                       >

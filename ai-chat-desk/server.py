@@ -6,6 +6,7 @@ Serves interactive dashboard and prediction API on localhost:8000.
 import os
 import json
 import urllib.parse
+import requests
 from typing import Any
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from cve_ai_engine import CVEAIEngine
@@ -71,6 +72,36 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                 except Exception:
                     pass
                 self._send_json({"error": str(e)}, status=500)
+            return
+
+        elif url.path == "/api/trigger_scan":
+            try:
+                # Call the Next.js API which now runs Trivy locally
+                scan_url = "http://localhost:3000/api/scans"
+                response = requests.post(scan_url, timeout=60)
+                
+                if response.ok:
+                    data = response.json()
+                    if "message" in data and "no any vulnerable" in data["message"].lower():
+                        self._send_json({
+                            "success": True, 
+                            "message": data["message"]
+                        })
+                    elif "findings" in data and len(data["findings"]) > 0:
+                        self._send_json({
+                            "success": True, 
+                            "message": f"Scan completed: {len(data['findings'])} vulnerabilities found.", 
+                            "findings": data["findings"]
+                        })
+                    else:
+                        self._send_json({
+                            "success": True, 
+                            "message": "There is no any vulnerable till now"
+                        })
+                else:
+                    self._send_json({"error": f"Scan service returned error: {response.status_code}"}, status=500)
+            except Exception as e:
+                self._send_json({"error": f"Failed to trigger scan: {str(e)}"}, status=500)
             return
 
         elif url.path == "/api/batch":

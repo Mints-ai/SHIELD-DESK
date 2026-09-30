@@ -43,8 +43,11 @@ const SEVERITY_RE = /\b(critical|high|medium|low)\b/i;
 const STATUS_RE = /\b(open|investigating|resolved|closed)\b/i;
 const INCIDENTS_WORD_RE = /\bincidents?\b/i;
 const THIS_RE = /\b(this|the current|current|selected|it|that|here)\b/i;
+const TRIVY_SCAN_RE = /\b(run\s+a\s+full\s+trivy\s+vulnerability\s+scan|trigger\s+trivy\s+scan|run\s+trivy)\b/i;
+
 const BLAST_RADIUS_RE = /\b(blast\s*radius|posture\s*(downgrade|simulation)|simulate\s*blast|impact\s*scope)\b/i;
 const ASSETS_RE = /\b(asset|assets|affected\s*asset|impacted\s*asset|compromised\s*(host|asset|endpoint)|which\s*(host|machine|server|endpoint|asset)|what\s*(asset|host|machine|server|endpoint))\b/i;
+// ...existing code...
 
 // Strict whitelist regex for context parameters to prevent indirect injection
 const VALID_INCIDENT_ID_RE = /^INC-\d+$/i;
@@ -93,7 +96,8 @@ type ToolName =
   | "investigateIncident"
   | "analyzeCve"
   | "generateMitigationPlan"
-  | "simulateBlastRadius";
+  | "simulateBlastRadius"
+  | "triggerTrivyScan";
 
 export interface ChatContext {
   currentIncidentId?: string;
@@ -102,7 +106,7 @@ export interface ChatContext {
 }
 
 function buildRoutingSystemPrompt(contextBlock: string): string {
-  return `You are the core intelligence engine for ShieldDesk Assistant, an advanced Security Operations Center (SOC) co-pilot. Your primary mandate is to process telemetry, resolve operational context, enforce security guardrails, and assist security analysts safely across five tools: getIncidents, analyzeCve, investigateIncident, generateMitigationPlan, simulateBlastRadius.
+  return `You are the core intelligence engine for ShieldDesk Assistant, an advanced Security Operations Center (SOC) co-pilot. Your primary mandate is to process telemetry, resolve operational context, enforce security guardrails, and assist security analysts safely across six tools: getIncidents, analyzeCve, investigateIncident, generateMitigationPlan, simulateBlastRadius, triggerTrivyScan.
 
 --- ACTIVE OPERATIONAL CONTEXT ---
 ${contextBlock}
@@ -120,6 +124,8 @@ Follow these exact routing associations:
   -> Tool Call: analyzeCve(cveId: extracted or from active context)
 - Query: "Show me today's critical incidents", "Show me todays critical incidents", "List open security alerts", "What incidents are active?"
   -> Tool Call: getIncidents(severity?: "critical"|"high"|"medium"|"low", status?: "open"|"investigating")
+- Query: "Run a full Trivy vulnerability scan", "Scan my system", "Trigger security scan", "Run Trivy"
+  -> Tool Call: triggerTrivyScan()
 - Non-SOC query: "Write a poem", "Tell me a joke", "What is the weather?"
   -> NO TOOL CALL. Decline safely and state your purpose as a SOC incident co-pilot.
 
@@ -191,6 +197,25 @@ async function runTool(
       return generateMitigationPlan(session, args);
     case "simulateBlastRadius":
       return simulateBlastRadius(session, args);
+    case "triggerTrivyScan":
+      try {
+        const res = await fetch("http://localhost:8001/internal/scans/trigger", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            asset_ids: ["repo:root"],
+            scan_type: "full",
+            target_path: ".",
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return `Trivy vulnerability scan triggered successfully! ${JSON.stringify(data)}`;
+        }
+        return "Failed to trigger the Trivy scan service.";
+      } catch (e) {
+        return `Error triggering scan: ${e instanceof Error ? e.message : String(e)}`;
+      }
   }
 }
 
@@ -342,8 +367,12 @@ export async function POST(req: NextRequest) {
       ...(cveMatch ? { cveId: cveMatch[0].toUpperCase() } : sanitizedContext.currentCveId ? { cveId: sanitizedContext.currentCveId } : {}),
       ...(incidentMatch ? { incidentId: incidentMatch[0].toUpperCase() } : sanitizedContext.currentIncidentId ? { incidentId: sanitizedContext.currentIncidentId } : {}),
     };
-  // TC-CTX-07: Explicit CVE ID always overrides incident context
+  } else if (TRIVY_SCAN_RE.test(message)) {
+    toolName = "triggerTrivyScan";
+    toolArgs = {};
   } else if (cveMatch) {
+    toolName = "analyzeCve";
+    toolArgs = { cveId: cveMatch[0].toUpperCase() };
     toolName = "analyzeCve";
     toolArgs = { cveId: cveMatch[0].toUpperCase() };
   // TC-CTX-08: Broad listing query overrides active context

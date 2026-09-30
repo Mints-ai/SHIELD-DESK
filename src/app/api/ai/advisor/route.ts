@@ -66,39 +66,34 @@ export async function POST(req: NextRequest) {
         // Fallback
       }
 
-      const runbookMarkdown = `### Automated Remediation Runbook: ${cve_id || "CVE-2024-6387"} (Incident ${incident_id || "INC-1042"})
+      const runbookMarkdown = `Recovery Runbook: ${cve_id || "CVE-2024-6387"} (Incident ${incident_id || "INC-1042"})
 
-**Target Host:** \`${host_id || "srv-prod-api-01"}\`  
-**Classification:** Tier 2 Action (Requires Human Sign-off or Pre-approved Token)
+Target Host: ${host_id || "srv-prod-api-01"}
+Classification: Tier 2 Action (Requires Human Sign-off or Pre-approved Token)
 
-#### Step 1: Pre-flight Safety Snapshot
-\`\`\`bash
-# Create immediate LVM copy-on-write snapshot before package manipulation
+Step 1: Pre-flight Safety Snapshot
+Purpose: Create an immediate LVM copy-on-write snapshot before package manipulation.
+Command:
 sudo lvcreate --size 5G --snapshot --name snap_prepatch_openssh /dev/vg0/root
-\`\`\`
 
-#### Step 2: Isolation & Ingress Containment
-\`\`\`bash
-# Temporarily drop public SSH ingress rule while patching
+Step 2: Isolation & Ingress Containment
+Purpose: Temporarily drop public SSH ingress rule while patching.
+Commands:
 sudo iptables -I INPUT -p tcp --dport 22 -s 0.0.0.0/0 -j DROP
 sudo iptables -I INPUT -p tcp --dport 22 -s 10.0.0.0/8 -j ACCEPT
-\`\`\`
 
-#### Step 3: Package Patch Application
-\`\`\`bash
-# Update repository catalog and upgrade openssh-server to patched revision
+Step 3: Package Patch Application
+Purpose: Update repository catalog and upgrade package to patched revision.
+Commands:
 sudo apt-get update -qq
 sudo apt-get install --only-upgrade -y openssh-server=8.9p1-3ubuntu0.10
 sudo systemctl restart sshd
-\`\`\`
 
-#### Step 4: Verification & Smoke Test
-\`\`\`bash
-# Verify patched daemon banner and SSH connection handshake
+Step 4: Verification & Smoke Test
+Purpose: Verify patched daemon banner and SSH connection handshake.
+Commands:
 ssh -V
-sudo systemctl status sshd --no-pager
-\`\`\`
-`;
+sudo systemctl status sshd --no-pager`;
 
       return NextResponse.json({
         success: true,
