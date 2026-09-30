@@ -31,8 +31,16 @@ export async function POST(req: NextRequest) {
     const tenantId = req.headers.get("x-shielddesk-tenant-id") || "acme-tenant";
 
     // 1. Authenticate via HMAC or API Key
-    const secret = process.env.SHIELDDESK_WEBHOOK_SECRET || "sd_webhook_dev_secret";
+    const secret =
+      process.env.SHIELDDESK_WEBHOOK_SECRET ||
+      (process.env.NODE_ENV !== "production" ? "sd_webhook_dev_secret" : "");
     if (signature) {
+      if (!secret) {
+        return NextResponse.json(
+          { error: "SHIELDDESK_WEBHOOK_SECRET is not configured in production." },
+          { status: 500 }
+        );
+      }
       const expectedSig = "sha256=" + crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
       const sigBuf = Buffer.from(signature);
       const expBuf = Buffer.from(expectedSig);

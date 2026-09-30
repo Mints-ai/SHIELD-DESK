@@ -214,9 +214,15 @@ export function generateEvidencePackage(
   const headHash = events[events.length - 1]?.current_hash || "0".repeat(64);
 
   // 3. Cryptographically sign package manifest
-  const secret = process.env.SHIELDDESK_SESSION_SECRET || "shielddesk_audit_vault_master_key";
+  const secret = process.env.SHIELDDESK_SESSION_SECRET || process.env.SHIELDDESK_VAULT_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error(
+      "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_SESSION_SECRET or SHIELDDESK_VAULT_SECRET must be configured in production."
+    );
+  }
+  const signingSecret = secret || "shielddesk_audit_vault_dev_ephemeral_key";
   const signatureData = `${packageId}|${tenantId}|${headHash}|${merkleTree.root}|${events.length}`;
-  const signature = crypto.createHmac("sha256", secret).update(signatureData).digest("hex");
+  const signature = crypto.createHmac("sha256", signingSecret).update(signatureData).digest("hex");
 
   const manifest: EvidencePackageManifest = {
     packageId,

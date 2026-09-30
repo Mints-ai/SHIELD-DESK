@@ -19,8 +19,17 @@ export async function POST(req: NextRequest) {
     let provider = "unknown";
 
     // 1. Verify Razorpay webhook signature
-    const razorpaySecret = process.env.RAZORPAY_WEBHOOK_SECRET || process.env.SHIELDDESK_SESSION_SECRET || "rzp_webhook_secret";
+    const razorpaySecret =
+      process.env.RAZORPAY_WEBHOOK_SECRET ||
+      process.env.SHIELDDESK_SESSION_SECRET ||
+      (process.env.NODE_ENV !== "production" ? "rzp_webhook_secret" : "");
     if (razorpaySignature) {
+      if (!razorpaySecret) {
+        return NextResponse.json(
+          { error: "RAZORPAY_WEBHOOK_SECRET is not configured in production." },
+          { status: 500 }
+        );
+      }
       const expectedSig = crypto.createHmac("sha256", razorpaySecret).update(rawBody).digest("hex");
       const rzpBuf = Buffer.from(razorpaySignature);
       const expBuf = Buffer.from(expectedSig);

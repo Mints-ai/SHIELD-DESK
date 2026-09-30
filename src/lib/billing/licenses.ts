@@ -1,6 +1,7 @@
 import "server-only";
 import crypto from "node:crypto";
 import type { BillingTier } from "./plans";
+import { base64UrlEncode, base64UrlDecode } from "@/lib/crypto/encoding";
 
 export interface LicensePayload {
   licenseId: string;
@@ -20,7 +21,16 @@ export interface CommercialLicense {
 }
 
 function getLicenseSigningSecret(): string {
-  return process.env.SHIELDDESK_LICENSE_SECRET || process.env.SHIELDDESK_SESSION_SECRET || "shielddesk_commercial_license_secret_key_2026";
+  const secret = process.env.SHIELDDESK_LICENSE_SECRET || process.env.SHIELDDESK_SESSION_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_LICENSE_SECRET or SHIELDDESK_SESSION_SECRET must be configured in production."
+      );
+    }
+    return "shielddesk_commercial_license_dev_key";
+  }
+  return secret;
 }
 
 /**
@@ -41,11 +51,11 @@ export function issueCommercialLicense(
   };
 
   const serialized = JSON.stringify(fullPayload);
-  const encodedPayload = Buffer.from(serialized, "utf8").toString("base64url");
+  const encodedPayload = base64UrlEncode(serialized);
 
   const hmac = crypto.createHmac("sha256", secret);
   hmac.update(encodedPayload);
-  const signature = hmac.digest("base64url");
+  const signature = base64UrlEncode(hmac.digest());
 
   const rawLicense = `${encodedPayload}.${signature}`;
 
@@ -81,7 +91,7 @@ export function verifyCommercialLicense(
   try {
     const hmac = crypto.createHmac("sha256", secret);
     hmac.update(encodedPayload);
-    const expectedSig = hmac.digest("base64url");
+    const expectedSig = base64UrlEncode(hmac.digest());
 
     const receivedSigBuf = Buffer.from(receivedSig);
     const expectedSigBuf = Buffer.from(expectedSig);
@@ -93,7 +103,7 @@ export function verifyCommercialLicense(
       return { valid: false, reason: "Cryptographic license signature verification failed." };
     }
 
-    const payloadJson = Buffer.from(encodedPayload, "base64url").toString("utf8");
+    const payloadJson = base64UrlDecode(encodedPayload);
     const payload: LicensePayload = JSON.parse(payloadJson);
 
     // Expiration check

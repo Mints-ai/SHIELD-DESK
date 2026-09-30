@@ -66,13 +66,18 @@ export function trackError(error: unknown, context: TrackedErrorContext = {}): s
       });
   }
 
-  // Optional: If Security Alert Webhook is configured, notify SecOps team
-  if (process.env.SECURITY_WEBHOOK_URL && process.env.NODE_ENV === "production") {
-    fetch(process.env.SECURITY_WEBHOOK_URL, {
+  // Live Alert Webhook (Slack, Discord, Teams, or SecOps HTTP receiver)
+  const webhookUrl = process.env.ERROR_WEBHOOK_URL || process.env.SECURITY_WEBHOOK_URL;
+  if (webhookUrl && process.env.NODE_ENV !== "test") {
+    fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text: `🚨 *ShieldDesk System Exception [${errorId}]*\n*Message:* ${errorMessage}\n*Endpoint/Component:* ${context.endpoint || context.component || "App"}\n*Tenant:* ${context.tenantId || "N/A"}`,
+        errorId,
+        message: errorMessage,
+        context,
+        timestamp,
       }),
     }).catch(() => {
       // Avoid recursive crash

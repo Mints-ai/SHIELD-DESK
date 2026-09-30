@@ -29,14 +29,7 @@ function getSessionSecret(): Buffer {
   return Buffer.from(secret, "utf8");
 }
 
-function base64UrlEncode(data: string | Buffer): string {
-  const buf = typeof data === "string" ? Buffer.from(data, "utf8") : data;
-  return buf.toString("base64url");
-}
-
-function base64UrlDecode(str: string): string {
-  return Buffer.from(str, "base64url").toString("utf8");
-}
+import { base64UrlEncode, base64UrlDecode } from "@/lib/crypto/encoding";
 
 /**
  * Creates a cryptographically signed HMAC-SHA256 session token.
