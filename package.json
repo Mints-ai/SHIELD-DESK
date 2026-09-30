@@ -22,11 +22,14 @@
     "openai": "^7.15.0",
     "otplib": "^13.5.0",
     "pg": "^8.23.0",
+    "pg-types": "^4.1.0",
+    "postgres-interval": "^4.1.0",
     "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.7.0",
+    "xtend": "^4.0.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
