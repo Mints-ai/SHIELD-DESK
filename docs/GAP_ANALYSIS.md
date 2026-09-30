@@ -67,7 +67,7 @@ Here is the exact impact model:
 19. `endpoint_kill_switches` (emergency tenant/agent kill switches)
 20. `hash_chain_audit` (SHA-256 Merkle-linked audit ledger)
 
-#### Phase A & B Additive Tables (7 Tables):
+#### Phase A, B & C Additive Tables (9 Tables):
 21. `universal_security_events` (Normalized security events across SIEM/EDR/scanners)
 22. `vulnerability_findings` (De-duplicated CVE findings with CVSS/EPSS/KEV scoring)
 23. `connector_cursors` (Sync watermarks and pagination states per connector)
@@ -75,6 +75,8 @@ Here is the exact impact model:
 25. `twin_nodes` (Postgres persistent digital twin graph nodes)
 26. `twin_edges` (Postgres persistent digital twin graph edges with directionality)
 27. `twin_sync_log` (Incremental sync log between Phase A findings/assets and twin graph)
+28. `attack_path_reports` (Persistent ranked attack-path analyses and choke points)
+29. `blast_radius_reports` (Multi-dimensional blast radius reports with downtime and rollback availability)
 
 ---
 
@@ -84,7 +86,7 @@ Here is the exact impact model:
 | :--- | :---: | :--- | :--- |
 | **Phase A: Security Data Layer** | **EXISTS** | `src/lib/connectors/event-model.ts`<br>`src/lib/connectors/wazuh.ts`<br>`src/lib/connectors/trivy.ts`<br>`src/lib/connectors/openvas.ts`<br>`src/lib/connectors/asset-criticality.ts`<br>`src/lib/connectors/deduplication.ts`<br>`db/migrations/phase_a_security_data_layer.sql` | Fully implemented and verified: Universal event model, Connector SDK (`authenticate`, `healthCheck`, `collect`, `normalize`, `validate`, `cursor`, `disconnect`), Wazuh/Trivy/OpenVAS connectors, CVSS+EPSS+KEV scoring, asset criticality weighting, and deduplication engine. |
 | **Phase B: Security Digital Twin** | **EXISTS** | `src/lib/security-twin/twinDbAdapter.ts`<br>`src/lib/security-twin/twinSyncPipeline.ts`<br>`src/lib/security-twin/digitalTwin.ts`<br>`db/migrations/phase_b_security_digital_twin.sql` | Fully implemented and verified: Postgres tables (`twin_nodes`, `twin_edges`, `twin_sync_log`), recursive CTE graph traversals (upstream dependencies, downstream blast radius, reachable paths), and automated sync from Phase A assets/events. |
-| **Phase C: Attack-Path & Blast-Radius Engines** | **PARTIAL** | `src/lib/attack-path/engine.ts`<br>`src/lib/blast-radius/engine.ts`<br>`services/attack-path/`<br>`services/blast-radius/` | • In-memory BFS/DFS kill-chain and choke-point discovery exist.<br>• Blast radius distinguishes `measured`, `inferred`, and `estimated` modes.<br>• **Gaps to implement:** Deep bridge connecting `AttackPathEngine` and `BlastRadiusEngine` directly to the persistent Postgres CTE graph adapter (`twinDbAdapter.ts`), and dedicated API endpoints for graph visualization. |
+| **Phase C: Attack-Path & Blast-Radius Engines** | **EXISTS** | `src/lib/attack-path/engine.ts`<br>`src/lib/blast-radius/engine.ts`<br>`services/attack-path/`<br>`services/blast-radius/`<br>`src/app/api/v1/twin/attack-paths/`<br>`src/app/api/v1/twin/blast-radius/`<br>`db/migrations/phase_c_attack_path_blast_radius.sql` | Fully implemented and verified: Ranked kill chains with MITRE ATT&CK mapping, explainable step rationales, choke-point efficacy calculation, multi-dimensional blast radius (services, apps, users, sensitive systems, downtime modeling, rollback availability), Postgres persistence (`attack_path_reports`, `blast_radius_reports`), and authenticated REST endpoints. |
 | **Phase D: Risk & Decision Engine** | **PARTIAL** | `src/lib/decision-engine/engine.ts`<br>`src/lib/policy-engine/engine.ts`<br>`src/lib/governance/autonomyTier.ts` | • Autonomy policies (Observe, Assist, Autopilot) and Tier 0–3 approvals exist.<br>• **Gaps to implement:** Persistent `decision_records` table per spec schema, explicit separation of Security Confidence vs AI Confidence, policy enforcement mapping with cryptographically referenced evidence IDs. |
 | **Phase E: Remediation Simulator & Verification Engine** | **PARTIAL** | `src/lib/verification-engine/engine.ts`<br>`src/lib/verification-engine/methods.ts`<br>`src/lib/rollback-engine/engine.ts`<br>`src/lib/orchestration/closedLoopPipeline.ts` | • Pre-flight snapshots, state verification, and auto-rollback exist.<br>• **Gaps to implement:** Root-cause grouping across bulk findings, background continuous recheck worker daemon for closed findings. |
 | **Phase F: Evidence Vault** | **PARTIAL** | `src/lib/compliance/evidenceVault.ts`<br>`src/lib/compliance/merkle.ts`<br>`src/app/api/compliance/route.ts` | • SHA-256 Merkle chain and hash verification exist.<br>• **Gaps to implement:** Export generator producing JSON, CSV, and tamper-evident signed audit packages with cryptographic integrity headers. |
