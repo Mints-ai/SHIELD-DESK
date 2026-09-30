@@ -17,6 +17,12 @@ import {
   Sparkles,
   Server,
   Layers,
+  Bot,
+  Lock,
+  Globe,
+  Mail,
+  UserCheck,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -45,16 +51,37 @@ interface AnomalyMetric {
   unit: string;
 }
 
+export interface ThreatSecurityAlert {
+  id: string;
+  type: string;
+  severity: "medium" | "high" | "critical";
+  title: string;
+  description: string;
+  targetUser: string;
+  clientIp: string;
+  failureReason: string;
+  attemptsCount: number;
+  allowedRecipients: string[];
+  status: string;
+  createdAt: string;
+}
+
 import { useChat } from "@/lib/context/ChatContext";
 
 export default function ThreatsDashboardPage() {
-  const { activeUserId } = useChat();
-  const [activeTab, setActiveTab] = useState<"yara" | "sigma" | "anomaly" | "ingest">("anomaly");
+  const { activeUserId, openChatWithPrompt } = useChat();
+  const [activeTab, setActiveTab] = useState<"yara" | "sigma" | "anomaly" | "ingest" | "alerts">("anomaly");
   const [loading, setLoading] = useState(false);
   const [yaraRules, setYaraRules] = useState<RuleItem[]>([]);
   const [sigmaRules, setSigmaRules] = useState<RuleItem[]>([]);
   const [anomalies, setAnomalies] = useState<AnomalyMetric[]>([]);
   const [telemetry, setTelemetry] = useState<any>(null);
+  const [securityAlerts, setSecurityAlerts] = useState<ThreatSecurityAlert[]>([]);
+  const [canViewAuthAlerts, setCanViewAuthAlerts] = useState<boolean>(false);
+
+  // System Admin and Globex Analyst have authorized access to the security alerts tab
+  const isAuthorizedForAlerts =
+    canViewAuthAlerts || activeUserId === "dev-admin" || activeUserId === "dev-other";
 
   // Simulation Feedback
   const [simFeedback, setSimFeedback] = useState<string | null>(null);
@@ -73,6 +100,8 @@ export default function ThreatsDashboardPage() {
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
       if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
+      if (data.security_alerts) setSecurityAlerts(data.security_alerts);
+      setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
     } catch (err) {
       console.error("Failed to load threats:", err);
     } finally {
@@ -107,11 +136,36 @@ export default function ThreatsDashboardPage() {
             : a
         )
       );
+      if (data.alert) {
+        setSecurityAlerts((prev) => [data.alert, ...prev.filter((a) => a.id !== data.alert.id)]);
+      }
     } catch {
       setSimFeedback("Anomaly simulation complete.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleAcknowledgeAlert = async (alertId: string) => {
+    try {
+      await fetch("/api/threats", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({ action: "acknowledge_alert", alert_id: alertId }),
+      });
+      setSecurityAlerts((prev) => prev.filter((a) => a.id !== alertId));
+    } catch (err) {
+      console.error("Failed to acknowledge alert:", err);
+    }
+  };
+
+  const handleInvestigateInChat = (alert: ThreatSecurityAlert) => {
+    openChatWithPrompt(
+      `Investigate suspicious authentication alert: ${alert.title}. Target account: ${alert.targetUser}, Source IP: ${alert.clientIp}, Condition: ${alert.failureReason} (${alert.attemptsCount} attempts). What immediate containment steps should we take?`
+    );
   };
 
   const resetAnomaly = () => {
@@ -299,6 +353,24 @@ export default function ThreatsDashboardPage() {
           >
             <Send className="h-3.5 w-3.5" />
             <span>gRPC Ingestion &amp; HMAC Webhooks</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("alerts")}
+            className={cn(
+              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
+              activeTab === "alerts"
+                ? "border-[var(--sd-danger)] text-[var(--sd-danger)]"
+                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+            )}
+          >
+            <ShieldAlert className="h-3.5 w-3.5" />
+            <span>Alerts</span>
+            {canViewAuthAlerts && securityAlerts.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[var(--sd-danger)] text-white font-mono animate-pulse">
+                {securityAlerts.length}
+              </span>
+            )}
           </button>
         </div>
 
@@ -505,6 +577,158 @@ export default function ThreatsDashboardPage() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Tab 5: Alerts (Positioned right near gRPC Ingestion & HMAC Webhooks) */}
+        {activeTab === "alerts" && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-1 shadow-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+                    <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)]" />
+                    <span>Authentication &amp; Threat Security Alerts</span>
+                  </h3>
+                  <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+                    Continuous monitoring of unauthorized login attempts, credential brute-forcing, and anomalous access spikes.
+                  </p>
+                </div>
+                {isAuthorizedForAlerts && securityAlerts.length > 0 && (
+                  <button
+                    onClick={() => {
+                      fetch("/api/threats", {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          "X-ShieldDesk-User": activeUserId,
+                        },
+                        body: JSON.stringify({ action: "reset_alerts" }),
+                      }).then(() => setSecurityAlerts([]));
+                    }}
+                    className="px-2.5 py-1 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs hover:bg-[var(--sd-panel-hover)] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] cursor-pointer self-start sm:self-auto transition"
+                  >
+                    Clear All Alerts
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Restricted Alert View for System Admin & Globex Analyst */}
+            {isAuthorizedForAlerts ? (
+              securityAlerts.length > 0 ? (
+                <div className="space-y-3">
+                  {securityAlerts.map((alert) => (
+                    <div
+                      key={alert.id}
+                      className="p-5 rounded-xl border border-[var(--sd-danger)] bg-[var(--sd-danger-dim)] shadow-xs space-y-4 animate-in fade-in duration-300"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--sd-danger-border)] pb-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1.5 rounded-lg bg-[var(--sd-danger)] text-white">
+                            <ShieldAlert className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+                              <span>🚨 {alert.title}</span>
+                            </h4>
+                            <span className="text-[11px] text-[var(--sd-text-muted)]">
+                              Anomaly detected via continuous authentication monitoring
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start sm:self-center">
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-950/40 text-purple-300 border border-purple-500/40 font-mono flex items-center gap-1.5 shadow-xs">
+                            <Lock className="h-3 w-3" />
+                            Restricted Visibility: System Admin &amp; Globex Analyst Only
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                        <div className="p-2.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1">
+                          <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5">
+                            <Mail className="h-3.5 w-3.5" /> Target User Email
+                          </span>
+                          <p className="font-mono font-bold text-[var(--sd-text)] truncate">
+                            {alert.targetUser}
+                          </p>
+                        </div>
+
+                        <div className="p-2.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1">
+                          <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5">
+                            <Globe className="h-3.5 w-3.5" /> Source IP
+                          </span>
+                          <p className="font-mono font-bold text-[var(--sd-text)]">
+                            {alert.clientIp}
+                          </p>
+                        </div>
+
+                        <div className="p-2.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1">
+                          <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5">
+                            <AlertTriangle className="h-3.5 w-3.5" /> Status / Condition
+                          </span>
+                          <p className="font-semibold text-[var(--sd-danger)] truncate">
+                            {alert.failureReason}
+                          </p>
+                        </div>
+
+                        <div className="p-2.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1">
+                          <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5">
+                            <Clock className="h-3.5 w-3.5" /> Detected At
+                          </span>
+                          <p className="font-mono text-[var(--sd-text-muted)]">
+                            {new Date(alert.createdAt).toLocaleTimeString()} ({alert.attemptsCount} attempt{alert.attemptsCount > 1 ? "s" : ""})
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2.5 pt-1">
+                        <button
+                          onClick={() => handleAcknowledgeAlert(alert.id)}
+                          className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+                        >
+                          Acknowledge Alert
+                        </button>
+
+                        <button
+                          onClick={() => handleInvestigateInChat(alert)}
+                          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-bright)] text-white text-xs font-semibold transition cursor-pointer shadow-xs"
+                        >
+                          <Bot className="h-3.5 w-3.5" />
+                          <span>Investigate in AI Chat</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-8 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-3">
+                  <div className="inline-flex p-3 rounded-full bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)]">
+                    <CheckCircle2 className="h-6 w-6" />
+                  </div>
+                  <h4 className="text-sm font-bold text-[var(--sd-text)]">
+                    Zero Active Security Alerts
+                  </h4>
+                  <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
+                    All authentication events and statistical baselines are nominal. Failed logins or anomaly bursts will appear here in real-time.
+                  </p>
+                </div>
+              )
+            ) : (
+              <div className="p-6 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-3">
+                <div className="inline-flex p-3 rounded-full bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]">
+                  <Lock className="h-6 w-6" />
+                </div>
+                <h4 className="text-sm font-bold text-[var(--sd-text)]">
+                  Access Restricted
+                </h4>
+                <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
+                  Authentication Security Alerts are restricted to <strong>System Admin</strong> and <strong>Globex Analyst</strong> roles. Switch your persona in the top navigation bar to inspect alerts.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </main>

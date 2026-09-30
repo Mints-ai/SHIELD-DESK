@@ -207,6 +207,7 @@ export function MfaSetupPanel({ initialEnrolled = false }: MfaSetupPanelProps) {
         </div>
       )}
 
+
       {/* ── Disable toggle — only when not already entering the disabling flow ── */}
       {(step === "enrolled" || (enrolled && step === "idle")) && (
         <button
