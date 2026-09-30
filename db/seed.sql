@@ -49,23 +49,23 @@ ON CONFLICT (incident_id, cve_id) DO NOTHING;
 
 -- Seed Mitigation Plan & Tasks for INC-1042
 INSERT INTO mitigation_plans (id, incident_id, tenant_id, version, status, summary) VALUES
-  ('p1111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'acme-tenant', 1, 'active', 'Multi-horizon containment and vulnerability remediation for lateral movement breach')
+  ('b1111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'acme-tenant', 1, 'active', 'Multi-horizon containment and vulnerability remediation for lateral movement breach')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO mitigation_tasks (id, plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id) VALUES
-  ('t1111111-1111-1111-1111-111111111111', 'p1111111-1111-1111-1111-111111111111', 'acme-tenant', 'immediate', 'Isolate affected host FIN-WS-042', 'Quarantine endpoint network interface to halt lateral movement toward database server', 'Tier 2', 'pending', 'Single Workstation (FIN-WS-042)', NULL),
-  ('t2222222-2222-2222-2222-222222222222', 'p1111111-1111-1111-1111-111111111111', 'acme-tenant', 'immediate', 'Revoke exposed user and administrative credentials', 'Terminate active session tokens for compromised user accounts', 'Tier 1', 'completed', 'User Sessions', NULL),
-  ('t3333333-3333-3333-3333-333333333333', 'p1111111-1111-1111-1111-111111111111', 'acme-tenant', 'short_term', 'Deploy vendor patch for CVE-2020-6240', 'Apply SAP Security Notes to resolve NetWeaver DoS vulnerability', 'Tier 2', 'pending', 'Finance Subnet Application Servers', 'CVE-2020-6240'),
-  ('t4444444-4444-4444-4444-444444444444', 'p1111111-1111-1111-1111-111111111111', 'acme-tenant', 'long_term', 'Implement zero-trust microsegmentation', 'Enforce strict firewall ACLs between general workstations and financial database tier', 'Tier 2', 'pending', 'Entire Finance Zone', NULL)
+  ('c1111111-1111-1111-1111-111111111111', 'b1111111-1111-1111-1111-111111111111', 'acme-tenant', 'immediate', 'Isolate affected host FIN-WS-042', 'Quarantine endpoint network interface to halt lateral movement toward database server', 'Tier 2', 'pending', 'Single Workstation (FIN-WS-042)', NULL),
+  ('c2222222-2222-2222-2222-222222222222', 'b1111111-1111-1111-1111-111111111111', 'acme-tenant', 'immediate', 'Revoke exposed user and administrative credentials', 'Terminate active session tokens for compromised user accounts', 'Tier 1', 'completed', 'User Sessions', NULL),
+  ('c3333333-3333-3333-3333-333333333333', 'b1111111-1111-1111-1111-111111111111', 'acme-tenant', 'short_term', 'Deploy vendor patch for CVE-2020-6240', 'Apply SAP Security Notes to resolve NetWeaver DoS vulnerability', 'Tier 2', 'pending', 'Finance Subnet Application Servers', 'CVE-2020-6240'),
+  ('c4444444-4444-4444-4444-444444444444', 'b1111111-1111-1111-1111-111111111111', 'acme-tenant', 'long_term', 'Implement zero-trust microsegmentation', 'Enforce strict firewall ACLs between general workstations and financial database tier', 'Tier 2', 'pending', 'Entire Finance Zone', NULL)
 ON CONFLICT (id) DO NOTHING;
 
--- Seed Approval Token for Task t1111111 (Tier 2 Action awaiting distinct human sign-off)
+-- Seed Approval Token for Task c1111111 (Tier 2 Action awaiting distinct human sign-off)
 INSERT INTO approval_tokens (
   id, tenant_id, task_id, action_type, tier, status, requested_by, approved_by, blast_radius, model_confidence, expires_at
 ) VALUES (
-  'tok11111-1111-1111-1111-111111111111',
+  'd1111111-1111-1111-1111-111111111111',
   'acme-tenant',
-  't1111111-1111-1111-1111-111111111111',
+  'c1111111-1111-1111-1111-111111111111',
   'isolate_host',
   'Tier 2',
   'pending',
@@ -94,16 +94,16 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO agent_command_logs (
   id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by
 ) VALUES
-  ('cl111111-1111-1111-1111-111111111111', 'ea111111-1111-1111-1111-111111111111', 'acme-tenant', 'take_safety_snapshot', 'Tier 1', NULL, 'succeeded', 'Snapshot snap-finws042-baseline captured successfully (file integrity + routing table).', 'system-air'),
-  ('cl222222-2222-2222-2222-222222222222', 'ea111111-1111-1111-1111-111111111111', 'acme-tenant', 'block_ip 198.51.100.4', 'Tier 1', NULL, 'succeeded', 'Host firewall rule added: DROP IN/OUT 198.51.100.4. Verified reversible.', 'system-air')
+  ('f1111111-1111-1111-1111-111111111111', 'ea111111-1111-1111-1111-111111111111', 'acme-tenant', 'take_safety_snapshot', 'Tier 1', NULL, 'succeeded', 'Snapshot snap-finws042-baseline captured successfully (file integrity + routing table).', 'system-air'),
+  ('f2222222-2222-2222-2222-222222222222', 'ea111111-1111-1111-1111-111111111111', 'acme-tenant', 'block_ip 198.51.100.4', 'Tier 1', NULL, 'succeeded', 'Host firewall rule added: DROP IN/OUT 198.51.100.4. Verified reversible.', 'system-air')
 ON CONFLICT (id) DO NOTHING;
 
 -- Seed Hash-Chained Audit Trail (Genesis block and initial chained event)
 INSERT INTO hash_chain_audit (
   id, tenant_id, event_type, actor_id, payload, prev_hash, current_hash
 ) VALUES
-  ('hc000000-0000-0000-0000-000000000000', 'acme-tenant', 'GENESIS', 'system-init', '{"msg":"ShieldDesk Hash Chain Genesis"}'::jsonb, '0000000000000000000000000000000000000000000000000000000000000000', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
-  ('hc111111-1111-1111-1111-111111111111', 'acme-tenant', 'TOKEN_REQUEST', 'system-air', '{"action":"isolate_host","host":"FIN-WS-042","tier":"Tier 2"}'::jsonb, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'a1f8c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b899')
+  ('00000000-0000-0000-0000-000000000000', 'acme-tenant', 'GENESIS', 'system-init', '{"msg":"ShieldDesk Hash Chain Genesis"}'::jsonb, '0000000000000000000000000000000000000000000000000000000000000000', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+  ('00000001-1111-1111-1111-111111111111', 'acme-tenant', 'TOKEN_REQUEST', 'system-air', '{"action":"isolate_host","host":"FIN-WS-042","tier":"Tier 2"}'::jsonb, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'a1f8c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b899')
 ON CONFLICT (id) DO NOTHING;
 
 
