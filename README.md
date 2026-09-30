@@ -423,4 +423,4 @@ ShieldDesk is built for enterprise security environments. If you discover a vuln
 ## 16. License
 
 Copyright © 2026 Mints Global IT & Advertisement. All rights reserved.  
-Proprietary enterprise software. Unauthorized copying, modification, or distribution is strictly prohibited.
+Proprietary enterprise software. Unauthorized copying, modification,or distribution is strictly prohibited.
