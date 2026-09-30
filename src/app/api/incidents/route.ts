@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export interface InMemoryIncidentRecord {
+interface InMemoryIncidentRecord {
   id: string;
   incident_code: string;
   tenant_id: string;
@@ -51,7 +51,7 @@ export interface InMemoryIncidentRecord {
   description: string;
 }
 
-export const IN_MEMORY_INCIDENTS: InMemoryIncidentRecord[] = [];
+const IN_MEMORY_INCIDENTS: InMemoryIncidentRecord[] = [];
 
 /**
  * POST /api/incidents
@@ -242,8 +242,8 @@ export async function PATCH(req: NextRequest) {
 
     if (!canCrossTenant && currentTenantId !== session.tenantId) {
       return NextResponse.json(
-        { error: "Forbidden: Incident belongs to another tenant" },
-        { status: 403 }
+        { error: "Incident not found" },
+        { status: 404 }
       );
     }
 

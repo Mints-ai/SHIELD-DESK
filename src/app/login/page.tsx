@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import {
   Shield,
   Lock,
@@ -14,13 +15,16 @@ import {
   Building2,
   UserCheck,
   Cloud,
+  Compass,
 } from "lucide-react";
 import { DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { cn } from "@/lib/utils";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTarget = searchParams.get("redirect") || "/";
 
   const [authMode, setAuthMode] = useState<"credentials" | "register" | "quick" | "supabase">("credentials");
   const [email, setEmail] = useState("");
@@ -33,6 +37,18 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [devPersonasAllowed, setDevPersonasAllowed] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/health")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.environment?.devPersonasAllowed !== undefined) {
+          setDevPersonasAllowed(Boolean(data.environment.devPersonasAllowed));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,7 +71,7 @@ export default function LoginPage() {
         const data = await res.json();
         if (res.ok) {
           setSuccessMessage("Tenant registered successfully. Redirecting to SOC...");
-          setTimeout(() => router.push("/"), 1200);
+          setTimeout(() => router.push(redirectTarget), 1000);
         } else {
           setErrorMessage(data.error || "Registration failed");
         }
@@ -71,7 +87,7 @@ export default function LoginPage() {
             setErrorMessage(`Supabase Auth: ${error.message}`);
           } else {
             setSuccessMessage(`Authenticated via Supabase as ${data.user?.email || "Operator"}! Redirecting...`);
-            setTimeout(() => router.push("/"), 1000);
+            setTimeout(() => router.push(redirectTarget), 800);
           }
         }
       } else if (authMode === "credentials") {
@@ -82,7 +98,7 @@ export default function LoginPage() {
         });
         const data = await res.json();
         if (res.ok) {
-          router.push("/");
+          router.push(redirectTarget);
         } else {
           if (data.mfaRequired) {
             setMfaRequired(true);
@@ -92,7 +108,7 @@ export default function LoginPage() {
           }
         }
       } else {
-        // Quick Persona Login
+        // Quick Persona Login (only available when devPersonasAllowed is true)
         const res = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -100,7 +116,7 @@ export default function LoginPage() {
         });
         const data = await res.json();
         if (res.ok) {
-          router.push("/");
+          router.push(redirectTarget);
         } else {
           setErrorMessage(data.error || "Authentication failed");
         }
@@ -139,7 +155,12 @@ export default function LoginPage() {
         </div>
 
         {/* Auth Mode Tabs */}
-        <div className="p-1 rounded-xl bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] grid grid-cols-4 gap-1 text-[11px]">
+        <div
+          className={cn(
+            "p-1 rounded-xl bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] grid gap-1 text-[11px]",
+            devPersonasAllowed ? "grid-cols-4" : "grid-cols-3"
+          )}
+        >
           <button
             type="button"
             onClick={() => { setAuthMode("credentials"); setErrorMessage(null); }}
@@ -177,18 +198,20 @@ export default function LoginPage() {
           >
             Register
           </button>
-          <button
-            type="button"
-            onClick={() => { setAuthMode("quick"); setErrorMessage(null); }}
-            className={cn(
-              "py-1.5 rounded-lg font-medium transition cursor-pointer text-center",
-              authMode === "quick"
-                ? "bg-[var(--sd-panel)] text-[var(--sd-text)] shadow-xs font-semibold"
-                : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
-            Persona
-          </button>
+          {devPersonasAllowed && (
+            <button
+              type="button"
+              onClick={() => { setAuthMode("quick"); setErrorMessage(null); }}
+              className={cn(
+                "py-1.5 rounded-lg font-medium transition cursor-pointer text-center",
+                authMode === "quick"
+                  ? "bg-[var(--sd-panel)] text-[var(--sd-text)] shadow-xs font-semibold"
+                  : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+              )}
+            >
+              Persona
+            </button>
+          )}
         </div>
 
         {/* Login Card */}
@@ -290,7 +313,7 @@ export default function LoginPage() {
               </>
             )}
 
-            {authMode === "quick" && (
+            {authMode === "quick" && devPersonasAllowed && (
               <div className="flex flex-col gap-1.5">
                 <label className="text-[11px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
                   <UserCheck className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
@@ -394,6 +417,18 @@ export default function LoginPage() {
           </form>
         </div>
 
+        {/* Guided Fleet Onboarding Link */}
+        <div className="text-center">
+          <Link
+            href="/onboarding"
+            className="text-xs text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] inline-flex items-center gap-1.5 font-medium transition"
+          >
+            <Compass className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+            <span>Setting up a new SOC team? Follow Guided Fleet Onboarding</span>
+            <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+
         {/* Security Footer Notice */}
         <div className="text-center text-[10px] text-[var(--sd-text-dim)] flex items-center justify-center gap-2 font-mono">
           <Lock className="h-3 w-3" />
@@ -401,5 +436,19 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[var(--sd-bg)] flex items-center justify-center text-xs text-[var(--sd-text-muted)] font-mono">
+          Loading ShieldDesk Gate...
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

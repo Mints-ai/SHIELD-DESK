@@ -5,13 +5,17 @@ import { trackError } from "@/lib/observability/errorTracker";
 
 function verifyScimBearer(req: NextRequest): { valid: boolean; tenantId: string } {
   const authHeader = req.headers.get("authorization");
-  const expectedSecret = process.env.SCIM_BEARER_TOKEN || "scim-dev-bearer-token";
-  
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  const expectedSecret =
+    process.env.SCIM_BEARER_TOKEN ||
+    (process.env.NODE_ENV !== "production" ? "scim-dev-bearer-token" : "");
+
+  if (!expectedSecret || !authHeader || !authHeader.startsWith("Bearer ")) {
     return { valid: false, tenantId: "" };
   }
   const token = authHeader.substring(7).trim();
-  if (token !== expectedSecret) {
+  const tokenBuf = Buffer.from(token);
+  const secretBuf = Buffer.from(expectedSecret);
+  if (tokenBuf.length !== secretBuf.length || !crypto.timingSafeEqual(tokenBuf, secretBuf)) {
     return { valid: false, tenantId: "" };
   }
 
