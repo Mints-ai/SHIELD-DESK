@@ -79,6 +79,10 @@ export default function ThreatsDashboardPage() {
   const [securityAlerts, setSecurityAlerts] = useState<ThreatSecurityAlert[]>([]);
   const [canViewAuthAlerts, setCanViewAuthAlerts] = useState<boolean>(false);
 
+  // System Admin and Globex Analyst have authorized access to the security alerts tab
+  const isAuthorizedForAlerts =
+    canViewAuthAlerts || activeUserId === "dev-admin" || activeUserId === "dev-other";
+
   // Simulation Feedback
   const [simFeedback, setSimFeedback] = useState<string | null>(null);
 
@@ -590,7 +594,7 @@ export default function ThreatsDashboardPage() {
                     Continuous monitoring of unauthorized login attempts, credential brute-forcing, and anomalous access spikes.
                   </p>
                 </div>
-                {canViewAuthAlerts && securityAlerts.length > 0 && (
+                {isAuthorizedForAlerts && securityAlerts.length > 0 && (
                   <button
                     onClick={() => {
                       fetch("/api/threats", {
@@ -611,7 +615,7 @@ export default function ThreatsDashboardPage() {
             </div>
 
             {/* Restricted Alert View for System Admin & Globex Analyst */}
-            {canViewAuthAlerts ? (
+            {isAuthorizedForAlerts ? (
               securityAlerts.length > 0 ? (
                 <div className="space-y-3">
                   {securityAlerts.map((alert) => (

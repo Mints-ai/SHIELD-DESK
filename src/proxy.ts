@@ -41,7 +41,7 @@ export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const isProd =
     process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
-  const isDemo = process.env.DEMO_MODE === "true";
+  const isDemo = process.env.DEMO_MODE !== "false" && !isProd;
 
   // 1. Prepare sanitized request headers
   const requestHeaders = new Headers(req.headers);

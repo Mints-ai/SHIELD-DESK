@@ -4,6 +4,12 @@ import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
 import { getActiveDetectionRules, toggleDetectionRule } from "@/lib/detection/engine";
 import { query } from "@/lib/db";
+import {
+  getThreatAlertsForUser,
+  recordThreatAlert,
+  acknowledgeThreatAlert,
+  resetThreatAlerts,
+} from "@/lib/alerts/threatAlertStore";
 
 const YARA_RULES = [
   {
@@ -171,6 +177,19 @@ export async function GET(req: NextRequest) {
     // DB offline fallback
   }
 
+  // Determine if this user can view authentication security alerts.
+  // Allowed roles: system_admin (dev-admin), or Globex analyst persona (dev-other).
+  const canViewAuthAlerts =
+    session.role === "system_admin" ||
+    session.uid === "dev-other" ||
+    session.uid === "dev-admin";
+
+  // Use dynamic threat alert store for authorized users.
+  // Defaults to empty array (0 alerts -> 'Zero Active Security Alerts' / nominal state)
+  const securityAlerts = canViewAuthAlerts
+    ? getThreatAlertsForUser(session.uid)
+    : [];
+
   return NextResponse.json({
     status: "ok",
     dataMode: isDemoMode() ? "demo" : "live",
@@ -188,6 +207,8 @@ export async function GET(req: NextRequest) {
       active_agents_connected: liveConnectedAgents,
       events_persisted_timescaledb: liveEventsCount,
     },
+    can_view_auth_alerts: canViewAuthAlerts,
+    security_alerts: securityAlerts,
   });
 }
 
@@ -209,6 +230,15 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Record simulated anomaly alert in the active store
+      const simulatedAlert = recordThreatAlert({
+        targetUser: session.uid === "dev-other" ? "analyst@globex.corp" : "admin@acme.corp",
+        clientIp: "192.168.1.105",
+        failureReason: "Synthetic Anomaly Burst (+4.8σ baseline spike)",
+        severity: "critical",
+        type: "brute_force_spike",
+      });
+
       return NextResponse.json({
         success: true,
         _demo_mode: true,
@@ -220,10 +250,19 @@ export async function POST(req: NextRequest) {
         sigma_deviation: "+4.8σ above baseline",
         alert_dispatched: true,
         alert_subject: "alerts.tenant_acme.auth_anomaly_burst",
+        alert: simulatedAlert,
       });
     }
 
+    if (action === "acknowledge_alert") {
+      const acknowledged = acknowledgeThreatAlert(body.alert_id, session.uid);
+      return NextResponse.json({ success: acknowledged });
+    }
 
+    if (action === "reset_alerts") {
+      resetThreatAlerts();
+      return NextResponse.json({ success: true });
+    }
 
     if (action === "toggle_rule") {
       const toggled = toggleDetectionRule(body.rule_id, Boolean(body.enabled));
