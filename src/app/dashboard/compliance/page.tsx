@@ -89,7 +89,7 @@ export default function CompliancePage() {
                   Compliance & ISO 27001 Annex A
                 </h1>
                 <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--sd-success-dim)] text-[var(--sd-success)] border border-[var(--sd-success-border)] font-mono">
-                  SOC 2 Type II
+                  SOC 2 Readiness
                 </span>
               </div>
               <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">

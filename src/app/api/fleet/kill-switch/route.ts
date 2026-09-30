@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { triggerKillSwitch } from "@/lib/fleet/fleet";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
     if (msg.includes("UNAUTHORIZED_KILL_SWITCH")) {
       return NextResponse.json({ error: msg }, { status: 403 });
     }
+    trackError(err, { endpoint: "/api/fleet/kill-switch" });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

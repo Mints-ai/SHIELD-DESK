@@ -1,6 +1,10 @@
-# ShieldDesk IAM Service
+# ShieldDesk IAM Service [DEPRECATED]
 
-The Identity & Access Management (IAM) service handles multi-tenant authentication, session lifecycle, Role-Based Access Control (RBAC), and agent token validation for the ShieldDesk platform.
+> [!WARNING]
+> **Architectural Deprecation Notice**:
+> This standalone microservice has been retired and consolidated into the core ShieldDesk Next.js App Router auth layer at `src/lib/auth/`.
+> All authentication (HMAC-SHA256 session tokens, cryptographic password hashing via `scrypt`, TOTP MFA, and the unified 6-tier RBAC system in `src/lib/permissions.ts`) is executed natively within the Next.js control plane and PostgreSQL database.
+> Do not deploy or depend on this service for new production workloads.
 
 ---
 

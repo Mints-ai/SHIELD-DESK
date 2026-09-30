@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { getEndpointAgent } from "@/lib/fleet/fleet";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function GET(
   req: NextRequest,
@@ -28,6 +29,7 @@ export async function GET(
 
     return NextResponse.json({ agent });
   } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/fleet/[id]" });
     const msg = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

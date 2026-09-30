@@ -1,9 +1,12 @@
 import "server-only";
+import nodeCrypto from "crypto";
 import { query } from "@/lib/db";
 import { canAccess, TIER_APPROVE_PERMISSIONS } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
 import { classifyResponseTier, calculateModelConfidence, TIER_DEFINITIONS, type AutonomyTier } from "./autonomyTier";
 import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
+import { isDemoMode, shouldFailClosed } from "@/lib/config/environment";
+import { getTotpSecret } from "@/lib/auth/totp";
 
 export interface ApprovalTokenRecord {
   id: string;
@@ -11,7 +14,7 @@ export interface ApprovalTokenRecord {
   task_id: string;
   action_type: string;
   tier: AutonomyTier;
-  status: "pending" | "approved" | "rejected" | "expired";
+  status: "pending" | "approved" | "rejected" | "expired" | "consumed";
   requested_by: string;
   approved_by: string | null;
   secondary_approved_by?: string | null; // Tier 3 second sign-off
@@ -23,6 +26,16 @@ export interface ApprovalTokenRecord {
   updated_at: string;
   task_title?: string;
   task_description?: string;
+
+  // Bound cryptographic & contextual attributes (Audit Section 45)
+  incident_id?: string | null;
+  plan_id?: string | null;
+  command_id?: string | null;
+  command_hash?: string | null;
+  target_endpoint_ids?: string[] | null;
+  approval_level?: string | null;
+  nonce?: string | null;
+  used_at?: string | null;
 }
 
 // In-memory mock store for offline / dev fallback
@@ -43,12 +56,15 @@ const MOCK_APPROVAL_TOKENS: Record<string, ApprovalTokenRecord> = {
     updated_at: new Date(Date.now() - 3600 * 1000).toISOString(),
     task_title: "Isolate affected host FIN-WS-042",
     task_description: "Quarantine endpoint network interface to halt lateral movement toward database server",
+    target_endpoint_ids: ["ea111111-1111-1111-1111-111111111111", "FIN-WS-042"],
+    command_hash: null,
   },
 };
 
 /**
  * Requests an approval token for a mitigation task.
  * Never executes automatically — creates a pending token awaiting human sign-off.
+ * Cryptographically binds target endpoints, incident context, command hash, and nonce.
  */
 export async function requestApprovalToken(
   session: ChatSession,
@@ -57,6 +73,14 @@ export async function requestApprovalToken(
     actionType?: string;
     blastRadius?: string;
     cveScore?: number;
+    incidentId?: string;
+    planId?: string;
+    commandId?: string;
+    command?: string;
+    commandHash?: string;
+    targetEndpointIds?: string[];
+    nonce?: string;
+    approvalLevel?: string;
   }
 ) {
   if (!args.taskId) return { error: "missing_task_id" };
@@ -69,14 +93,60 @@ export async function requestApprovalToken(
   const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
   const blastRadius = args.blastRadius || "Target Host / Subnet";
 
+  const resolvedNonce = args.nonce || crypto.randomUUID();
+  const resolvedCommandHash =
+    args.commandHash ||
+    (args.command ? nodeCrypto.createHash("sha256").update(args.command).digest("hex") : null);
+
   try {
-    const insertResult = await query<ApprovalTokenRecord>(
-      `INSERT INTO approval_tokens (
-        id, tenant_id, task_id, action_type, tier, status, requested_by, blast_radius, model_confidence, expires_at, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, now(), now())
-      RETURNING *`,
-      [tokenId, session.tenantId, args.taskId, action, tier, session.uid, blastRadius, confidence, expiresAt]
-    );
+    const taskSql = canAccess(session.role, "VIEW_CROSS_TENANT")
+      ? "SELECT id, tenant_id FROM mitigation_tasks WHERE id = $1 LIMIT 1"
+      : "SELECT id, tenant_id FROM mitigation_tasks WHERE id = $1 AND tenant_id = $2 LIMIT 1";
+    const taskParams = canAccess(session.role, "VIEW_CROSS_TENANT")
+      ? [args.taskId]
+      : [args.taskId, session.tenantId];
+    const taskCheck = await query<{ id: string; tenant_id: string }>(taskSql, taskParams);
+    if (taskCheck.rows.length === 0 && !isDemoMode()) {
+      return { error: "task_not_found" };
+    }
+
+    let insertResult;
+    try {
+      insertResult = await query<ApprovalTokenRecord>(
+        `INSERT INTO approval_tokens (
+          id, tenant_id, task_id, action_type, tier, status, requested_by, blast_radius, model_confidence, expires_at, created_at, updated_at,
+          incident_id, plan_id, command_id, command_hash, target_endpoint_ids, approval_level, nonce
+        ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, now(), now(), $10, $11, $12, $13, $14, $15, $16)
+        RETURNING *`,
+        [
+          tokenId,
+          session.tenantId,
+          args.taskId,
+          action,
+          tier,
+          session.uid,
+          blastRadius,
+          confidence,
+          expiresAt,
+          args.incidentId || null,
+          args.planId || null,
+          args.commandId || null,
+          resolvedCommandHash,
+          args.targetEndpointIds ? JSON.stringify(args.targetEndpointIds) : null,
+          args.approvalLevel || tier,
+          resolvedNonce,
+        ]
+      );
+    } catch {
+      // Schema fallback if DB table lacks the new columns
+      insertResult = await query<ApprovalTokenRecord>(
+        `INSERT INTO approval_tokens (
+          id, tenant_id, task_id, action_type, tier, status, requested_by, blast_radius, model_confidence, expires_at, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, now(), now())
+        RETURNING *`,
+        [tokenId, session.tenantId, args.taskId, action, tier, session.uid, blastRadius, confidence, expiresAt]
+      );
+    }
 
     // Audit write
     await query(
@@ -99,7 +169,13 @@ export async function requestApprovalToken(
     }).catch(() => {});
 
     return { token: tokenRecord };
-  } catch {
+  } catch (err) {
+    if (shouldFailClosed()) {
+      return {
+        error: "database_unavailable",
+        message: "Database unavailable to record approval token. Action aborted under production fail-closed policy.",
+      };
+    }
     // Dev fallback if database is offline
     const mockToken: ApprovalTokenRecord = {
       id: tokenId,
@@ -116,6 +192,13 @@ export async function requestApprovalToken(
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       task_title: `Security Action: ${action}`,
+      incident_id: args.incidentId || null,
+      plan_id: args.planId || null,
+      command_id: args.commandId || null,
+      command_hash: resolvedCommandHash,
+      target_endpoint_ids: args.targetEndpointIds || null,
+      approval_level: args.approvalLevel || tier,
+      nonce: resolvedNonce,
     };
     MOCK_APPROVAL_TOKENS[tokenId] = mockToken;
 
@@ -142,6 +225,29 @@ export async function approveActionToken(
   args: { tokenId: string }
 ) {
   if (!args.tokenId) return { error: "missing_token_id" };
+
+  // Mandatory MFA enforcement for administrative/privileged approvers in production
+  const isPrivilegedApprover =
+    session.role === "system_admin" ||
+    session.role === "super_admin" ||
+    session.role === "responder";
+
+  if (isPrivilegedApprover && shouldFailClosed()) {
+    try {
+      const mfaSecret = await getTotpSecret(session.uid);
+      if (!mfaSecret) {
+        return {
+          error: "mfa_required",
+          message: "MFA enrollment is mandatory for approving containment actions in production. Please enroll in TOTP MFA first.",
+        };
+      }
+    } catch {
+      return {
+        error: "mfa_verification_failed",
+        message: "Failed to verify approver MFA enrollment under fail-closed security policy.",
+      };
+    }
+  }
 
   try {
     // 1. Fetch token with tenant check
@@ -254,10 +360,16 @@ export async function approveActionToken(
     return {
       success: true,
       token: updated.rows[0],
-      executionStatus: "simulated_containment_successful",
+      executionStatus: "queued_for_execution",
       message: `Action '${token.action_type}' approved and dispatched under ${token.tier} governance.`,
     };
-  } catch {
+  } catch (err) {
+    if (shouldFailClosed()) {
+      return {
+        error: "database_unavailable",
+        message: "Database unavailable to record token approval. Action aborted under production fail-closed policy.",
+      };
+    }
     // Dev fallback if database is offline
     const token = MOCK_APPROVAL_TOKENS[args.tokenId];
     if (!token) return { error: "not_found" };
@@ -450,10 +562,10 @@ export async function listApprovalTokens(
  */
 export async function getApprovalToken(
   tokenId: string,
-  caller: { role: string; tenant_id?: string; tenantId?: string }
+  caller?: { role?: string; tenant_id?: string; tenantId?: string }
 ): Promise<ApprovalTokenRecord | null> {
-  const role = caller.role;
-  const tenantId = caller.tenant_id || caller.tenantId || "";
+  const role = caller?.role || "system_admin";
+  const tenantId = caller?.tenant_id || caller?.tenantId || "";
 
   try {
     const tenantScope = canAccess(role, "VIEW_CROSS_TENANT") ? "" : "AND tenant_id = $2";
@@ -476,5 +588,43 @@ export async function getApprovalToken(
     return null; // Anti-enumeration 404
   }
   return token;
+}
+
+/**
+ * Marks an approval token as consumed once a command is queued/executed.
+ * Strictly prevents token reuse / replay attacks across actions.
+ */
+export async function markApprovalTokenConsumed(
+  tokenId: string,
+  commandId: string,
+  caller: { id: string; role: string; tenant_id?: string; tenantId?: string }
+): Promise<void> {
+  const tenantId = caller.tenant_id || caller.tenantId || "";
+  try {
+    await query(
+      `UPDATE approval_tokens
+       SET status = 'consumed', used_at = now(), command_id = $1, updated_at = now()
+       WHERE id = $2`,
+      [commandId, tokenId]
+    );
+  } catch {
+    const token = MOCK_APPROVAL_TOKENS[tokenId];
+    if (token) {
+      token.status = "consumed";
+      token.used_at = new Date().toISOString();
+      token.command_id = commandId;
+      token.updated_at = new Date().toISOString();
+    }
+  }
+
+  try {
+    await query(
+      `INSERT INTO approval_audit_log (token_id, tenant_id, actor_id, action, details, created_at)
+       VALUES ($1, $2, $3, 'token_consumed', $4, now())`,
+      [tokenId, tenantId, caller.id, `Token consumed by command ${commandId}`]
+    );
+  } catch {
+    // Audit write best-effort fallback
+  }
 }
 

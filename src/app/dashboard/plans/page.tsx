@@ -81,12 +81,31 @@ export default function PlansIndexPage() {
   ];
 
   useEffect(() => {
-    // In a live environment, fetch from API or use fallback
-    const timer = setTimeout(() => {
-      setPlans(fallbackPlans);
-      setIsLoading(false);
-    }, 250);
-    return () => clearTimeout(timer);
+    let isMounted = true;
+    async function fetchPlans() {
+      setIsLoading(true);
+      try {
+        const res = await fetch("/api/plans", {
+          headers: { "X-ShieldDesk-User": activeUserId },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) {
+            setPlans(data.plans || []);
+          }
+        } else {
+          if (isMounted) setPlans(activeUserId === "dev-other" ? [] : fallbackPlans);
+        }
+      } catch {
+        if (isMounted) setPlans(activeUserId === "dev-other" ? [] : fallbackPlans);
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+    fetchPlans();
+    return () => {
+      isMounted = false;
+    };
   }, [activeUserId]);
 
   const filteredPlans = plans.filter((p) => {
@@ -102,43 +121,42 @@ export default function PlansIndexPage() {
   return (
     <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
       <TopNavBar />
-      {/* Top Header */}
-      <header className="border-b border-[var(--sd-border)] bg-[var(--sd-panel)] px-6 py-4 shadow-xs">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-[var(--sd-pine)] uppercase tracking-wider font-mono">
-                Phase 1 Governance
-              </span>
-              <span className="text-xs text-[var(--sd-text-muted)]">•</span>
-              <span className="text-xs font-medium text-[var(--sd-text-muted)]">
-                Autonomous Mitigation Engine
-              </span>
-            </div>
-            <h1 className="text-xl font-bold text-[var(--sd-pine)] tracking-tight mt-0.5">
-              Mitigation Plans & Horizon Runbooks
-            </h1>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() =>
-                openChatWithPrompt("Generate a mitigation plan for INC-1042")
-              }
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed] hover:bg-[var(--sd-pine-dark)] text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Generate New Plan</span>
-            </button>
-
-          </div>
-        </div>
-      </header>
-
       {/* Main Content Area */}
-      <main className="sd-dashboard-content max-w-7xl mx-auto px-6 py-8">
+      <main className="sd-dashboard-content max-w-7xl mx-auto px-6 py-6 flex flex-col gap-5">
+
+        {/* ── Page Header Card ── */}
+        <div className="rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-10 w-10 rounded-xl bg-[var(--sd-pine)]/10 border border-[var(--sd-pine)]/20 flex items-center justify-center shrink-0">
+              <FileText className="h-5 w-5 text-[var(--sd-pine)]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-[10.5px] font-bold text-[var(--sd-pine)] uppercase tracking-widest font-mono">
+                  Phase 1 Governance
+                </span>
+                <span className="text-[10px] text-[var(--sd-text-muted)]">•</span>
+                <span className="text-[10.5px] font-medium text-[var(--sd-text-muted)]">
+                  Autonomous Mitigation Engine
+                </span>
+              </div>
+              <h1 className="text-lg font-bold text-[var(--sd-text)] tracking-tight leading-none">
+                Mitigation Plans &amp; Horizon Runbooks
+              </h1>
+            </div>
+          </div>
+          <button
+            onClick={() => openChatWithPrompt("Generate a mitigation plan for INC-1042")}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed] hover:bg-[var(--sd-pine-dark)] text-xs font-semibold shadow-xs transition-colors cursor-pointer shrink-0"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Generate New Plan</span>
+          </button>
+        </div>
+
+
         {/* Search & Filters */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="relative flex-1 w-full max-w-md">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--sd-text-muted)]" />
             <input

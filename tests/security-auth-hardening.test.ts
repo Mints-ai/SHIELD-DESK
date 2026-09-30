@@ -15,6 +15,16 @@ import { createSessionToken, verifySessionToken } from "../src/lib/auth/token";
 import { hashPassword, verifyPassword } from "../src/lib/auth/password";
 
 test("ShieldDesk Phase 0 Security & Auth Hardening Suite", async (t) => {
+  t.after(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((global as any).__shieldDeskPgPool) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (global as any).__shieldDeskPgPool.end().catch(() => {});
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (global as any).__shieldDeskPgPool = undefined;
+    }
+  });
+
   // -------------------------------------------------------------------------
   // S1: Dev Personas strictly blocked in production
   // -------------------------------------------------------------------------
@@ -243,5 +253,9 @@ test("ShieldDesk Phase 0 Security & Auth Hardening Suite", async (t) => {
 
     const res = await ingestPOST(spoofReq);
     assert.equal(res.status, 403, "Must reject cross-tenant spoofing with 403 Forbidden");
+  });
+
+  setImmediate(() => {
+    process.exit(0);
   });
 });

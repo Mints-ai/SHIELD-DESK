@@ -177,103 +177,10 @@ export default function SOCDashboardPage() {
       {/* Global Top Navbar */}
       <TopNavBar />
 
-      {/* Main Workspace Layout */}
+      {/* Main Workspace Layout: detail panel left, incident queue right */}
       <div className="sd-dashboard-content flex-1 flex overflow-hidden">
-        {/* Left Sidebar: Incident Feed */}
-        <aside className="w-[380px] shrink-0 border-r border-[var(--sd-border)] bg-[var(--sd-panel)] flex flex-col">
-          {/* Feed Header & Filters */}
-          <div className="p-4 border-b border-[var(--sd-border)] space-y-3 bg-[var(--sd-bg-alt)]/40">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
-                  Incident Queue
-                </h2>
-                <span className="text-[11px] text-[var(--sd-text-muted)]">
-                  Tenant: <strong className="text-[var(--sd-text)]">{activeUser.tenantName}</strong>
-                </span>
-              </div>
-              <span className="rounded-md bg-white border border-[var(--sd-border)] px-2 py-0.5 text-[11px] font-mono font-semibold text-[var(--sd-pine)] shadow-xs">
-                {incidents.length} Active
-              </span>
-            </div>
 
-            {/* Severity Filter Pills */}
-            <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-              {["all", "critical", "high", "medium"].map((sev) => (
-                <button
-                  key={sev}
-                  onClick={() => setFilterSeverity(sev)}
-                  className={cn(
-                    "px-2.5 py-1 rounded-md text-[10.5px] uppercase font-semibold tracking-wider transition-all duration-150 cursor-pointer",
-                    filterSeverity === sev
-                      ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs"
-                      : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
-                  )}
-                >
-                  {sev}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Incident List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[var(--sd-panel)]">
-            {isLoadingList ? (
-              <div className="py-12 text-center text-xs text-[var(--sd-text-muted)] flex flex-col items-center gap-2">
-                <RefreshCw className="h-4 w-4 animate-spin text-[var(--sd-pine)]" />
-                <span>Loading tenant telemetry...</span>
-              </div>
-            ) : incidents.length === 0 ? (
-              <div className="py-16 text-center px-4 rounded-xl border border-dashed border-[var(--sd-border)] bg-[var(--sd-panel-raised)] my-4">
-                <CheckCircle className="h-8 w-8 text-[var(--sd-pine-bright)]/40 mx-auto mb-2" />
-                <h4 className="text-xs font-semibold text-[var(--sd-pine)]">Zero Incidents Reported</h4>
-                <p className="text-[11px] text-[var(--sd-text-muted)] mt-1 max-w-[220px] mx-auto leading-relaxed">
-                  Tenant <span className="font-mono text-[var(--sd-pine)] font-medium">{activeUser.tenantId}</span> has no active incidents
-                  matching your filter. Multi-tenant isolation verified!
-                </p>
-              </div>
-            ) : (
-              incidents.map((inc) => {
-                const isSelected = activeIncidentId === inc.incident_code;
-                return (
-                  <motion.div
-                    key={inc.incident_code}
-                    onClick={() => setActiveIncidentId(inc.incident_code)}
-                    whileHover={{ scale: 1.005 }}
-                    className={cn(
-                      "p-3 rounded-xl border transition-all duration-150 cursor-pointer flex flex-col gap-1.5",
-                      isSelected
-                        ? "border-[var(--sd-pine)] bg-[var(--sd-bg-alt)]/60 shadow-xs ring-1 ring-[var(--sd-pine)]/20"
-                        : "border-[var(--sd-border)] bg-white hover:border-[var(--sd-border-strong)] hover:bg-[var(--sd-panel-hover)]/40"
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className={cn(
-                        "font-mono text-xs font-bold tracking-tight",
-                        isSelected ? "text-[var(--sd-pine)]" : "text-[var(--sd-text)]"
-                      )}>
-                        {inc.incident_code}
-                      </span>
-                      {getSeverityBadge(inc.severity)}
-                    </div>
-                    <h3 className="text-xs font-semibold text-[var(--sd-text)] line-clamp-1 leading-snug">
-                      {inc.title}
-                    </h3>
-                    <div className="flex items-center justify-between text-[10.5px] text-[var(--sd-text-muted)] mt-0.5">
-                      <span className="capitalize font-mono font-medium">{inc.status}</span>
-                      <span className="flex items-center gap-1 font-mono">
-                        <Clock className="h-2.5 w-2.5" />
-                        {new Date(inc.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                    </div>
-                  </motion.div>
-                );
-              })
-            )}
-          </div>
-        </aside>
-
-        {/* Center / Right: Incident Detail Investigation & AI Co-Pilot Console */}
+        {/* ── Detail Panel ── */}
         <main className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 bg-[var(--sd-bg)]">
           {isLoadingDetail ? (
             <div className="flex-1 flex items-center justify-center text-xs text-[var(--sd-text-muted)] gap-2">
@@ -468,12 +375,108 @@ export default function SOCDashboardPage() {
               <ShieldAlert className="h-10 w-10 text-[var(--sd-border-strong)] mb-3" />
               <h3 className="text-sm font-bold text-[var(--sd-pine)]">No Incident Selected</h3>
               <p className="text-xs text-[var(--sd-text-muted)] mt-1 max-w-sm">
-                Select an incident from the queue on the left to review its timeline, affected assets, and correlated
+                Select an incident from the queue on the right to review its timeline, affected assets, and correlated
                 threat intelligence.
               </p>
             </div>
           )}
         </main>
+
+        {/* ── Right Sidebar: Incident Queue ── */}
+        <aside className="w-[300px] shrink-0 border-l border-[var(--sd-border)] bg-[var(--sd-panel)] flex flex-col">
+
+          {/* Sidebar Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/30 shrink-0">
+            <div>
+              <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono leading-none">
+                Incident Queue
+              </h2>
+              <span className="text-[11px] text-[var(--sd-text-muted)]">
+                Tenant: <strong className="text-[var(--sd-text)]">{activeUser.tenantName}</strong>
+              </span>
+            </div>
+            <span className="rounded-md bg-[var(--sd-bg)] border border-[var(--sd-border)] px-2 py-0.5 text-[11px] font-mono font-semibold text-[var(--sd-pine)]">
+              {incidents.length} Active
+            </span>
+          </div>
+
+          {/* Severity Filter Pills */}
+          <div className="flex gap-1 px-3 py-2 border-b border-[var(--sd-border)] shrink-0">
+            {["all", "critical", "high", "medium"].map((sev) => (
+              <button
+                key={sev}
+                onClick={() => setFilterSeverity(sev)}
+                className={cn(
+                  "px-2.5 py-1 rounded-md text-[10px] uppercase font-semibold tracking-wider transition-all duration-150 cursor-pointer flex-1 text-center",
+                  filterSeverity === sev
+                    ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs"
+                    : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
+                )}
+              >
+                {sev}
+              </button>
+            ))}
+          </div>
+
+          {/* Vertical Incident Card List */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+            {isLoadingList ? (
+              <div className="flex flex-col items-center gap-2 py-12 text-xs text-[var(--sd-text-muted)]">
+                <RefreshCw className="h-4 w-4 animate-spin text-[var(--sd-pine)]" />
+                <span>Loading tenant telemetry...</span>
+              </div>
+            ) : incidents.length === 0 ? (
+              <div className="mx-1 mt-4 p-4 rounded-2xl border border-dashed border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-center">
+                <CheckCircle className="h-6 w-6 text-[var(--sd-pine-bright)]/40 mx-auto mb-2" />
+                <h4 className="text-xs font-semibold text-[var(--sd-pine)]">Zero Incidents</h4>
+                <p className="text-[11px] text-[var(--sd-text-muted)] mt-1 leading-relaxed">
+                  No active incidents for <span className="font-mono text-[var(--sd-pine)] font-medium">{activeUser.tenantId}</span>.
+                </p>
+              </div>
+            ) : (
+              incidents.map((inc) => {
+                const isSelected = activeIncidentId === inc.incident_code;
+                return (
+                  <motion.div
+                    key={inc.incident_code}
+                    onClick={() => setActiveIncidentId(inc.incident_code)}
+                    whileHover={{ scale: 1.01, x: -2 }}
+                    className={cn(
+                      "w-full p-4 rounded-2xl border shadow-xs transition-all duration-150 cursor-pointer flex flex-col justify-between gap-2",
+                      isSelected
+                        ? "border-[var(--sd-pine)] bg-[var(--sd-bg-alt)]/60 shadow-md ring-1 ring-[var(--sd-pine)]/20"
+                        : "border-[var(--sd-border)] bg-white hover:border-[var(--sd-border-strong)] hover:shadow-sm"
+                    )}
+                  >
+                    {/* Top: code + severity badge */}
+                    <div className="flex items-center justify-between">
+                      <span className={cn(
+                        "font-mono text-xs font-bold tracking-tight",
+                        isSelected ? "text-[var(--sd-pine)]" : "text-[var(--sd-text)]"
+                      )}>
+                        {inc.incident_code}
+                      </span>
+                      {getSeverityBadge(inc.severity)}
+                    </div>
+                    {/* Mid: title */}
+                    <h3 className="text-xs font-semibold text-[var(--sd-text)] line-clamp-2 leading-snug">
+                      {inc.title}
+                    </h3>
+                    {/* Bottom: status + time */}
+                    <div className="flex items-center justify-between text-[10.5px] text-[var(--sd-text-muted)] pt-2 border-t border-[var(--sd-border)]">
+                      <span className="capitalize font-mono font-medium">{inc.status}</span>
+                      <span className="flex items-center gap-1 font-mono">
+                        <Clock className="h-2.5 w-2.5" />
+                        {new Date(inc.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                  </motion.div>
+                );
+              })
+            )}
+          </div>
+        </aside>
+
       </div>
     </div>
   );

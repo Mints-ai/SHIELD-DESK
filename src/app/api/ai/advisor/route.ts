@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function POST(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -109,7 +110,8 @@ sudo systemctl status sshd --no-pager
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
-  } catch {
+  } catch (err) {
+    trackError(err, { route: "POST /api/ai/advisor", tenantId: session.tenantId });
     return NextResponse.json({ error: "Failed to process advisor request" }, { status: 500 });
   }
 }

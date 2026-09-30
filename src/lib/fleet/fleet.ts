@@ -1,9 +1,10 @@
 import { query } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth/session";
 import { canAccess } from "@/lib/permissions";
-import { getApprovalToken } from "@/lib/governance/approvalTokens";
+import { getApprovalToken, markApprovalTokenConsumed } from "@/lib/governance/approvalTokens";
 import { checkThrottle, recordMockThrottleCommand } from "@/lib/governance/blastRadiusThrottle";
 import { signCommand } from "@/lib/fleet/commandSigning";
+import { isDemoMode, isProduction, isSimulationAllowed } from "@/lib/config/environment";
 import crypto from "crypto";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
@@ -26,6 +27,24 @@ export interface EndpointAgentRecord {
   created_at: string;
 }
 
+export type CommandExecutionState =
+  | "requested"
+  | "authorised"
+  | "signed"
+  | "queued"
+  | "delivered"
+  | "acknowledged"
+  | "executing"
+  | "executed"
+  | "verified"
+  | "failed"
+  | "rolled_back"
+  | "cancelled"
+  | "expired"
+  | "delivery_failed"
+  | "execution_failed"
+  | "verification_failed";
+
 export interface AgentCommandQueueRecord {
   id: string;
   agent_id: string;
@@ -34,7 +53,8 @@ export interface AgentCommandQueueRecord {
   tier: "Tier 0" | "Tier 1" | "Tier 2" | "Tier 3";
   token_id: string | null;
   signature: string;
-  status: "queued" | "delivered" | "executed" | "failed" | "rolled_back";
+  nonce?: string | null;
+  status: CommandExecutionState;
   result?: Record<string, unknown> | null;
   snapshot_id?: string | null;
   created_at: string;
@@ -51,7 +71,7 @@ export interface AgentCommandLogRecord {
   command: string;
   tier: "Tier 0" | "Tier 1" | "Tier 2" | "Tier 3";
   token_id: string | null;
-  status: "pending" | "executing" | "succeeded" | "failed" | "rolled_back";
+  status: "pending" | "executing" | "succeeded" | "failed" | "rolled_back" | "verified";
   output: string;
   executed_by: string;
   executed_at: string;
@@ -356,6 +376,254 @@ export async function triggerKillSwitch({
  * Enforces Layer 4 Rulebook: Tier 1 executes automatically with safety snapshot;
  * Tier 2/3 requires a pre-existing approved ApprovalToken.
  */
+export interface CommandExecutionParams {
+  agent: EndpointAgentRecord;
+  command: string;
+  tier: "Tier 1" | "Tier 2" | "Tier 3";
+  tokenId?: string;
+  caller: SessionUser;
+  commandLogId: string;
+  signature: string;
+  nonce: string;
+  snapshotId?: string;
+}
+
+export interface CommandExecutionResult {
+  success: boolean;
+  commandId: string;
+  output: string;
+  snapshotId?: string;
+  tier: string;
+  state: CommandExecutionState;
+  isSimulated?: boolean;
+}
+
+/**
+ * RealAgentExecutor: Enqueues signed commands into the agent delivery queue.
+ * Does NOT simulate execution. Sets status to 'queued' and awaits signed execution report from the remote agent.
+ * Mandated for all production and live staging environments.
+ */
+export class RealAgentExecutor {
+  async execute(params: CommandExecutionParams): Promise<CommandExecutionResult> {
+    const { agent, command, tier, tokenId, caller, commandLogId, signature, nonce, snapshotId } = params;
+
+    const queueRecord: AgentCommandQueueRecord = {
+      id: commandLogId,
+      agent_id: agent.id,
+      tenant_id: caller.tenant_id,
+      command,
+      tier,
+      token_id: tokenId || null,
+      signature,
+      nonce,
+      status: "queued",
+      snapshot_id: snapshotId || null,
+      created_at: new Date().toISOString(),
+    };
+
+    try {
+      await query(
+        `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now());`,
+        [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id]
+      );
+    } catch {
+      try {
+        await query(
+          `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, status, snapshot_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
+          [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.status, queueRecord.snapshot_id]
+        );
+      } catch {
+        MOCK_AGENT_COMMANDS.push(queueRecord);
+        if (tier === "Tier 1") {
+          recordMockThrottleCommand(caller.tenant_id, "Tier 1");
+        }
+      }
+    }
+
+    await recordHashChainEvent({
+      tenantId: caller.tenant_id,
+      eventType: "AGENT_COMMAND_QUEUED",
+      actorId: caller.id,
+      payload: {
+        agentId: agent.id,
+        command,
+        tier,
+        tokenId: tokenId || null,
+        commandId: commandLogId,
+        signature,
+        nonce,
+      },
+    });
+
+    const output = `Command '${command}' cryptographically signed (Tier: ${tier}, Nonce: ${nonce.substring(0, 8)}...) and enqueued for agent delivery. Awaiting signed host execution report.`;
+
+    const logRecord: AgentCommandLogRecord = {
+      id: commandLogId,
+      agent_id: agent.id,
+      tenant_id: caller.tenant_id,
+      command,
+      tier,
+      token_id: tokenId || null,
+      status: "pending",
+      output,
+      executed_by: caller.id,
+      executed_at: new Date().toISOString(),
+    };
+
+    try {
+      await query(
+        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
+        [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
+      );
+    } catch {
+      MOCK_COMMAND_LOGS.push(logRecord);
+    }
+
+    return {
+      success: true,
+      commandId: commandLogId,
+      output,
+      snapshotId,
+      tier,
+      state: "queued",
+      isSimulated: false,
+    };
+  }
+}
+
+/**
+ * SimulationExecutor: Local mock simulation for non-production evaluation and unit testing.
+ * Strictly prohibited in production environments (Audit Section 44).
+ */
+export class SimulationExecutor {
+  async execute(params: CommandExecutionParams): Promise<CommandExecutionResult> {
+    if (!isSimulationAllowed()) {
+      throw new Error(
+        "SIMULATION_DISABLED_IN_PRODUCTION: Endpoint command simulation is strictly prohibited in this environment. Real agent execution required."
+      );
+    }
+
+    const { agent, command, tier, tokenId, caller, commandLogId, signature, nonce, snapshotId } = params;
+
+    const queueRecord: AgentCommandQueueRecord = {
+      id: commandLogId,
+      agent_id: agent.id,
+      tenant_id: caller.tenant_id,
+      command,
+      tier,
+      token_id: tokenId || null,
+      signature,
+      nonce,
+      status: "queued",
+      snapshot_id: snapshotId || null,
+      created_at: new Date().toISOString(),
+    };
+
+    try {
+      await query(
+        `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now());`,
+        [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id]
+      );
+    } catch {
+      try {
+        await query(
+          `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, status, snapshot_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
+          [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.status, queueRecord.snapshot_id]
+        );
+      } catch {
+        MOCK_AGENT_COMMANDS.push(queueRecord);
+        if (tier === "Tier 1") {
+          recordMockThrottleCommand(caller.tenant_id, "Tier 1");
+        }
+      }
+    }
+
+    await recordHashChainEvent({
+      tenantId: caller.tenant_id,
+      eventType: "AGENT_COMMAND_QUEUED",
+      actorId: caller.id,
+      payload: {
+        agentId: agent.id,
+        command,
+        tier,
+        tokenId: tokenId || null,
+        commandId: commandLogId,
+        signature,
+        nonce,
+        simulated: true,
+      },
+    });
+
+    let output = "";
+    if (command.startsWith("isolate_host")) {
+      output = `Network interface isolated successfully (Simulated Demo Mode) on ${agent.hostname}. Outbound/inbound traffic disabled except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
+      agent.status = "isolated";
+      agent.safety_snapshot_id = snapshotId || null;
+    } else if (command.startsWith("restore_host")) {
+      output = `Network interface restored (Simulated Demo Mode) on ${agent.hostname}. Restored baseline routing table.`;
+      agent.status = "connected";
+    } else if (command.startsWith("block_ip")) {
+      const ip = command.split(" ")[1] || "198.51.100.4";
+      output = `Local firewall rule inserted (Simulated Demo Mode) on ${agent.hostname}: DROP all traffic to/from ${ip}. Snapshot ${snapshotId} registered.`;
+    } else if (command.startsWith("kill_process")) {
+      const pid = command.split(" ")[1] || "4812";
+      output = `Process ${pid} terminated via SIGKILL (Simulated Demo Mode) on ${agent.hostname}. Process dump captured for forensics.`;
+    } else if (command.startsWith("take_safety_snapshot")) {
+      output = `Filesystem & network state snapshot ${snapshotId} taken successfully (Simulated Demo Mode) on ${agent.hostname}.`;
+      agent.safety_snapshot_id = snapshotId || null;
+    } else if (command.startsWith("rollback_snapshot")) {
+      output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} (Simulated Demo Mode) on ${agent.hostname}.`;
+      agent.status = "connected";
+    } else {
+      output = `Command '${command}' queued for agent delivery on ${agent.hostname} (Demo Mode).`;
+    }
+
+    const logRecord: AgentCommandLogRecord = {
+      id: commandLogId,
+      agent_id: agent.id,
+      tenant_id: caller.tenant_id,
+      command,
+      tier,
+      token_id: tokenId || null,
+      status: "pending",
+      output,
+      executed_by: caller.id,
+      executed_at: new Date().toISOString(),
+    };
+
+    try {
+      await query(
+        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
+        [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
+      );
+    } catch {
+      MOCK_COMMAND_LOGS.push(logRecord);
+    }
+
+    return {
+      success: true,
+      commandId: commandLogId,
+      output,
+      snapshotId,
+      tier,
+      state: "executed",
+      isSimulated: true,
+    };
+  }
+}
+
+/**
+ * Executes a command on an endpoint agent.
+ * Enforces Layer 4 Rulebook: Tier 1 executes automatically with safety snapshot;
+ * Tier 2/3 requires a pre-existing approved ApprovalToken.
+ * Recomputes and validates token bindings (tenant, endpoint, command hash, anti-replay).
+ */
 export async function executeAgentCommand({
   agentId,
   command,
@@ -374,6 +642,7 @@ export async function executeAgentCommand({
   output: string;
   snapshotId?: string;
   tier: string;
+  state?: CommandExecutionState;
 }> {
   const agent = await getEndpointAgent(agentId, caller);
   if (!agent) {
@@ -408,11 +677,45 @@ export async function executeAgentCommand({
     if (!token) {
       throw new Error("APPROVAL_TOKEN_NOT_FOUND");
     }
+
+    // Anti-Replay: verify token has not already been consumed
+    if (token.status === "consumed" || token.used_at) {
+      throw new Error("APPROVAL_TOKEN_REPLAY_DETECTED: Token has already been used and cannot be replayed.");
+    }
+
     if (token.status !== "approved") {
       throw new Error(`APPROVAL_TOKEN_NOT_APPROVED: Current token status is '${token.status}'. Must be 'approved'.`);
     }
+
     if (new Date(token.expires_at).getTime() < Date.now()) {
       throw new Error("APPROVAL_TOKEN_EXPIRED");
+    }
+
+    // Tenant binding validation (Audit Section 45)
+    if (token.tenant_id !== caller.tenant_id && !canAccess(caller.role, "VIEW_CROSS_TENANT")) {
+      throw new Error("APPROVAL_TOKEN_TENANT_MISMATCH: Approval token belongs to another tenant.");
+    }
+
+    // Target endpoint binding validation
+    if (token.target_endpoint_ids && token.target_endpoint_ids.length > 0) {
+      const matchesEndpoint =
+        token.target_endpoint_ids.includes(agent.id) ||
+        token.target_endpoint_ids.includes(agent.hostname);
+      if (!matchesEndpoint) {
+        throw new Error(
+          `APPROVAL_TOKEN_ENDPOINT_MISMATCH: Approval token is not authorized for endpoint '${agent.hostname}' (${agent.id}).`
+        );
+      }
+    }
+
+    // Command hash binding validation
+    if (token.command_hash) {
+      const computedHash = crypto.createHash("sha256").update(command).digest("hex");
+      if (token.command_hash !== computedHash) {
+        throw new Error(
+          "APPROVAL_TOKEN_COMMAND_MISMATCH: Command does not match cryptographically bound command hash."
+        );
+      }
     }
   }
 
@@ -431,118 +734,31 @@ export async function executeAgentCommand({
     tier,
   });
 
-  // Enqueue command into agent_commands queue
   const commandLogId = `cl-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
-  const queueRecord: AgentCommandQueueRecord = {
-    id: commandLogId,
-    agent_id: agent.id,
-    tenant_id: caller.tenant_id,
+
+  // Select executor: In production, always RealAgentExecutor; in non-prod, SimulationExecutor if allowed
+  const executor = (isProduction() || !isSimulationAllowed())
+    ? new RealAgentExecutor()
+    : new SimulationExecutor();
+
+  const result = await executor.execute({
+    agent,
     command,
     tier,
-    token_id: tokenId || null,
+    tokenId,
+    caller,
+    commandLogId,
     signature,
-    status: "queued",
-    snapshot_id: snapshotId || null,
-    created_at: new Date().toISOString(),
-  };
-
-  try {
-    await query(
-      `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, status, snapshot_id, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
-      [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.status, queueRecord.snapshot_id]
-    );
-  } catch {
-    MOCK_AGENT_COMMANDS.push(queueRecord);
-    if (tier === "Tier 1") {
-      recordMockThrottleCommand(caller.tenant_id, "Tier 1");
-    }
-  }
-
-  // Audit INTENT now (before execution completes on the remote agent)
-  await recordHashChainEvent({
-    tenantId: caller.tenant_id,
-    eventType: "AGENT_COMMAND_QUEUED",
-    actorId: caller.id,
-    payload: {
-      agentId: agent.id,
-      command,
-      tier,
-      tokenId: tokenId || null,
-      commandId: commandLogId,
-      signature,
-    },
-  });
-
-  // Simulate command execution outcome for local test / simulation feedback
-  let output = "";
-  if (command.startsWith("isolate_host")) {
-    output = `Network interface isolated successfully on ${agent.hostname}. Outbound/inbound traffic disabled except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
-    agent.status = "isolated";
-    agent.safety_snapshot_id = snapshotId || null;
-  } else if (command.startsWith("restore_host")) {
-    output = `Network interface restored on ${agent.hostname}. Restored baseline routing table.`;
-    agent.status = "connected";
-  } else if (command.startsWith("block_ip")) {
-    const ip = command.split(" ")[1] || "198.51.100.4";
-    output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Snapshot ${snapshotId} registered.`;
-  } else if (command.startsWith("kill_process")) {
-    const pid = command.split(" ")[1] || "4812";
-    output = `Process ${pid} terminated via SIGKILL on ${agent.hostname}. Process dump captured for forensics.`;
-  } else if (command.startsWith("take_safety_snapshot")) {
-    output = `Filesystem & network state snapshot ${snapshotId} taken successfully on ${agent.hostname}.`;
-    agent.safety_snapshot_id = snapshotId || null;
-  } else if (command.startsWith("rollback_snapshot")) {
-    output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} on ${agent.hostname}.`;
-    agent.status = "connected";
-  } else {
-    output = `Command '${command}' queued for agent delivery on ${agent.hostname}.`;
-  }
-
-  const logRecord: AgentCommandLogRecord = {
-    id: commandLogId,
-    agent_id: agent.id,
-    tenant_id: caller.tenant_id,
-    command,
-    tier,
-    token_id: tokenId || null,
-    status: "succeeded",
-    output,
-    executed_by: caller.id,
-    executed_at: new Date().toISOString(),
-  };
-
-  try {
-    await query(
-      `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
-      [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
-    );
-  } catch {
-    MOCK_COMMAND_LOGS.push(logRecord);
-  }
-
-  // Tamper-proof hash-chain append
-  await recordHashChainEvent({
-    tenantId: caller.tenant_id,
-    eventType: "AGENT_COMMAND_EXECUTED",
-    actorId: caller.id,
-    payload: {
-      agentId: agent.id,
-      command,
-      tier,
-      tokenId: tokenId || null,
-      snapshotId: snapshotId || null,
-    },
-  });
-
-  return {
-    success: true,
-    commandId: commandLogId,
-    output,
+    nonce,
     snapshotId,
-    tier,
-  };
+  });
+
+  // Mark approval token consumed immediately after successful command enqueuing (Audit Section 45)
+  if (tokenId) {
+    await markApprovalTokenConsumed(tokenId, commandLogId, caller);
+  }
+
+  return result;
 }
 
 /**
@@ -583,44 +799,144 @@ export async function recordCommandResult({
   status,
   output,
   snapshotId,
+  agentId,
+  verified,
 }: {
   commandId: string;
-  status: "executed" | "failed" | "rolled_back";
+  status: CommandExecutionState;
   output: string;
   snapshotId?: string;
-}): Promise<void> {
+  agentId?: string;
+  verified?: boolean;
+}): Promise<{ success: boolean; notFound?: boolean; unauthorized?: boolean }> {
+  const effectiveStatus = (status === "executed" && verified) ? "verified" : status;
+  const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded" : effectiveStatus;
   try {
+    // If agentId specified, verify ownership
+    if (agentId) {
+      const existing = await query<AgentCommandQueueRecord>(
+        `SELECT id, agent_id, tenant_id FROM agent_commands WHERE id = $1 LIMIT 1`,
+        [commandId]
+      );
+      if (existing.rows.length > 0 && existing.rows[0].agent_id !== agentId) {
+        return { success: false, unauthorized: true };
+      }
+    }
+
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
        SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = now()
        WHERE id = $4
        RETURNING *;`,
-      [status, JSON.stringify({ output }), snapshotId || null, commandId]
+      [effectiveStatus, JSON.stringify({ output }), snapshotId || null, commandId]
     );
+
+    if (rows.length === 0) {
+      // Check mock store fallback
+      const cmd = MOCK_AGENT_COMMANDS.find((c) => c.id === commandId);
+      if (!cmd) {
+        return { success: false, notFound: true };
+      }
+      if (agentId && cmd.agent_id !== agentId) {
+        return { success: false, unauthorized: true };
+      }
+      cmd.status = effectiveStatus;
+      cmd.result = { output };
+      if (snapshotId) cmd.snapshot_id = snapshotId;
+      cmd.completed_at = new Date().toISOString();
+
+      const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
+      if (log) {
+        log.status = logStatus as "succeeded" | "failed" | "rolled_back" | "verified";
+        log.output = output;
+      }
+
+      await recordHashChainEvent({
+        tenantId: cmd.tenant_id,
+        eventType: "AGENT_COMMAND_EXECUTED",
+        actorId: `agent:${cmd.agent_id}`,
+        payload: { commandId, status: effectiveStatus, snapshotId, output },
+      });
+
+      return { success: true };
+    }
+
+    // Update command log to reflect true execution status and output
+    await query(
+      `UPDATE agent_command_logs
+       SET status = $1, output = $2
+       WHERE id = $3;`,
+      [logStatus, output, commandId]
+    );
+
     const cmd = rows[0];
     if (cmd) {
       await recordHashChainEvent({
         tenantId: cmd.tenant_id,
         eventType: "AGENT_COMMAND_EXECUTED",
         actorId: `agent:${cmd.agent_id}`,
-        payload: { commandId, status, snapshotId, output },
+        payload: { commandId, status: effectiveStatus, snapshotId, output },
       });
+
+      if (cmd.token_id) {
+        try {
+          const token = await getApprovalToken(cmd.token_id);
+          if (token && token.incident_id) {
+            await query(
+              `INSERT INTO incident_events (incident_id, occurred_at, description)
+               VALUES ($1, now(), $2)`,
+              [token.incident_id, `Endpoint remediation verified: ${cmd.command} executed by agent ${cmd.agent_id}. Status: ${effectiveStatus}. Output: ${output.slice(0, 150)}`]
+            );
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
     }
+
+    return { success: true };
   } catch {
     const cmd = MOCK_AGENT_COMMANDS.find((c) => c.id === commandId);
-    if (cmd) {
-      cmd.status = status;
-      cmd.result = { output };
-      if (snapshotId) cmd.snapshot_id = snapshotId;
-      cmd.completed_at = new Date().toISOString();
-
-      await recordHashChainEvent({
-        tenantId: cmd.tenant_id,
-        eventType: "AGENT_COMMAND_EXECUTED",
-        actorId: `agent:${cmd.agent_id}`,
-        payload: { commandId, status, snapshotId, output },
-      });
+    if (!cmd) {
+      return { success: false, notFound: true };
     }
+    if (agentId && cmd.agent_id !== agentId) {
+      return { success: false, unauthorized: true };
+    }
+    cmd.status = effectiveStatus;
+    cmd.result = { output };
+    if (snapshotId) cmd.snapshot_id = snapshotId;
+    cmd.completed_at = new Date().toISOString();
+
+    const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
+    if (log) {
+      log.status = logStatus as "succeeded" | "failed" | "rolled_back" | "verified";
+      log.output = output;
+    }
+
+    await recordHashChainEvent({
+      tenantId: cmd.tenant_id,
+      eventType: "AGENT_COMMAND_EXECUTED",
+      actorId: `agent:${cmd.agent_id}`,
+      payload: { commandId, status: effectiveStatus, snapshotId, output },
+    });
+
+    if (cmd.token_id) {
+      try {
+        const token = await getApprovalToken(cmd.token_id);
+        if (token && token.incident_id) {
+          await query(
+            `INSERT INTO incident_events (incident_id, occurred_at, description)
+             VALUES ($1, now(), $2)`,
+            [token.incident_id, `Endpoint remediation verified: ${cmd.command} executed by agent ${cmd.agent_id}. Status: ${effectiveStatus}. Output: ${output.slice(0, 150)}`]
+          );
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    return { success: true };
   }
 }
 
@@ -654,6 +970,8 @@ export async function recordHashChainEvent({
     created_at: new Date().toISOString(),
   };
 
+  MOCK_HASH_CHAINS.push(record);
+
   try {
     await query(
       `INSERT INTO hash_chain_audit (id, tenant_id, event_type, actor_id, payload, prev_hash, current_hash)
@@ -661,7 +979,7 @@ export async function recordHashChainEvent({
       [record.id, record.tenant_id, record.event_type, record.actor_id, JSON.stringify(record.payload), record.prev_hash, record.current_hash]
     );
   } catch {
-    MOCK_HASH_CHAINS.push(record);
+    // Database offline mode
   }
 
   return record;

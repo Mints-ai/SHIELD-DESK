@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { shouldFailClosed, isDemoMode, isProduction } from "@/lib/config/environment";
+import { getSessionFromRequest } from "@/lib/auth/session";
+import { trackError } from "@/lib/observability/errorTracker";
 
 /**
- * DEMO/FALLBACK DATA — returned when the live scan service (SCAN_SERVICE_URL)
- * is unreachable. These CVE findings are illustrative examples drawn from real
- * public CVE disclosures but do NOT represent the actual posture of this tenant.
- * They MUST NOT be presented to a client as their real vulnerability findings.
- * Replace by connecting a live Trivy / Gitleaks pipeline that writes to the
- * `scan_results` database table.
+ * DEMO/FALLBACK DATA — returned when running in DEMO_MODE and the live scan
+ * service (SCAN_SERVICE_URL) is unreachable. These CVE findings are illustrative
+ * examples drawn from real public CVE disclosures.
+ * In production with FAIL_CLOSED=true, this endpoint returns 503 if the live
+ * service is unreachable.
  */
 const MOCK_CVE_FINDINGS = [
   {
@@ -64,7 +66,7 @@ const MOCK_SECRET_FINDINGS = [
     type: "AWS Access Key",
     source: "git_repo",
     location: "config/aws_credentials.json",
-    snippet_masked: "AKIAIOSFODNN7E******",
+    snippet_masked: "[DEMO_AWS_KEY_ID_REDACTED]",
     secret_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     risk_level: "CRITICAL",
     action_available: "Rotate & Invalidate Key",
@@ -73,19 +75,25 @@ const MOCK_SECRET_FINDINGS = [
     type: "GitHub Personal Token",
     source: "env_file",
     location: ".env.production",
-    snippet_masked: "ghp_984f1b8a7c29e4************",
+    snippet_masked: "[DEMO_GITHUB_PAT_REDACTED]",
     secret_hash: "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
     risk_level: "HIGH",
     action_available: "Revoke GitHub PAT",
   },
 ];
 
-import { getSessionFromRequest } from "@/lib/auth/session";
-
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const isDemoRequested =
+    req.nextUrl.searchParams.get("mode") === "demo" ||
+    req.nextUrl.searchParams.get("dataMode") === "demo";
+
+  if (isProduction() && isDemoRequested) {
+    return NextResponse.json({ error: "Demo mode disabled in production" }, { status: 403 });
   }
 
   const scanServiceUrl = process.env.SCAN_SERVICE_URL || "http://localhost:8001";
@@ -102,18 +110,46 @@ export async function GET(req: NextRequest) {
     // Service offline - fallback to local engine
   }
 
+  if (!liveScanStatus && shouldFailClosed()) {
+    return NextResponse.json(
+      {
+        error: "Scan service (Trivy/Gitleaks pipeline) is unreachable. Fail-closed policy active in production.",
+        code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+        dataMode: "live_offline",
+        tenantId: session.tenantId,
+        metrics: {
+          totalVulnerabilities: 0,
+          critical: 0,
+          high: 0,
+          secretsExposed: 0,
+          patchedHosts: 0,
+          pendingPatches: 0,
+        },
+        cveFindings: [],
+        secretFindings: [],
+        recentScans: [],
+      },
+      { status: 503 }
+    );
+  }
+
+  const dataMode = liveScanStatus ? "live" : "demo";
+  if (isProduction() && dataMode === "demo") {
+    return NextResponse.json({ error: "Demo mode disabled in production" }, { status: 403 });
+  }
+
   return NextResponse.json({
     status: "ok",
     serviceConnected: Boolean(liveScanStatus),
     /**
-     * "demo" = fixture data returned because scan service is offline.
+     * "demo" = fixture data returned because running in demo mode or scan service is offline.
      * "live" = data returned from the real scan pipeline.
-     * Check this field before surfacing results to clients.
      */
     dataMode: liveScanStatus ? "live" : "demo",
+    demoMode: isDemoMode(),
     demoDataDisclaimer: liveScanStatus
       ? null
-      : "⚠ DEMO DATA: The scan service is offline. Findings shown are illustrative examples, not real vulnerability data for this tenant.",
+      : "⚠ DEMO DATA: Findings shown are illustrative examples for local evaluation, not real vulnerability data for this tenant.",
     tenantId: session.tenantId,
     metrics: {
       totalVulnerabilities: 4,
@@ -163,6 +199,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { action } = body;
 
+    if (isProduction() && (body.dataMode === "demo" || body._demo_mode === true || body.demo === true)) {
+      return NextResponse.json({ error: "Demo mode disabled in production" }, { status: 403 });
+    }
+
     const scanServiceUrl = process.env.SCAN_SERVICE_URL || "http://localhost:8001";
 
     if (action === "cve_scan") {
@@ -182,14 +222,25 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ success: true, ...liveData });
         }
       } catch {
-        // Fallback simulated execution
+        // Fallback or fail closed
+      }
+
+      if (shouldFailClosed()) {
+        return NextResponse.json(
+          {
+            error: "Scan service (Trivy pipeline) is unreachable. Action aborted under production fail-closed policy.",
+            code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+          },
+          { status: 503 }
+        );
       }
 
       return NextResponse.json({
         success: true,
+        _demo_mode: true,
         scan_id: `scan-${Date.now().toString(36)}`,
         status: "running",
-        message: "Trivy vulnerability scan initiated across fleet targets.",
+        message: "Trivy vulnerability scan simulated across fleet targets (Demo Mode).",
         scan_type: body.scan_type || "full",
         target: body.target_path || "fleet-all",
       });
@@ -202,7 +253,7 @@ export async function POST(req: NextRequest) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             source: body.source || "git_repo",
-            content: body.content || "export AWS_ACCESS_KEY_ID=AKIA1234567890ABCDEF",
+            content: body.content || "export AWS_ACCESS_KEY_ID=[DEMO_KEY_PAYLOAD_REDACTED]",
             location: body.location || "repo/src",
           }),
           signal: AbortSignal.timeout(3000),
@@ -212,13 +263,24 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ success: true, ...liveData });
         }
       } catch {
-        // Fallback
+        // Fallback or fail closed
+      }
+
+      if (shouldFailClosed()) {
+        return NextResponse.json(
+          {
+            error: "Secrets scanner service (Gitleaks) is unreachable. Action aborted under production fail-closed policy.",
+            code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+          },
+          { status: 503 }
+        );
       }
 
       return NextResponse.json({
         success: true,
+        _demo_mode: true,
         findings_count: 1,
-        message: "Gitleaks scan completed. 1 potential exposed secret flagged.",
+        message: "Gitleaks scan simulated. 1 potential exposed secret flagged (Demo Mode).",
         findings: [
           {
             type: "AWS Access Key",
@@ -244,35 +306,62 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ success: true, ...liveData });
         }
       } catch {
-        // Fallback
+        // Fallback or fail closed
+      }
+
+      if (shouldFailClosed()) {
+        return NextResponse.json(
+          {
+            error: "KMS / IAM key rotation service is unreachable. Action aborted under production fail-closed policy.",
+            code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+          },
+          { status: 503 }
+        );
       }
 
       return NextResponse.json({
         success: true,
+        _demo_mode: true,
         status: "rotated",
         old_key_id: keyId,
-        new_key_id: `AKIA${Math.random().toString(36).substring(2, 14).toUpperCase()}`,
+        new_key_id: `KEY-${Math.random().toString(36).substring(2, 14).toUpperCase()}`,
         invalidated_at: new Date().toISOString(),
-        message: `AWS IAM access key ${keyId} revoked and rotated successfully.`,
+        message: `AWS IAM access key ${keyId} revoked and rotated (Demo Mode simulation).`,
       });
     }
 
     if (action === "apply_patch") {
+      if (shouldFailClosed()) {
+        return NextResponse.json(
+          {
+            error: "Remote host patch daemon is not connected. Patching cannot be executed or claimed without a live agent connection.",
+            code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+          },
+          { status: 503 }
+        );
+      }
+
       const targetHost = body.asset_ip || "10.0.4.12";
       return NextResponse.json({
         success: true,
+        _demo_mode: true,
         host: targetHost,
         snapshot_created: `snap-lvm-${Date.now().toString(36)}`,
         os_type: body.os_type || "linux",
         dry_run: Boolean(body.dry_run),
-        status: body.dry_run ? "DRY_RUN_PASSED" : "PATCH_APPLIED_AND_VERIFIED",
+        status: body.dry_run ? "DRY_RUN_PASSED" : "SIMULATED_PATCH_APPLIED",
         packages_updated: body.packages || ["openssh-server", "libwebp7"],
-        verification_log: "Pre-patch LVM snapshot created. Package signature verified. Daemons restarted without degradation.",
+        verification_log: "Pre-patch LVM snapshot created. Package signature verified. Daemons restarted without degradation (Simulated Demo Mode).",
       });
     }
 
     return NextResponse.json({ error: "Unknown action specified" }, { status: 400 });
   } catch (err: unknown) {
+    trackError(err, {
+      endpoint: "/api/scans",
+      userId: session.uid,
+      tenantId: session.tenantId,
+    });
     const message = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

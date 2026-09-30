@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkDatabaseConnection } from "@/lib/db";
+import { getClientEnvironmentMetadata } from "@/lib/config/environment";
 
 /**
  * GET /api/health
@@ -7,9 +8,8 @@ import { checkDatabaseConnection } from "@/lib/db";
  * Lightweight check used to verify done-criteria across phases:
  * - application starts
  * - PostgreSQL connection works
- * - the local Ollama instance is actually reachable (unlike a cloud API
- *   key, there's nothing to "configure" here — either Ollama is running
- *   at OLLAMA_BASE_URL or it isn't)
+ * - Ollama instance reachability
+ * - Environment safety flags (demo mode vs fail-closed production)
  */
 export async function GET() {
   const databaseConfigured = Boolean(process.env.DATABASE_URL);
@@ -74,6 +74,7 @@ export async function GET() {
 
   return NextResponse.json({
     status: allHealthy ? "ok" : "degraded",
+    environment: getClientEnvironmentMetadata(),
     database: { configured: databaseConfigured, connected: databaseConnected },
     supabase: { configured: supabaseConfigured, connected: supabaseConnected, url: process.env.NEXT_PUBLIC_SUPABASE_URL || null },
     ollama: { baseUrl: ollamaBaseUrl, reachable: ollamaReachable },

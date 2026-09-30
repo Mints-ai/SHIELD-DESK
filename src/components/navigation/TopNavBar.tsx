@@ -35,6 +35,20 @@ export function TopNavBar() {
     pythonAiEngine: boolean;
   }>({ database: false, ollama: false, supabase: false, pythonAiEngine: false });
 
+  const [envMeta, setEnvMeta] = useState<{
+    environment: string;
+    isProduction: boolean;
+    isDemoMode: boolean;
+    failClosed: boolean;
+    devPersonasAllowed: boolean;
+  }>({
+    environment: "development",
+    isProduction: false,
+    isDemoMode: true,
+    failClosed: false,
+    devPersonasAllowed: true,
+  });
+
   const [pendingTokens, setPendingTokens] = useState<ApprovalTokenRecord[]>([]);
   const [activeModalToken, setActiveModalToken] = useState<ApprovalTokenRecord | null>(null);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState(false);
@@ -49,6 +63,9 @@ export function TopNavBar() {
           supabase: Boolean(data?.supabase?.connected),
           pythonAiEngine: Boolean(data?.pythonAiEngine?.reachable),
         });
+        if (data?.environment) {
+          setEnvMeta(data.environment);
+        }
       })
       .catch(() => {
         setHealthStatus({ database: false, ollama: false, supabase: false, pythonAiEngine: false });
@@ -182,38 +199,59 @@ export function TopNavBar() {
             </div>
           </div>
 
-          {/* Persona Switcher */}
-          <div className="flex items-center gap-1 border border-[var(--sd-border)] bg-[var(--sd-bg)] rounded-lg p-0.5">
-            {(Object.keys(DEV_USERS) as DevUserId[]).map((userId) => {
-              const u = DEV_USERS[userId];
-              const isSelected = activeUserId === userId;
-              return (
-                <button
-                  key={userId}
-                  onClick={() => setActiveUserId(userId)}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium transition-all duration-150 cursor-pointer sm:px-2.5",
-                    isSelected
-                      ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs font-semibold"
-                      : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
-                  )}
-                  title={`${u.label} (${u.tenantName})`}
-                >
-                  <span
+          {/* Environment Mode Badge */}
+          {envMeta.isDemoMode ? (
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-500/40 bg-amber-500/10 text-amber-600 text-xs font-mono font-semibold shadow-xs"
+              title="Demo Environment: Simulated/illustrative fixtures active. No real host modifications."
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+              <span>DEMO ENVIRONMENT</span>
+            </div>
+          ) : (
+            <div
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 text-xs font-mono font-medium shadow-xs"
+              title="Production Mode: Live SOC telemetry and fail-closed safety boundary enabled."
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="hidden sm:inline">LIVE SOC</span>
+            </div>
+          )}
+
+          {/* Persona Switcher (strictly gated to non-production demo environments) */}
+          {envMeta.devPersonasAllowed && (
+            <div className="flex items-center gap-1 border border-[var(--sd-border)] bg-[var(--sd-bg)] rounded-lg p-0.5">
+              {(Object.keys(DEV_USERS) as DevUserId[]).map((userId) => {
+                const u = DEV_USERS[userId];
+                const isSelected = activeUserId === userId;
+                return (
+                  <button
+                    key={userId}
+                    onClick={() => setActiveUserId(userId)}
                     className={cn(
-                      "h-1.5 w-1.5 rounded-full",
-                      userId === "dev-admin"
-                        ? "bg-[#9333ea]"
-                        : userId === "dev-other"
-                          ? "bg-[#d97706]"
-                          : "bg-[var(--sd-pine-bright)]"
+                      "flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium transition-all duration-150 cursor-pointer sm:px-2.5",
+                      isSelected
+                        ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs font-semibold"
+                        : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
                     )}
-                  />
-                  <span className="hidden 2xl:inline">{u.label}</span>
-                </button>
-              );
-            })}
-          </div>
+                    title={`${u.label} (${u.tenantName})`}
+                  >
+                    <span
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        userId === "dev-admin"
+                          ? "bg-[#9333ea]"
+                          : userId === "dev-other"
+                            ? "bg-[#d97706]"
+                            : "bg-[var(--sd-pine-bright)]"
+                      )}
+                    />
+                    <span className="hidden 2xl:inline">{u.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <Link
             href="/login"

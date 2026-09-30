@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { executeAgentCommand } from "@/lib/fleet/fleet";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function POST(
   req: NextRequest,
@@ -62,6 +63,7 @@ export async function POST(
         { status: 429 }
       );
     }
+    trackError(err, { endpoint: "/api/fleet/[id]/command" });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

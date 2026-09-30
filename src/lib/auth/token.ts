@@ -10,6 +10,9 @@ export interface SessionPayload {
   iat: number; // Unix timestamp in seconds
 }
 
+// Cache an ephemeral key for the lifetime of the dev process if no secret configured
+let ephemeralDevSecret: Buffer | null = null;
+
 function getSessionSecret(): Buffer {
   const secret = process.env.SHIELDDESK_SESSION_SECRET;
   if (!secret) {
@@ -18,8 +21,10 @@ function getSessionSecret(): Buffer {
         "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_SESSION_SECRET must be configured in production environments."
       );
     }
-    // Deterministic dev-fallback secret for non-production environments
-    return Buffer.from("shielddesk-dev-insecure-session-secret-min32bytes!", "utf8");
+    if (!ephemeralDevSecret) {
+      ephemeralDevSecret = crypto.randomBytes(32);
+    }
+    return ephemeralDevSecret;
   }
   return Buffer.from(secret, "utf8");
 }
@@ -38,7 +43,7 @@ function base64UrlDecode(str: string): string {
  * Format: <base64url(payload)>.<base64url(signature)>
  */
 export function createSessionToken(
-  user: { uid: string; tenantId: string; role: ShieldDeskRole },
+  user: { uid: string; tenantId: string; role: ShieldDeskRole; email?: string },
   ttlSeconds = 7 * 86400
 ): string {
   const now = Math.floor(Date.now() / 1000);

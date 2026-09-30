@@ -5,7 +5,7 @@
  */
 
 export interface SecurityAlertNotification {
-  type: "incident_ingested" | "approval_required" | "plan_generated" | "kill_switch_engaged";
+  type: "incident_ingested" | "incident_created" | "threat_detected" | "approval_required" | "plan_generated" | "kill_switch_engaged";
   tenantId: string;
   title: string;
   description: string;
@@ -17,6 +17,7 @@ export interface SecurityAlertNotification {
 export async function dispatchSecurityNotification(notification: SecurityAlertNotification): Promise<{ success: boolean; channelsDispatched: string[] }> {
   const slackUrl = process.env.SLACK_WEBHOOK_URL;
   const teamsUrl = process.env.TEAMS_WEBHOOK_URL;
+  const discordUrl = process.env.DISCORD_WEBHOOK_URL;
   const genericUrl = process.env.SECURITY_WEBHOOK_URL;
 
   const channelsDispatched: string[] = [];
@@ -66,6 +67,45 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
       channelsDispatched.push("slack");
     } catch (err) {
       console.warn("[ShieldDesk Alert Dispatcher] Slack delivery error:", err);
+    }
+  }
+
+  // 2. Discord Webhook Payload
+  if (discordUrl) {
+    try {
+      const discordPayload = {
+        embeds: [
+          {
+            title: `🛡️ ShieldDesk SOC: ${notification.title}`,
+            url: notification.actionUrl || "http://localhost:3000",
+            description: notification.description,
+            color: parseInt(color.replace("#", ""), 16),
+            fields: [
+              { name: "Tenant", value: notification.tenantId, inline: true },
+              { name: "Severity", value: (notification.severity || "Standard").toUpperCase(), inline: true },
+              ...(notification.metadata
+                ? Object.entries(notification.metadata).slice(0, 4).map(([k, v]) => ({
+                    name: k,
+                    value: String(v),
+                    inline: true,
+                  }))
+                : []),
+            ],
+            footer: { text: "ShieldDesk Autonomous SOC Platform" },
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      };
+
+      await fetch(discordUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(discordPayload),
+        signal: AbortSignal.timeout(5000),
+      });
+      channelsDispatched.push("discord");
+    } catch (err) {
+      console.warn("[ShieldDesk Alert Dispatcher] Discord delivery error:", err);
     }
   }
 

@@ -1,6 +1,7 @@
 import "./setup";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { redactSensitiveData } from "@/lib/security/redactor";
 
 describe("ShieldDesk Adversarial Security & Injection Defense Suite", () => {
   // Guardrail regex patterns matching src/app/api/chat/route.ts
@@ -14,22 +15,7 @@ describe("ShieldDesk Adversarial Security & Injection Defense Suite", () => {
 
   const DISALLOWED_SPECIAL_CHARS_RE = /["'`“”‘’<>{}[\];\\/|~^$%*+=!@#&()]/;
 
-  const SENSITIVE_DATA_PATTERNS = [
-    /\b(sk-[a-zA-Z0-9]{20,})\b/gi,
-    /\b(bearer\s+[a-zA-Z0-9_\-\.]{20,})\b/gi,
-    /\b(ghp_[a-zA-Z0-9]{36})\b/gi,
-    /\b(eyJh[a-zA-Z0-9_\-\.]+?\.[a-zA-Z0-9_\-\.]+?\.[a-zA-Z0-9_\-]+)\b/gi,
-    /(password|passwd|secret|api_key|access_token)\s*[:=]\s*["']?[^\s"';]{6,}["']?/gi,
-    /-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/gi,
-  ];
-
-  function sanitizeOutput(text: string): string {
-    let cleaned = text;
-    for (const pattern of SENSITIVE_DATA_PATTERNS) {
-      cleaned = cleaned.replace(pattern, "[REDACTED_SECRET]");
-    }
-    return cleaned;
-  }
+  const sanitizeOutput = redactSensitiveData;
 
   it("FR-5: Blocks prompt injection and role override attacks", () => {
     const jailbreaks = [

@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { shouldFailClosed, isDemoMode } from "@/lib/config/environment";
+import { getSessionFromRequest } from "@/lib/auth/session";
+import { trackError } from "@/lib/observability/errorTracker";
+import { getActiveDetectionRules, toggleDetectionRule } from "@/lib/detection/engine";
+import { query } from "@/lib/db";
 
 const YARA_RULES = [
   {
@@ -110,13 +115,6 @@ const INGEST_TELEMETRY = {
   events_persisted_timescaledb: 148290,
 };
 
-import { getSessionFromRequest } from "@/lib/auth/session";
-import {
-  getThreatAlertsForUser,
-  recordThreatAlert,
-  acknowledgeThreatAlert,
-  resetThreatAlerts,
-} from "@/lib/alerts/threatAlertStore";
 
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -124,19 +122,72 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Auth alerts are strictly routed only to System Admin (dev-admin) and Globex Analyst (dev-other)
-  const userAlerts = getThreatAlertsForUser(session.uid);
-  const canViewAuthAlerts = session.uid === "dev-admin" || session.uid === "dev-other";
+
+  // In production with FAIL_CLOSED=true, ensure telemetry pipeline is configured
+  if (shouldFailClosed()) {
+    const hasLiveTelemetry = Boolean(process.env.NATS_URL || process.env.TIMESCALE_URL);
+    if (!hasLiveTelemetry) {
+      return NextResponse.json(
+        {
+          error: "Telemetry lake / NATS JetStream detection pipeline is not connected. Fail-closed active in production.",
+          code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+          tenantId: session.tenantId,
+          yara_rules: [],
+          sigma_rules: [],
+          anomaly_baselines: [],
+          ingest_telemetry: {
+            active_agents_connected: 0,
+            events_per_minute: 0,
+            bus_status: "Disconnected",
+          },
+        },
+        { status: 503 }
+      );
+    }
+  }
+
+  const engineRules = getActiveDetectionRules();
+
+  // Try to query real telemetry count from DB
+  let liveEventsCount = INGEST_TELEMETRY.events_persisted_timescaledb;
+  let liveConnectedAgents = INGEST_TELEMETRY.active_agents_connected;
+
+  try {
+    const telRes = await query<{ count: string }>(
+      `SELECT count(*) FROM endpoint_telemetry WHERE tenant_id = $1`,
+      [session.tenantId]
+    );
+    if (telRes.rows.length > 0) {
+      liveEventsCount = parseInt(telRes.rows[0].count, 10);
+    }
+    const agentRes = await query<{ count: string }>(
+      `SELECT count(*) FROM endpoint_agents WHERE tenant_id = $1 AND status = 'connected'`,
+      [session.tenantId]
+    );
+    if (agentRes.rows.length > 0) {
+      liveConnectedAgents = parseInt(agentRes.rows[0].count, 10);
+    }
+  } catch {
+    // DB offline fallback
+  }
 
   return NextResponse.json({
     status: "ok",
+    dataMode: isDemoMode() ? "demo" : "live",
+    demoMode: isDemoMode(),
+    demoDataDisclaimer: isDemoMode()
+      ? "⚠ DEMO DATA: Baseline and telemetry statistics are simulated benchmarks for evaluation."
+      : null,
     tenantId: session.tenantId,
+    detection_rules: engineRules,
     yara_rules: YARA_RULES,
     sigma_rules: SIGMA_RULES,
     anomaly_baselines: ANOMALY_BASELINES,
-    ingest_telemetry: INGEST_TELEMETRY,
-    security_alerts: userAlerts,
-    can_view_auth_alerts: canViewAuthAlerts,
+    ingest_telemetry: {
+      ...INGEST_TELEMETRY,
+      active_agents_connected: liveConnectedAgents,
+      events_persisted_timescaledb: liveEventsCount,
+    },
   });
 }
 
@@ -151,17 +202,16 @@ export async function POST(req: NextRequest) {
     const { action } = body;
 
     if (action === "simulate_burst") {
-      // Record a critical invalid login burst alert targeted at System Admin & Globex Analyst
-      const burstAlert = recordThreatAlert({
-        targetUser: "admin@acme.corp",
-        clientIp: "192.168.1.105 (Berlin, DE)",
-        failureReason: "3 Consecutive Failed Passwords (Off-Hours Anomaly Spike)",
-        severity: "critical",
-        type: "brute_force_spike",
-      });
+      if (shouldFailClosed()) {
+        return NextResponse.json(
+          { error: "Synthetic anomaly burst simulation is prohibited in production mode." },
+          { status: 403 }
+        );
+      }
 
       return NextResponse.json({
         success: true,
+        _demo_mode: true,
         simulation: "Auth Failure Anomaly Spike",
         triggered_at: new Date().toISOString(),
         anomaly_metric: "Failed Authentications / Min",
@@ -170,34 +220,24 @@ export async function POST(req: NextRequest) {
         sigma_deviation: "+4.8σ above baseline",
         alert_dispatched: true,
         alert_subject: "alerts.tenant_acme.auth_anomaly_burst",
-        alert: burstAlert,
       });
     }
 
-    if (action === "acknowledge_alert") {
-      const ok = acknowledgeThreatAlert(body.alert_id, session.uid);
-      return NextResponse.json({
-        success: ok,
-        alert_id: body.alert_id,
-        status: "acknowledged",
-      });
-    }
 
-    if (action === "reset_alerts") {
-      resetThreatAlerts();
-      return NextResponse.json({ success: true, message: "Alerts reset" });
-    }
 
     if (action === "toggle_rule") {
+      const toggled = toggleDetectionRule(body.rule_id, Boolean(body.enabled));
       return NextResponse.json({
         success: true,
         rule_id: body.rule_id,
+        toggled,
         new_status: body.enabled ? "ACTIVE" : "DISABLED",
       });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
-  } catch {
+  } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/threats", userId: session.uid, tenantId: session.tenantId });
     return NextResponse.json({ error: "Failed to process threat request" }, { status: 500 });
   }
 }
