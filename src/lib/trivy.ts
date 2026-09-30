@@ -1,11 +1,9 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import path from 'path';
+import { exec } from "child_process";
+import { promisify } from "util";
+import path from "path";
+import fs from "fs";
 
 const execPromise = promisify(exec);
-
-// Use a path relative to the project root
-const TRIVY_PATH = path.join(process.cwd(), 'tools', 'trivy', 'trivy.exe');
 
 export interface CveFinding {
   id: string;
@@ -26,13 +24,15 @@ export interface ScanResult {
   };
 }
 
-export async function runTrivyScan(target: string = '.', type: 'fs' | 'image' = 'fs'): Promise<ScanResult> {
+export async function runTrivyScan(target: string = ".", type: "fs" | "image" = "fs"): Promise<ScanResult> {
+  const localExe = path.join(process.cwd(), "tools", "trivy", "trivy.exe");
+  const trivyBin = fs.existsSync(localExe) ? `"${localExe}"` : "trivy";
+
   try {
-    // Use the absolute path to the trivy binary
-    // Use --skip-dirs instead of --skip-dir for newer Trivy versions
-    const command = type === 'fs' 
-      ? `"${TRIVY_PATH}" fs --format json --skip-dirs .next,node_modules ${target}` 
-      : `"${TRIVY_PATH}" image --format json ${target}`;
+    const command =
+      type === "fs"
+        ? `${trivyBin} fs --format json --skip-dirs .next,node_modules "${target}"`
+        : `${trivyBin} image --format json "${target}"`;
 
     const { stdout } = await execPromise(command);
     const data = JSON.parse(stdout);
@@ -40,7 +40,6 @@ export async function runTrivyScan(target: string = '.', type: 'fs' | 'image' = 
     const findings: CveFinding[] = [];
     const summary = { critical: 0, high: 0, medium: 0, low: 0 };
 
-    // Trivy JSON structure: Results is an array of targets
     if (data.Results) {
       for (const result of data.Results) {
         if (result.Vulnerabilities) {
@@ -51,7 +50,7 @@ export async function runTrivyScan(target: string = '.', type: 'fs' | 'image' = 
               pkgName: v.PkgName,
               installedVersion: v.InstalledVersion,
               fixedVersion: v.FixedVersion,
-              title: v.Title || 'No title provided',
+              title: v.Title || "No title provided",
             });
 
             const sev = v.Severity.toLowerCase();
@@ -65,7 +64,7 @@ export async function runTrivyScan(target: string = '.', type: 'fs' | 'image' = 
 
     return { findings, summary };
   } catch (error: any) {
-    console.error('Trivy Execution Error:', error);
+    console.error("Trivy Execution Error:", error);
     throw new Error(`Trivy scan failed: ${error.message}`);
   }
 }
