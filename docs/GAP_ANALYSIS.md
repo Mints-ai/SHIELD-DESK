@@ -67,7 +67,7 @@ Here is the exact impact model:
 19. `endpoint_kill_switches` (emergency tenant/agent kill switches)
 20. `hash_chain_audit` (SHA-256 Merkle-linked audit ledger)
 
-#### Phase A, B, C, D & E Additive Tables (13 Tables):
+#### Phase A, B, C, D, E & F Additive Tables (14 Tables):
 21. `universal_security_events` (Normalized security events across SIEM/EDR/scanners)
 22. `vulnerability_findings` (De-duplicated CVE findings with CVSS/EPSS/KEV scoring)
 23. `connector_cursors` (Sync watermarks and pagination states per connector)
@@ -81,6 +81,7 @@ Here is the exact impact model:
 31. `remediation_simulation_plans` (Root-cause groups, blast radius simulation, maintenance windows)
 32. `remediation_verifications` (Deterministic post-execution state proofs, hashes, rollback execution flags)
 33. `continuous_recheck_schedules` (Post-closure periodic drift detection schedules and audit history)
+34. `compliance_export_bundles` (Cryptographic compliance bundle export records and signatures)
 
 ---
 
@@ -93,7 +94,7 @@ Here is the exact impact model:
 | **Phase C: Attack-Path & Blast-Radius Engines** | **EXISTS** | `src/lib/attack-path/engine.ts`<br>`src/lib/blast-radius/engine.ts`<br>`services/attack-path/`<br>`services/blast-radius/`<br>`src/app/api/v1/twin/attack-paths/`<br>`src/app/api/v1/twin/blast-radius/`<br>`db/migrations/phase_c_attack_path_blast_radius.sql` | Fully implemented and verified: Ranked kill chains with MITRE ATT&CK mapping, explainable step rationales, choke-point efficacy calculation, multi-dimensional blast radius (services, apps, users, sensitive systems, downtime modeling, rollback availability), Postgres persistence (`attack_path_reports`, `blast_radius_reports`), and authenticated REST endpoints. |
 | **Phase D: Risk & Decision Engine** | **EXISTS** | `src/lib/decision-engine/engine.ts`<br>`src/lib/decision-engine/evidenceEngine.ts`<br>`src/lib/policy-engine/engine.ts`<br>`src/lib/governance/autonomyTier.ts`<br>`src/app/api/v1/decisions/`<br>`db/migrations/phase_d_decision_records.sql` | Fully implemented and verified: Evidence Engine with canonical SHA-256 hashing, explainable risk where every factor points to an evidence ID, asset-level autonomy (Observe, Assist, Autopilot) mapped to Tiers 0-3, strict separation of Security Confidence vs AI Confidence, PostgreSQL `decision_records` table, and REST evaluation endpoint. |
 | **Phase E: Remediation Simulator & Verification Engine** | **EXISTS** | `src/lib/verification-engine/rootCauseGrouping.ts`<br>`src/lib/verification-engine/engine.ts`<br>`src/lib/verification-engine/methods.ts`<br>`src/lib/verification-engine/continuousRecheck.ts`<br>`src/lib/rollback-engine/engine.ts`<br>`src/app/api/v1/remediation/`<br>`db/migrations/phase_e_remediation_verification.sql` | Fully implemented and verified: Root-cause grouping across bulk findings, blast radius and downtime window simulation, deterministic verification across 7 check types, closed-loop automatic rollback upon verification failure with finding reopening, continuous recheck scheduling and post-closure drift detection. |
-| **Phase F: Evidence Vault** | **PARTIAL** | `src/lib/compliance/evidenceVault.ts`<br>`src/lib/compliance/merkle.ts`<br>`src/app/api/compliance/route.ts` | • SHA-256 Merkle chain and hash verification exist.<br>• **Gaps to implement:** Export generator producing JSON, CSV, and tamper-evident signed audit packages with cryptographic integrity headers. |
+| **Phase F: Evidence Vault** | **EXISTS** | `src/lib/compliance/evidenceVault.ts`<br>`src/lib/compliance/merkle.ts`<br>`src/lib/compliance/exportGenerator.ts`<br>`src/lib/compliance/iso27001.ts`<br>`src/app/api/compliance/route.ts`<br>`src/app/api/v1/compliance/export/route.ts`<br>`db/migrations/phase_f_evidence_vault.sql` | Fully implemented and verified: Multi-format export generator (JSON, RFC-4180 CSV), HTTP cryptographic integrity headers (`X-ShieldDesk-*`), Merkle root computation & per-event inclusion branch proofs, mathematical tamper detection, standalone Python 3 verification script, and PostgreSQL `compliance_export_bundles` audit logging. |
 | **Phase G: AI Layer & Governance** | **PARTIAL** | `src/lib/ai/ollama.ts`<br>`services/llm-gateway/`<br>`src/lib/tools/shieldDeskChatTools.ts`<br>`src/lib/security/redactor.ts` | • Local-first Ollama + Gemini/OpenAI pluggable gateway exists with strict proposal formatting.<br>• Anti-prompt injection filters and secret redaction exist.<br>• **Gaps to implement:** AI Evaluation Lab permanent dataset schema, automated hallucination rate and tool-call error tracking. |
 | **Phase H: Execution Broker & Agent Hardening** | **PARTIAL** | `src/app/api/agent/commands/route.ts`<br>`src/lib/fleet/commandSigning.ts`<br>`src/lib/fleet/certificates.ts`<br>`agent/` (Go 1.23 Universal Agent) | • Single broker dispatch with RSA-2048 canonical signing exists.<br>• mTLS device certificates and anti-replay nonce validation exist.<br>• **Gaps to implement:** Agent self-update with verified signature and automatic rollback on boot failure. |
 | **Phase I: Licensing, Entitlements & Stripe** | **PARTIAL** | `src/app/api/webhooks/stripe/route.ts`<br>`src/lib/billing/plans.ts`<br>`src/lib/billing/licenses.ts` | • Stripe webhook handler and tiered plans exist.<br>• **Gaps to implement:** Server-side `entitlementService.require(...)` guard middleware, Postgres idempotency table for `stripe_event_id` deduplication, and signed offline entitlement cache. |
@@ -170,12 +171,13 @@ SHIELD-DESK/
 
 ## 6. Audit Conclusion & Baseline Status
 
-- **Baseline Test Suite:** **266 / 266 tests passing (100% green)** across 36 test suites.
-- **Database Migrations:** Clean live PostgreSQL / Supabase instance with all 33 tables provisioned.
+- **Baseline Test Suite:** **270 / 270 tests passing (100% green)** across 37 test suites.
+- **Database Migrations:** Clean live PostgreSQL / Supabase instance with all 34 tables provisioned.
 - **Phase Status:** 
   - **Phase A (Security Data Layer):** Completed & Verified.
   - **Phase B (Security Digital Twin):** Completed & Verified.
   - **Phase C (Attack-Path & Blast-Radius):** Completed & Verified.
   - **Phase D (Risk & Decision Engine):** Completed & Verified.
   - **Phase E (Remediation Simulator & Verification Engine):** Completed & Verified.
-  - **Phase F (Evidence Vault):** Ready to begin upon user approval.
+  - **Phase F (Evidence Vault):** Completed & Verified.
+  - **Phase G (AI Layer & Governance):** Ready to begin upon user approval.
