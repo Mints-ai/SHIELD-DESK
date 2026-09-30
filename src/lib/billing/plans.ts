@@ -187,6 +187,63 @@ export async function canEnrollEndpoint(tenantId: string, currentEnrolled: numbe
   };
 }
 
+export type QuotaStatus = "normal" | "warning" | "grace_period" | "blocked";
+
+export interface QuotaEvaluation {
+  status: QuotaStatus;
+  quotaPercent: number;
+  maxEndpoints: number;
+  currentEnrolled: number;
+  canEnroll: boolean;
+  canIngestTelemetry: boolean; // Always true: Never drop telemetry for over-quota!
+  message: string;
+}
+
+/**
+ * Evaluates tenant endpoint quota status per Section 40:
+ * - Soft warning at 90%
+ * - Grace period at 100%
+ * - Hard block on new agent enrollment at 110%
+ * - Never drop telemetry or kill active agents for over-quota
+ */
+export async function evaluateQuotaStatus(
+  tenantId: string,
+  currentEnrolled: number
+): Promise<QuotaEvaluation> {
+  const sub = await getTenantSubscription(tenantId);
+  const plan = BILLING_PLANS[sub.tier];
+  const max = plan.maxEndpoints;
+  const quotaPercent = Math.round((currentEnrolled / max) * 100);
+
+  let status: QuotaStatus = "normal";
+  let canEnroll = true;
+  let message = `Endpoint usage is healthy (${currentEnrolled}/${max}, ${quotaPercent}%).`;
+
+  if (quotaPercent >= 110) {
+    status = "blocked";
+    canEnroll = false;
+    message = `Quota exceeded by 110%+ (${currentEnrolled}/${max}). New agent enrollment is temporarily blocked. Existing agents and telemetry ingestion remain fully protected.`;
+  } else if (quotaPercent >= 100) {
+    status = "grace_period";
+    canEnroll = true; // In grace period up to 110%
+    message = `Plan endpoint cap reached (${currentEnrolled}/${max}). Tenant is in active grace period (up to 110%). Please upgrade subscription soon.`;
+  } else if (quotaPercent >= 90) {
+    status = "warning";
+    canEnroll = true;
+    message = `Approaching plan endpoint limit (${currentEnrolled}/${max}, ${quotaPercent}%). Upgrade recommended.`;
+  }
+
+  return {
+    status,
+    quotaPercent,
+    maxEndpoints: max,
+    currentEnrolled,
+    canEnroll,
+    canIngestTelemetry: true, // Master Prompt Rule: Never drop telemetry for over-quota
+    message,
+  };
+}
+
 /**
  * Updates a tenant's subscription tier upon successful payment confirmation.
  */

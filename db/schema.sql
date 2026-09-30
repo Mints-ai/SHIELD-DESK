@@ -361,6 +361,8 @@ ALTER TABLE hash_chain_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE endpoint_certificates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE endpoint_snapshots ENABLE ROW LEVEL SECURITY;
 ALTER TABLE endpoint_kill_switches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE endpoint_enrollment_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE endpoint_telemetry ENABLE ROW LEVEL SECURITY;
 
 -- Tenant Isolation Policies (enforced when app.current_tenant session variable is set)
 DO $$
@@ -395,8 +397,58 @@ BEGIN
       );
   END IF;
 
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_mitigation_tasks') THEN
+    CREATE POLICY tenant_isolation_mitigation_tasks ON mitigation_tasks
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_approval_tokens') THEN
+    CREATE POLICY tenant_isolation_approval_tokens ON approval_tokens
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_agents') THEN
     CREATE POLICY tenant_isolation_endpoint_agents ON endpoint_agents
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_agent_commands') THEN
+    CREATE POLICY tenant_isolation_agent_commands ON agent_commands
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_agent_command_logs') THEN
+    CREATE POLICY tenant_isolation_agent_command_logs ON agent_command_logs
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_hash_chain_audit') THEN
+    CREATE POLICY tenant_isolation_hash_chain_audit ON hash_chain_audit
       USING (
         current_setting('app.current_tenant', true) IS NULL OR
         current_setting('app.current_tenant', true) = '' OR
@@ -427,6 +479,36 @@ BEGIN
 
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_kill_switches') THEN
     CREATE POLICY tenant_isolation_endpoint_kill_switches ON endpoint_kill_switches
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_chat_audit_log') THEN
+    CREATE POLICY tenant_isolation_chat_audit_log ON chat_audit_log
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_enrollment_tokens') THEN
+    CREATE POLICY tenant_isolation_endpoint_enrollment_tokens ON endpoint_enrollment_tokens
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_telemetry') THEN
+    CREATE POLICY tenant_isolation_endpoint_telemetry ON endpoint_telemetry
       USING (
         current_setting('app.current_tenant', true) IS NULL OR
         current_setting('app.current_tenant', true) = '' OR

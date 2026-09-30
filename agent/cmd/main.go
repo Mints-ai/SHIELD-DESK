@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,7 +38,28 @@ var (
 	enrollToken   = flag.String("enroll-token", "", "One-time enrollment token (sdt_...) for dynamic host provisioning")
 
 	controlPlanePubKey *rsa.PublicKey
+
+	seenNoncesMu sync.Mutex
+	seenNonces   = make(map[string]time.Time)
 )
+
+func isNonceReplayed(nonce string) bool {
+	seenNoncesMu.Lock()
+	defer seenNoncesMu.Unlock()
+
+	now := time.Now()
+	for n, t := range seenNonces {
+		if now.Sub(t) > 24*time.Hour {
+			delete(seenNonces, n)
+		}
+	}
+
+	if _, exists := seenNonces[nonce]; exists {
+		return true
+	}
+	seenNonces[nonce] = now
+	return false
+}
 
 type QueuedCommand struct {
 	ID        string `json:"id"`
@@ -265,6 +287,13 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 		}
 
 		log.Printf("[Security] VERIFIED: RSA-SHA256 signature valid for command %s (Tier: %s)", cmd.ID, cmd.Tier)
+
+		// 4. Anti-Replay Defense: Verify that nonce has not been previously executed
+		if isNonceReplayed(nonce) {
+			log.Printf("[Security Alert] REPLAY ATTACK REJECTED: Command %s nonce '%s' already executed for agent %s", cmd.ID, nonce, targetAgentID)
+			reportResult(client, controlURL, cmd.ID, "failed", fmt.Sprintf("REPLAY_ATTACK_DETECTED: Command nonce '%s' has already been executed.", nonce), "")
+			continue
+		}
 
 		if dryRun {
 			log.Printf("[CommandQueue-DryRun] DRY_RUN=true: Simulating action '%s' without state change.", cmd.Command)

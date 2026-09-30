@@ -3,49 +3,38 @@
  *
  * Centralizes environment detection, demo simulation gating, and
  * fail-closed policies across all control-plane APIs and services.
- *
- * Directives:
- * - DEMO_MODE: When true, enables fallback fixtures for local development,
- *   demos, and evaluation. Defaults to true in non-production, false in production.
- * - FAIL_CLOSED: In production (or when DEMO_MODE=false), any offline or
- *   unavailable dependency (scanners, agent daemons, telemetry lakes)
- *   MUST fail closed with an explicit error rather than silently returning
- *   simulated success.
- * - DEV_PERSONAS: Mock user switching (dev-admin, dev-analyst, etc.) is strictly
- *   prohibited in production environments.
+ * Bridged with strict schema validation in @/config.
  */
 
-export type AppEnvironment = "development" | "staging" | "production" | "test";
+import {
+  getConfig,
+  AppEnvironment,
+  ProductionSafetyGuard,
+  SecuritySafetyViolationError,
+} from "@/config";
+
+export type { AppEnvironment };
 
 /**
  * Returns the current application deployment environment.
  */
 export function getAppEnvironment(): AppEnvironment {
-  const env = process.env.APP_ENV || process.env.NODE_ENV || "development";
-  if (env === "production") return "production";
-  if (env === "staging") return "staging";
-  if (env === "test") return "test";
-  return "development";
+  return getConfig().environment;
 }
 
 /**
  * True if running under a production deployment.
  */
 export function isProduction(): boolean {
-  return getAppEnvironment() === "production";
+  return getConfig().isProduction;
 }
 
 /**
  * True if demo/simulation fixtures and fallback data are permitted.
  * Strictly forbidden in production environments under any circumstances.
- * Defaults to true in development/test, false in production.
- * Can be explicitly overridden via process.env.DEMO_MODE ("true" | "false") in non-production.
  */
 export function isDemoMode(): boolean {
-  if (isProduction()) return false;
-  if (process.env.DEMO_MODE === "true") return true;
-  if (process.env.DEMO_MODE === "false") return false;
-  return true;
+  return getConfig().demoMode;
 }
 
 export const isDemoModeActive = isDemoMode;
@@ -56,23 +45,14 @@ export const isDemoModeActive = isDemoMode;
  * ALWAYS true in production.
  */
 export function shouldFailClosed(): boolean {
-  return isProduction() || process.env.FAIL_CLOSED === "true";
+  return getConfig().failClosed;
 }
 
 /**
  * Controls whether endpoint command simulation is permitted.
- * Policy:
- * - PRODUCTION_SIMULATION: always false (cannot be overridden)
- * - STAGING_SIMULATION: false by default, must be explicitly enabled
- * - DEV_SIMULATION: true by default in development unless set to false
  */
 export function isSimulationAllowed(): boolean {
-  if (isProduction()) return false;
-  if (process.env.APP_ENV === "staging") {
-    return process.env.STAGING_SIMULATION === "true";
-  }
-  if (process.env.DEV_SIMULATION === "false") return false;
-  return isDemoMode();
+  return getConfig().simulationAllowed;
 }
 
 /**
@@ -80,19 +60,22 @@ export function isSimulationAllowed(): boolean {
  * is permitted for testing. Strictly forbidden in production.
  */
 export function isDevPersonaAllowed(): boolean {
-  return !isProduction() && isDemoMode();
+  return getConfig().devPersonasAllowed;
 }
 
 /**
  * Environment metadata payload safe for consumption by frontend status indicators.
  */
 export function getClientEnvironmentMetadata() {
+  const cfg = getConfig();
   return {
-    environment: getAppEnvironment(),
-    isProduction: isProduction(),
-    isDemoMode: isDemoMode(),
-    failClosed: shouldFailClosed(),
-    devPersonasAllowed: isDevPersonaAllowed(),
-    simulationAllowed: isSimulationAllowed(),
+    environment: cfg.environment,
+    isProduction: cfg.isProduction,
+    isDemoMode: cfg.demoMode,
+    failClosed: cfg.failClosed,
+    devPersonasAllowed: cfg.devPersonasAllowed,
+    simulationAllowed: cfg.simulationAllowed,
   };
 }
+
+export { ProductionSafetyGuard, SecuritySafetyViolationError };

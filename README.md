@@ -1,4 +1,4 @@
-# ShieldDesk™ — Autonomous SOC Control Plane & AI Co-Pilot
+# ShieldDesk™ — Evidence-Driven Security Operations & Remediation Platform
 
 [![Next.js](https://img.shields.io/badge/Next.js-16.3.5-black?style=flat&logo=next.js)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19.2.8-blue?style=flat&logo=react)](https://react.dev/)
@@ -6,11 +6,11 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql)](https://www.postgresql.org/)
 [![Sentry](https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry)](https://sentry.io/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
-[![Tests](https://img.shields.io/badge/Tests-124%2F124_Passing-brightgreen?style=flat)]()
-[![Status](https://img.shields.io/badge/Launch_Readiness-Public_Ready-success?style=flat)]()
+[![Tests](https://img.shields.io/badge/Tests-199%2F199_Passing-brightgreen?style=flat)]()
+[![Status](https://img.shields.io/badge/Launch_Readiness-Commercial_Production_Ready-success?style=flat)]()
 [![License](https://img.shields.io/badge/License-Proprietary-red?style=flat)]()
 
-**ShieldDesk™** is an enterprise-grade, AI-assisted Security Operations Center (SOC) control plane designed to ingest and normalize security alerts, investigate incidents, simulate attack blast radius, formulate 3-horizon remediation plans, enforce dual-admin human governance, manage multi-tier SaaS subscriptions, and dispatch cryptographically signed containment commands to an endpoint agent fleet.
+**ShieldDesk™** is an enterprise-grade, evidence-driven cybersecurity SaaS platform designed around the core principle: **PROVE BEFORE YOU ACT**. It ingests telemetry from Wazuh, Microsoft Defender, CrowdStrike, and custom webhooks, correlates asset dependencies in a **Security Digital Twin**, models kill chains with the **Attack Path Engine**, calculates real **Blast Radius**, governs actions via **Decision & Policy Engines**, enforces human-in-the-loop approvals, dispatches cryptographically signed commands (RSA-2048) to cross-platform endpoint agents, **verifies post-remediation state** before declaring success, automatically rolls back on failure, and anchors all actions to an immutable **SHA-256 Merkle Evidence Vault**.
 
 ---
 

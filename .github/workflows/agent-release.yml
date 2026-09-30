@@ -1,0 +1,77 @@
+name: Endpoint Agent Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'agent-v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release-agents:
+    name: Cross-Compile, Sign, Attest & Release Universal Endpoint Agents
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.23
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Run Security Tests
+        run: go test -v -race ./...
+
+      - name: Cross-Compile Agent Binaries
+        run: |
+          mkdir -p dist
+          # Linux AMD64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/shielddesk-agent-linux-amd64 ./cmd/main.go
+          # Linux ARM64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/shielddesk-agent-linux-arm64 ./cmd/main.go
+          # Windows AMD64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/shielddesk-agent-windows-amd64.exe ./cmd/main.go
+
+      - name: Compute SHA-256 Checksums
+        working-directory: agent/dist
+        run: sha256sum * > SHA256SUMS
+
+      - name: Generate Anti-Downgrade Release Manifest
+        working-directory: agent/dist
+        run: |
+          cat <<EOF > release-manifest.json
+          {
+            "version": "${{ github.ref_name }}",
+            "minimumSupportedVersion": "0.4.0",
+            "releaseDate": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+            "antiDowngradeEnforced": true,
+            "signatureAlgorithm": "RSA-PSS-SHA256"
+          }
+          EOF
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Cryptographically Sign Agent Binaries & Checksums
+        working-directory: agent/dist
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign-blob --yes --bundle shielddesk-agent-linux-amd64.bundle shielddesk-agent-linux-amd64
+          cosign sign-blob --yes --bundle shielddesk-agent-windows-amd64.bundle shielddesk-agent-windows-amd64.exe
+          cosign sign-blob --yes --bundle SHA256SUMS.bundle SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            agent/dist/*

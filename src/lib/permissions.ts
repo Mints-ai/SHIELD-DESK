@@ -13,7 +13,7 @@ import "server-only";
  * boundaries at all; every other check is tenant isolation, applied
  * uniformly to every query in lib/tools/shieldDeskChatTools.ts.
  */
-export type ShieldDeskRole = "system_admin" | "super_admin" | "analyst" | "responder" | "viewer" | "user";
+export type ShieldDeskRole = "system_admin" | "super_admin" | "analyst" | "responder" | "viewer" | "auditor" | "user";
 
 export type Permission =
   | "VIEW_CROSS_TENANT"
@@ -68,6 +68,11 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.read",
     "cve.read",
     // Viewers have READ only — they cannot approve any action.
+  ],
+  auditor: [
+    "incident.read",
+    "cve.read",
+    // Auditors have read-only access to audit logs, evidence packages, and compliance reports.
   ],
   user: [
     "incident.read",

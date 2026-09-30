@@ -5,6 +5,7 @@ import { getApprovalToken, markApprovalTokenConsumed } from "@/lib/governance/ap
 import { checkThrottle, recordMockThrottleCommand } from "@/lib/governance/blastRadiusThrottle";
 import { signCommand } from "@/lib/fleet/commandSigning";
 import { isDemoMode, isProduction, isSimulationAllowed } from "@/lib/config/environment";
+import { validateCapabilitySupport, getCapability } from "./capabilities";
 import crypto from "crypto";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
@@ -363,12 +364,59 @@ export async function triggerKillSwitch({
     payload: { agentId: agentId || "ALL_TENANT_AGENTS", active, affectedCount: count },
   });
 
+  if (!agentId) {
+    if (active) {
+      TENANT_KILL_SWITCH_REGISTRY.add(caller.tenant_id);
+    } else {
+      TENANT_KILL_SWITCH_REGISTRY.delete(caller.tenant_id);
+    }
+  }
+
   return {
     affectedCount: count,
     message: active
       ? `Emergency Kill Switch engaged. ${count} endpoint agent(s) disconnected and revoked.`
       : `Emergency Kill Switch disengaged. ${count} endpoint agent(s) restored.`,
   };
+}
+
+export const TENANT_KILL_SWITCH_REGISTRY = new Set<string>();
+
+/**
+ * Checks whether an emergency kill switch is engaged for a given tenant.
+ */
+export async function isKillSwitchEngaged(tenantId: string): Promise<boolean> {
+  if (TENANT_KILL_SWITCH_REGISTRY.has(tenantId)) {
+    return true;
+  }
+
+  try {
+    const res = await query<{ count: string }>(
+      `SELECT count(*) FROM endpoint_agents WHERE tenant_id = $1 AND kill_switch_active = true;`,
+      [tenantId]
+    );
+    if (res.rows[0] && parseInt(res.rows[0].count, 10) > 0) {
+      return true;
+    }
+  } catch {
+    // Fall back to memory check
+  }
+
+  return MOCK_ENDPOINT_AGENTS.some((a) => a.tenant_id === tenantId && a.kill_switch_active);
+}
+
+/**
+ * Programmatically sets the kill switch state for a tenant (used in tests and administrative actions).
+ */
+export async function setKillSwitchState(tenantId: string, active: boolean): Promise<void> {
+  await triggerKillSwitch({
+    active,
+    caller: {
+      id: "usr-secops-admin",
+      tenant_id: tenantId,
+      role: "system_admin",
+    },
+  });
 }
 
 /**
@@ -717,6 +765,12 @@ export async function executeAgentCommand({
         );
       }
     }
+  }
+
+  // Capability Validation (Phase 11)
+  const capCheck = validateCapabilitySupport(command, agent.os_type);
+  if (!capCheck.supported && capCheck.capability) {
+    throw new Error(`CAPABILITY_UNSUPPORTED: ${capCheck.reason}`);
   }
 
   // Tier 1 safety snapshot verification

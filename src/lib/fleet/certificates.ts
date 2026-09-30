@@ -43,14 +43,23 @@ function derSeq(items: Buffer[]): Buffer {
 }
 
 function derInt(num: number | Buffer): Buffer {
+  let buf: Buffer;
   if (Buffer.isBuffer(num)) {
-    if (num[0] & 0x80) return derTag(0x02, Buffer.concat([Buffer.from([0x00]), num]));
-    return derTag(0x02, num);
+    buf = num;
+  } else {
+    let hex = num.toString(16);
+    if (hex.length % 2) hex = "0" + hex;
+    buf = Buffer.from(hex, "hex");
   }
-  let hex = num.toString(16);
-  if (hex.length % 2) hex = "0" + hex;
-  const buf = Buffer.from(hex, "hex");
-  if (buf[0] & 0x80) return derTag(0x02, Buffer.concat([Buffer.from([0x00]), buf]));
+  // Strip redundant leading 0x00 bytes if the next byte does not have MSB set
+  let start = 0;
+  while (start < buf.length - 1 && buf[start] === 0x00 && !(buf[start + 1] & 0x80)) {
+    start++;
+  }
+  buf = buf.subarray(start);
+  if (buf[0] & 0x80) {
+    buf = Buffer.concat([Buffer.from([0x00]), buf]);
+  }
   return derTag(0x02, buf);
 }
 
