@@ -1,5 +1,6 @@
-title: ShieldDesk Documentation
-description: User guide and engineering docs for the ShieldDesk Autonomous SOC platform. Built by Mints Global.
+site:
+  title: ShieldDesk Documentation
+  description: User guide and engineering docs for the ShieldDesk Autonomous SOC platform by Mints Global.
 
 structure:
   summary: docs/SUMMARY.md
