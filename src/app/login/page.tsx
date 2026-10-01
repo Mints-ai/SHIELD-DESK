@@ -85,6 +85,16 @@ function LoginForm() {
           });
           if (error) {
             setErrorMessage(`Supabase Auth: ${error.message}`);
+            // Report to Threat Engine so it immediately appears in the Alerts tab
+            fetch("/api/threats", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "record_login_failure",
+                email,
+                reason: `Supabase Auth: ${error.message}`,
+              }),
+            }).catch(() => {});
           } else {
             setSuccessMessage(`Authenticated via Supabase as ${data.user?.email || "Operator"}! Redirecting...`);
             setTimeout(() => router.push(redirectTarget), 800);

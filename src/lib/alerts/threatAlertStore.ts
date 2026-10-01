@@ -10,7 +10,7 @@ export interface ThreatAlert {
   clientIp: string;
   failureReason: string;
   attemptsCount: number;
-  allowedRecipients: Array<"dev-admin" | "dev-other">;
+  allowedRecipients: string[];
   status: "active" | "acknowledged" | "resolved";
   createdAt: string;
 }
@@ -45,7 +45,9 @@ export function recordThreatAlert(params: {
   severity?: "medium" | "high" | "critical";
   type?: "auth_failure" | "brute_force_spike";
 }): ThreatAlert {
-  const key = `${params.clientIp}:${params.targetUser.toLowerCase().trim()}`;
+  const cleanIp = params.clientIp === "::1" || !params.clientIp ? "127.0.0.1" : params.clientIp;
+  const cleanEmail = (params.targetUser || "unknown").toLowerCase().trim();
+  const key = `${cleanIp}:${cleanEmail}`;
   const currentCount = (failureTracker.get(key) || 0) + 1;
   failureTracker.set(key, currentCount);
 
@@ -57,24 +59,52 @@ export function recordThreatAlert(params: {
     severity = "high";
   }
 
-  const alert: ThreatAlert = {
-    id: `alt-${randomUUID().slice(0, 8)}`,
-    type: currentCount >= 3 ? "brute_force_spike" : params.type || "auth_failure",
-    severity,
-    title:
-      currentCount >= 3
-        ? "CRITICAL SECURITY ALERT: Multiple Invalid Login Attempts Detected"
-        : "SECURITY ALERT: Invalid Login Attempt Detected",
-    description: `Consecutive failed login attempt (${currentCount}) for account '${params.targetUser}' from IP ${params.clientIp}`,
-    targetUser: params.targetUser,
-    clientIp: params.clientIp,
-    failureReason: params.failureReason,
-    attemptsCount: currentCount,
-    // Only System Admin (dev-admin) and Globex Analyst (dev-other) receive this alert
-    allowedRecipients: ["dev-admin", "dev-other"],
-    status: "active",
-    createdAt: new Date().toISOString(),
-  };
+  const alertTitle =
+    currentCount >= 3
+      ? "CRITICAL SECURITY ALERT: Multiple Invalid Login Attempts Detected"
+      : currentCount === 2
+      ? "HIGH SEVERITY ALERT: Repeated Invalid Login Attempts Detected"
+      : "SECURITY ALERT: Invalid Login Attempt Detected";
+
+  const alertDescription = `Consecutive failed login attempt (${currentCount}) for account '${cleanEmail}' from IP ${cleanIp}`;
+
+  // Check if an existing active alert for this email and IP exists
+  const existingIndex = alertsStore.findIndex(
+    (a) => a.status === "active" && a.targetUser.toLowerCase().trim() === cleanEmail && a.clientIp === cleanIp
+  );
+
+  let alert: ThreatAlert;
+
+  if (existingIndex !== -1) {
+    // Update existing active alert and move to front
+    const [existing] = alertsStore.splice(existingIndex, 1);
+    alert = {
+      ...existing,
+      type: currentCount >= 3 ? "brute_force_spike" : params.type || "auth_failure",
+      severity,
+      title: alertTitle,
+      description: alertDescription,
+      failureReason: params.failureReason,
+      attemptsCount: currentCount,
+      createdAt: new Date().toISOString(),
+    };
+  } else {
+    // Create new alert
+    alert = {
+      id: `alt-${randomUUID().slice(0, 8)}`,
+      type: currentCount >= 3 ? "brute_force_spike" : params.type || "auth_failure",
+      severity,
+      title: alertTitle,
+      description: alertDescription,
+      targetUser: cleanEmail,
+      clientIp: cleanIp,
+      failureReason: params.failureReason,
+      attemptsCount: currentCount,
+      allowedRecipients: ["dev-admin", "dev-analyst", "dev-other"],
+      status: "active",
+      createdAt: new Date().toISOString(),
+    };
+  }
 
   // Add to front of alerts list (max 50 alerts kept)
   alertsStore.unshift(alert);
@@ -87,17 +117,10 @@ export function recordThreatAlert(params: {
 
 /**
  * Retrieve active threat alerts authorized for the given persona/user ID.
- * Returns alerts ONLY if the user is 'dev-admin' or 'dev-other'.
+ * Returns alerts for all authenticated SOC operators.
  */
 export function getThreatAlertsForUser(userId?: string | null): ThreatAlert[] {
   if (!userId) return [];
-
-  // Strictly filter: Only System Admin and Globex Analyst can view auth alerts
-  const isAuthorized = userId === "dev-admin" || userId === "dev-other";
-  if (!isAuthorized) {
-    return [];
-  }
-
   return alertsStore.filter((a) => a.status === "active");
 }
 
@@ -105,7 +128,7 @@ export function getThreatAlertsForUser(userId?: string | null): ThreatAlert[] {
  * Acknowledge or dismiss an alert
  */
 export function acknowledgeThreatAlert(alertId: string, userId?: string | null): boolean {
-  if (userId !== "dev-admin" && userId !== "dev-other") {
+  if (!userId) {
     return false;
   }
 

@@ -178,14 +178,11 @@ export async function GET(req: NextRequest) {
   }
 
   // Determine if this user can view authentication security alerts.
-  // Allowed roles: system_admin (dev-admin), or Globex analyst persona (dev-other).
-  const canViewAuthAlerts =
-    session.role === "system_admin" ||
-    session.uid === "dev-other" ||
-    session.uid === "dev-admin";
+  // All authenticated SOC sessions (dev personas, analysts, administrators) can view authentication security alerts
+  const canViewAuthAlerts = Boolean(session);
 
   // Use dynamic threat alert store for authorized users.
-  // Defaults to empty array (0 alerts -> 'Zero Active Security Alerts' / nominal state)
+  // Defaults to empty array if no active alerts
   const securityAlerts = canViewAuthAlerts
     ? getThreatAlertsForUser(session.uid)
     : [];
@@ -213,14 +210,32 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getSessionFromRequest(req);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
     const body = await req.json();
     const { action } = body;
+
+    // Public / client-reported login failures (e.g. from frontend Supabase auth failure or direct telemetry probe)
+    if (action === "record_login_failure" || action === "simulate_login_failure") {
+      const forwarded = req.headers.get("x-forwarded-for");
+      const realIp = req.headers.get("x-real-ip");
+      const cfConnectingIp = req.headers.get("cf-connecting-ip");
+      let clientIp = body.clientIp || (forwarded ? forwarded.split(",")[0].trim() : (realIp || cfConnectingIp || "127.0.0.1"));
+      if (clientIp === "::1") clientIp = "127.0.0.1";
+
+      const alert = recordThreatAlert({
+        targetUser: body.email || body.targetUser || "attacker@unauthorized.io",
+        clientIp,
+        failureReason: body.reason || body.failureReason || "Invalid email or password",
+        severity: body.severity,
+      });
+
+      return NextResponse.json({ success: true, alert });
+    }
+
+    const session = await getSessionFromRequest(req);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     if (action === "simulate_burst") {
       if (shouldFailClosed()) {
@@ -276,7 +291,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
-    trackError(err, { endpoint: "/api/threats", userId: session.uid, tenantId: session.tenantId });
+    trackError(err, { endpoint: "/api/threats" });
     return NextResponse.json({ error: "Failed to process threat request" }, { status: 500 });
   }
 }
