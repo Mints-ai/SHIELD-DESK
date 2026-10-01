@@ -103,13 +103,6 @@ export async function runTrivyScan(
   type: "fs" | "image" = "fs"
 ): Promise<ScanResult> {
   const startTime = Date.now();
-  const trivyBin = getTrivyBinaryPath();
-
-  if (!trivyBin) {
-    throw new Error(
-      "Trivy scanner binary not found on host. Please run 'npm run setup:trivy' or install Trivy into tools/trivy/ or PATH."
-    );
-  }
 
   // Security guard: disallow flags passed in target string (CLI option injection prevention)
   if (typeof target !== "string" || target.trim().startsWith("-")) {
@@ -129,6 +122,13 @@ export async function runTrivyScan(
         throw new Error(`Target path does not exist on filesystem: ${resolvedTarget}`);
       }
     }
+  }
+
+  const trivyBin = getTrivyBinaryPath();
+  if (!trivyBin) {
+    throw new Error(
+      "Trivy scanner binary not found on host. Please run 'npm run setup:trivy' or install Trivy into tools/trivy/ or PATH."
+    );
   }
 
   const args: string[] = [
