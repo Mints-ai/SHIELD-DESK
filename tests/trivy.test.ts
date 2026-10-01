@@ -1,5 +1,8 @@
+import "./setup";
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { NextRequest } from "next/server";
+import { POST as chatPost } from "../src/app/api/chat/route";
 import { getTrivyBinaryPath, isTrivyAvailable, runTrivyScan } from "../src/lib/trivy";
 
 describe("Trivy Vulnerability Scanner Suite", () => {
@@ -112,5 +115,43 @@ describe("Trivy Vulnerability Scanner Suite", () => {
       }
       throw err;
     }
+  });
+
+  test("Chatbot RBAC: Routes Trivy scan query with role-based formatting and scanner redirection", async () => {
+    // 1. Test as Admin
+    const reqAdmin = new NextRequest("http://localhost:3000/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ShieldDesk-User": "dev-admin",
+      },
+      body: JSON.stringify({ message: "Run a full Trivy vulnerability scan" }),
+    });
+
+    const resAdmin = await chatPost(reqAdmin);
+    assert.strictEqual(resAdmin.status, 200);
+    const bodyAdmin = await resAdmin.text();
+    assert.match(bodyAdmin, /critical\s*-\s*\d+/i);
+    assert.match(bodyAdmin, /high\s*-\s*\d+/i);
+    assert.match(bodyAdmin, /medium\s*-\s*\d+/i);
+    assert.match(bodyAdmin, /low\s*-\s*\d+/i);
+    assert.match(bodyAdmin, /Role Authority \(SuperAdmin \/ Governance\)/i);
+    assert.match(bodyAdmin, /\/dashboard\/scanner\?view=latest/);
+
+    // 2. Test as Analyst
+    const reqAnalyst = new NextRequest("http://localhost:3000/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ShieldDesk-User": "dev-analyst",
+      },
+      body: JSON.stringify({ message: "Run a full Trivy vulnerability scan" }),
+    });
+
+    const resAnalyst = await chatPost(reqAnalyst);
+    assert.strictEqual(resAnalyst.status, 200);
+    const bodyAnalyst = await resAnalyst.text();
+    assert.match(bodyAnalyst, /Role Authority \(Security Operations Analyst\)/i);
+    assert.match(bodyAnalyst, /\/dashboard\/scanner\?view=latest/);
   });
 });

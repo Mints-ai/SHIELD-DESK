@@ -26,12 +26,14 @@ interface ChatMessage {
 }
 
 const GLOBEX_SUGGESTIONS = [
+  "Run a full Trivy vulnerability scan",
   "Simulate Blast Radius for CVE-2024-6387",
   "Check for leaked secrets and exposed tokens",
   "Show me todays critical incidents",
 ];
 
 const DEFAULT_SUGGESTIONS = [
+  "Run a full Trivy vulnerability scan",
   "Show me todays critical incidents",
   "Investigate INC-1042",
   "Generate automated remediation runbook",

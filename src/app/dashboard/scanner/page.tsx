@@ -92,7 +92,24 @@ export default function ScannerDashboardPage() {
         headers: { "X-ShieldDesk-User": activeUserId },
       });
       const data = await res.json();
-      // Keep Trivy CVE findings blank upon initial tab entry until user triggers scan
+      
+      // If redirected from chatbot with ?view=latest, immediately display the scan findings
+      const isViewLatest = typeof window !== "undefined" && window.location.search.includes("view=latest");
+      if (isViewLatest) {
+        if (data.cveFindings && data.cveFindings.length > 0) {
+          setCves(data.cveFindings);
+          setScanResult(`Scan Completed: Loaded ${data.cveFindings.length} vulnerabilities from Trivy scan.`);
+          setActiveTab("cve");
+          setTimeout(() => {
+            const el = document.getElementById("findings-tabs");
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 150);
+        } else {
+          // If no cached scan findings in memory yet, automatically trigger scan
+          triggerTrivyScan();
+        }
+      }
+
       if (data.secretFindings) setSecrets(data.secretFindings);
       setServiceConnected(Boolean(data.serviceConnected));
     } catch (err) {
