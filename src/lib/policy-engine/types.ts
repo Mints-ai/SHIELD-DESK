@@ -43,6 +43,8 @@ export interface TenantSecurityPolicy {
   updatedAt: string;
 }
 
+import { AutonomyTier } from "../governance/autonomyTier";
+
 export interface PolicyEvaluationRequest {
   tenantId: string;
   action: string;
@@ -53,6 +55,7 @@ export interface PolicyEvaluationRequest {
   hostname?: string;
   blastRadiusScore?: number;
   autonomyMode?: AutonomyMode;
+  assetAutonomyMode?: AutonomyMode;
   tenantPolicy?: Partial<TenantSecurityPolicy>;
 }
 
@@ -63,4 +66,6 @@ export interface PolicyEvaluationResult {
   requiredApprovals: number;
   isExceptionApplied: boolean;
   enforceMfa: boolean;
+  autonomyTier?: AutonomyTier;
+  effectiveAutonomyMode?: AutonomyMode;
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { getComplianceSummary, exportAuditEvidencePackage } from "@/lib/compliance/iso27001";
+import { AuditExportGenerator } from "@/lib/compliance/exportGenerator";
 import { trackError } from "@/lib/observability/errorTracker";
 
 export async function GET(req: NextRequest) {
@@ -17,8 +18,27 @@ export async function GET(req: NextRequest) {
     const isExport = url.searchParams.get("export") === "true";
 
     if (isExport) {
-      const evidence = await exportAuditEvidencePackage(caller);
-      return NextResponse.json(evidence);
+      const format = url.searchParams.get("format") === "csv" ? "csv" : "json";
+      const isLegacy = url.searchParams.get("legacy") === "true";
+
+      if (isLegacy && format === "json") {
+        const evidence = await exportAuditEvidencePackage(caller);
+        return NextResponse.json(evidence);
+      }
+
+      const bundle = await AuditExportGenerator.generateBundle({
+        tenantId: caller.tenant_id,
+        exportedBy: caller.id,
+        format,
+        limit: url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit")!, 10) : undefined,
+        startDate: url.searchParams.get("startDate") || undefined,
+        endDate: url.searchParams.get("endDate") || undefined,
+      });
+
+      return new NextResponse(bundle.data, {
+        status: 200,
+        headers: bundle.headers,
+      });
     }
 
     const summary = await getComplianceSummary(caller);
