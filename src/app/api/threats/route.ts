@@ -178,11 +178,13 @@ export async function GET(req: NextRequest) {
   }
 
   // Determine if this user can view authentication security alerts.
-  // All authenticated SOC sessions (dev personas, analysts, administrators) can view authentication security alerts
-  const canViewAuthAlerts = Boolean(session);
+  // Strictly restricted: Only System Admin and Globex Analyst can view alerts
+  const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
+  const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
+  const canViewAuthAlerts = Boolean(session && (isSystemAdmin || isGlobexAnalyst));
 
   // Use dynamic threat alert store for authorized users.
-  // Defaults to empty array if no active alerts
+  // Defaults to empty array if no active alerts or user is unauthorized
   const securityAlerts = canViewAuthAlerts
     ? getThreatAlertsForUser(session.uid)
     : [];
@@ -269,12 +271,21 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
+    const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
+
     if (action === "acknowledge_alert") {
+      if (!isSystemAdmin && !isGlobexAnalyst) {
+        return NextResponse.json({ error: "Forbidden: Alert acknowledgement restricted" }, { status: 403 });
+      }
       const acknowledged = acknowledgeThreatAlert(body.alert_id, session.uid);
       return NextResponse.json({ success: acknowledged });
     }
 
     if (action === "reset_alerts") {
+      if (!isSystemAdmin && !isGlobexAnalyst) {
+        return NextResponse.json({ error: "Forbidden: Alert clearing restricted" }, { status: 403 });
+      }
       resetThreatAlerts();
       return NextResponse.json({ success: true });
     }

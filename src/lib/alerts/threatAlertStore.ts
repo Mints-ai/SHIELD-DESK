@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { DEV_USERS, type DevUserId } from "@/lib/constants/devUsers";
 
 export interface ThreatAlert {
   id: string;
@@ -33,6 +34,20 @@ if (!global.__shieldDeskRecentLoginFailures) {
 
 const alertsStore = global.__shieldDeskThreatAlerts;
 const failureTracker = global.__shieldDeskRecentLoginFailures;
+
+/**
+ * Determine if a user/persona is authorized to view or manage threat alerts.
+ * Strictly restricted to System Admin (dev-admin / system_admin) and Globex Analyst (dev-other / globex-tenant).
+ */
+export function isUserAuthorizedForAlerts(userId?: string | null): boolean {
+  if (!userId) return false;
+  if (userId === "dev-admin" || userId === "dev-other") return true;
+  const devUser = DEV_USERS[userId as DevUserId];
+  if (devUser) {
+    return devUser.role === "system_admin" || devUser.tenantId === "globex-tenant";
+  }
+  return false;
+}
 
 /**
  * Record an authentication failure alert in the Threat Engine store.
@@ -86,6 +101,7 @@ export function recordThreatAlert(params: {
       description: alertDescription,
       failureReason: params.failureReason,
       attemptsCount: currentCount,
+      allowedRecipients: ["dev-admin", "dev-other"],
       createdAt: new Date().toISOString(),
     };
   } else {
@@ -100,7 +116,7 @@ export function recordThreatAlert(params: {
       clientIp: cleanIp,
       failureReason: params.failureReason,
       attemptsCount: currentCount,
-      allowedRecipients: ["dev-admin", "dev-analyst", "dev-other"],
+      allowedRecipients: ["dev-admin", "dev-other"],
       status: "active",
       createdAt: new Date().toISOString(),
     };
@@ -117,10 +133,12 @@ export function recordThreatAlert(params: {
 
 /**
  * Retrieve active threat alerts authorized for the given persona/user ID.
- * Returns alerts for all authenticated SOC operators.
+ * Returns alerts only for System Admin and Globex Analyst.
  */
 export function getThreatAlertsForUser(userId?: string | null): ThreatAlert[] {
-  if (!userId) return [];
+  if (!isUserAuthorizedForAlerts(userId)) {
+    return [];
+  }
   return alertsStore.filter((a) => a.status === "active");
 }
 
@@ -128,7 +146,7 @@ export function getThreatAlertsForUser(userId?: string | null): ThreatAlert[] {
  * Acknowledge or dismiss an alert
  */
 export function acknowledgeThreatAlert(alertId: string, userId?: string | null): boolean {
-  if (!userId) {
+  if (!isUserAuthorizedForAlerts(userId)) {
     return false;
   }
 

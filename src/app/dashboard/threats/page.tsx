@@ -69,7 +69,7 @@ export interface ThreatSecurityAlert {
 import { useChat } from "@/lib/context/ChatContext";
 
 export default function ThreatsDashboardPage() {
-  const { activeUserId, openChatWithPrompt } = useChat();
+  const { activeUserId, activeUser, openChatWithPrompt } = useChat();
   const [activeTab, setActiveTab] = useState<"yara" | "sigma" | "anomaly" | "ingest" | "alerts">("anomaly");
   const [loading, setLoading] = useState(false);
   const [yaraRules, setYaraRules] = useState<RuleItem[]>([]);
@@ -77,10 +77,22 @@ export default function ThreatsDashboardPage() {
   const [anomalies, setAnomalies] = useState<AnomalyMetric[]>([]);
   const [telemetry, setTelemetry] = useState<any>(null);
   const [securityAlerts, setSecurityAlerts] = useState<ThreatSecurityAlert[]>([]);
-  const [canViewAuthAlerts, setCanViewAuthAlerts] = useState<boolean>(true);
+  const [canViewAuthAlerts, setCanViewAuthAlerts] = useState<boolean>(false);
 
-  // All authenticated SOC users (Analyst, Admin, Auditor) have situational access to threat alerts
-  const isAuthorizedForAlerts = true;
+  // Strictly restricted: Only System Admin (dev-admin / system_admin) and Globex Analyst (dev-other / globex-tenant) can view alerts
+  const isAuthorizedForAlerts =
+    activeUserId === "dev-admin" ||
+    activeUserId === "dev-other" ||
+    activeUser?.role === "system_admin" ||
+    activeUser?.tenantId === "globex-tenant" ||
+    canViewAuthAlerts;
+
+  // Auto-switch to anomaly tab if active persona is not authorized for alerts
+  useEffect(() => {
+    if (!isAuthorizedForAlerts && activeTab === "alerts") {
+      setActiveTab("anomaly");
+    }
+  }, [isAuthorizedForAlerts, activeTab]);
 
   // Simulation Feedback
   const [simFeedback, setSimFeedback] = useState<string | null>(null);
@@ -99,8 +111,12 @@ export default function ThreatsDashboardPage() {
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
       if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
-      if (data.security_alerts) setSecurityAlerts(data.security_alerts);
-      setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts ?? true));
+      if (data.security_alerts && isAuthorizedForAlerts) {
+        setSecurityAlerts(data.security_alerts);
+      } else {
+        setSecurityAlerts([]);
+      }
+      setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
     } catch (err) {
       console.error("Failed to load threats:", err);
     } finally {
@@ -110,42 +126,12 @@ export default function ThreatsDashboardPage() {
 
   useEffect(() => {
     fetchThreatData();
-    // Continuous real-time polling so failed logins show immediately on the alerts tab
+    // Continuous real-time polling so alerts show immediately on the alerts tab
     const interval = setInterval(() => {
       fetchThreatData(true);
     }, 3000);
     return () => clearInterval(interval);
   }, [activeUserId]);
-
-  const simulateInvalidLogin = async () => {
-    try {
-      setLoading(true);
-      const testEmail = "intruder.recon@unauthorized-domain.com";
-      const testIp = "198.51.100.89";
-      const res = await fetch("/api/threats", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-ShieldDesk-User": activeUserId,
-        },
-        body: JSON.stringify({
-          action: "record_login_failure",
-          email: testEmail,
-          clientIp: testIp,
-          reason: "Invalid password hash verification failed (SOC Simulation)",
-        }),
-      });
-      const data = await res.json();
-      if (data.alert) {
-        setSecurityAlerts((prev) => [data.alert, ...prev.filter((a) => a.id !== data.alert.id)]);
-        setActiveTab("alerts");
-      }
-    } catch (err) {
-      console.error("Failed to simulate invalid login:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const triggerAnomalySimulation = async () => {
     setLoading(true);
@@ -399,23 +385,25 @@ export default function ThreatsDashboardPage() {
             <span>gRPC Ingestion &amp; HMAC Webhooks</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("alerts")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "alerts"
-                ? "border-[var(--sd-danger)] text-[var(--sd-danger)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
-            <ShieldAlert className="h-3.5 w-3.5" />
-            <span>Alerts</span>
-            {securityAlerts.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[var(--sd-danger)] text-white font-mono animate-pulse">
-                {securityAlerts.length}
-              </span>
-            )}
-          </button>
+          {isAuthorizedForAlerts && (
+            <button
+              onClick={() => setActiveTab("alerts")}
+              className={cn(
+                "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
+                activeTab === "alerts"
+                  ? "border-[var(--sd-danger)] text-[var(--sd-danger)]"
+                  : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+              )}
+            >
+              <ShieldAlert className="h-3.5 w-3.5" />
+              <span>Alerts</span>
+              {securityAlerts.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[var(--sd-danger)] text-white font-mono animate-pulse">
+                  {securityAlerts.length}
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Tab 1: 3-Sigma Anomaly Baselines */}
@@ -626,63 +614,66 @@ export default function ThreatsDashboardPage() {
 
         {/* Tab 5: Alerts (Real-time Authentication Failures & Threats) */}
         {activeTab === "alerts" && (
-          <div className="space-y-4">
-            <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-1 shadow-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
-                    <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)]" />
-                    <span>Authentication &amp; Threat Security Alerts</span>
-                    {securityAlerts.length > 0 && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[var(--sd-danger)] text-white font-mono">
-                        {securityAlerts.length} Active
-                      </span>
-                    )}
-                  </h3>
-                  <p className="text-xs text-[var(--sd-text-muted)] mt-1">
-                    Continuous monitoring of unauthorized login attempts, credential brute-forcing, and anomalous access spikes with source IP &amp; target email attribution.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
-                  <button
-                    onClick={() => fetchThreatData()}
-                    disabled={loading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-text)] transition cursor-pointer shadow-xs"
-                  >
-                    <RotateCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-                    <span>Refresh</span>
-                  </button>
-
-                  <button
-                    onClick={simulateInvalidLogin}
-                    disabled={loading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] hover:bg-[var(--sd-danger)]/20 text-xs font-semibold text-[var(--sd-danger)] transition cursor-pointer shadow-xs"
-                    title="Simulate an invalid login attempt with test IP and email"
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span>Simulate Failed Login</span>
-                  </button>
-
-                  {securityAlerts.length > 0 && (
+          !isAuthorizedForAlerts ? (
+            <div className="p-8 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-3">
+              <div className="inline-flex p-3 rounded-full bg-amber-500/10 text-amber-500">
+                <Lock className="h-6 w-6" />
+              </div>
+              <h4 className="text-sm font-bold text-[var(--sd-text)]">
+                Access Restricted: Security Alerts
+              </h4>
+              <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
+                Real-time threat and authentication security alerts are strictly restricted to System Administrators and Globex SOC Analysts. Switch to System Admin or Globex Analyst persona to view real-time alert feeds.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-1 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+                      <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)]" />
+                      <span>Authentication &amp; Threat Security Alerts</span>
+                      {securityAlerts.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[var(--sd-danger)] text-white font-mono">
+                          {securityAlerts.length} Active
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+                      Continuous monitoring of unauthorized login attempts, credential brute-forcing, and anomalous access spikes with source IP &amp; target email attribution.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
                     <button
-                      onClick={() => {
-                        fetch("/api/threats", {
-                          method: "POST",
-                          headers: {
-                            "Content-Type": "application/json",
-                            "X-ShieldDesk-User": activeUserId,
-                          },
-                          body: JSON.stringify({ action: "reset_alerts" }),
-                        }).then(() => setSecurityAlerts([]));
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs hover:bg-[var(--sd-panel-hover)] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] cursor-pointer transition shadow-xs"
+                      onClick={() => fetchThreatData()}
+                      disabled={loading}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-text)] transition cursor-pointer shadow-xs"
                     >
-                      Clear All Alerts
+                      <RotateCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                      <span>Refresh</span>
                     </button>
-                  )}
+
+                    {securityAlerts.length > 0 && (
+                      <button
+                        onClick={() => {
+                          fetch("/api/threats", {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                              "X-ShieldDesk-User": activeUserId,
+                            },
+                            body: JSON.stringify({ action: "reset_alerts" }),
+                          }).then(() => setSecurityAlerts([]));
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs hover:bg-[var(--sd-panel-hover)] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] cursor-pointer transition shadow-xs"
+                      >
+                        Clear All Alerts
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
 
             {securityAlerts.length > 0 ? (
               <div className="space-y-3">
@@ -818,19 +809,10 @@ export default function ThreatsDashboardPage() {
                 <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
                   All authentication events and statistical baselines are nominal. Failed logins or anomaly bursts will appear here automatically with their source IP and target email.
                 </p>
-                <div className="pt-2">
-                  <button
-                    onClick={simulateInvalidLogin}
-                    disabled={loading}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--sd-danger-dim)] border border-[var(--sd-danger-border)] text-xs font-semibold text-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/20 transition cursor-pointer shadow-xs"
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    <span>Generate Test Invalid Login Alert</span>
-                  </button>
-                </div>
               </div>
             )}
           </div>
+          )
         )}
       </main>
     </div>
