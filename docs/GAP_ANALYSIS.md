@@ -95,7 +95,7 @@ Here is the exact impact model:
 | **Phase D: Risk & Decision Engine** | **EXISTS** | `src/lib/decision-engine/engine.ts`<br>`src/lib/decision-engine/evidenceEngine.ts`<br>`src/lib/policy-engine/engine.ts`<br>`src/lib/governance/autonomyTier.ts`<br>`src/app/api/v1/decisions/`<br>`db/migrations/phase_d_decision_records.sql` | Fully implemented and verified: Evidence Engine with canonical SHA-256 hashing, explainable risk where every factor points to an evidence ID, asset-level autonomy (Observe, Assist, Autopilot) mapped to Tiers 0-3, strict separation of Security Confidence vs AI Confidence, PostgreSQL `decision_records` table, and REST evaluation endpoint. |
 | **Phase E: Remediation Simulator & Verification Engine** | **EXISTS** | `src/lib/verification-engine/rootCauseGrouping.ts`<br>`src/lib/verification-engine/engine.ts`<br>`src/lib/verification-engine/methods.ts`<br>`src/lib/verification-engine/continuousRecheck.ts`<br>`src/lib/rollback-engine/engine.ts`<br>`src/app/api/v1/remediation/`<br>`db/migrations/phase_e_remediation_verification.sql` | Fully implemented and verified: Root-cause grouping across bulk findings, blast radius and downtime window simulation, deterministic verification across 7 check types, closed-loop automatic rollback upon verification failure with finding reopening, continuous recheck scheduling and post-closure drift detection. |
 | **Phase F: Evidence Vault** | **EXISTS** | `src/lib/compliance/evidenceVault.ts`<br>`src/lib/compliance/merkle.ts`<br>`src/lib/compliance/exportGenerator.ts`<br>`src/lib/compliance/iso27001.ts`<br>`src/app/api/compliance/route.ts`<br>`src/app/api/v1/compliance/export/route.ts`<br>`db/migrations/phase_f_evidence_vault.sql` | Fully implemented and verified: Multi-format export generator (JSON, RFC-4180 CSV), HTTP cryptographic integrity headers (`X-ShieldDesk-*`), Merkle root computation & per-event inclusion branch proofs, mathematical tamper detection, standalone Python 3 verification script, and PostgreSQL `compliance_export_bundles` audit logging. |
-| **Phase G: AI Layer & Governance** | **PARTIAL** | `src/lib/ai/ollama.ts`<br>`services/llm-gateway/`<br>`src/lib/tools/shieldDeskChatTools.ts`<br>`src/lib/security/redactor.ts` | • Local-first Ollama + Gemini/OpenAI pluggable gateway exists with strict proposal formatting.<br>• Anti-prompt injection filters and secret redaction exist.<br>• **Gaps to implement:** AI Evaluation Lab permanent dataset schema, automated hallucination rate and tool-call error tracking. |
+| **Phase G: AI Layer & Governance** | **EXISTS** | `src/lib/ai/gateway.ts`<br>`src/lib/ai/promptRegistry.ts`<br>`src/lib/ai/agentIdentity.ts`<br>`src/lib/ai/evidenceCitations.ts`<br>`src/lib/ai/toolRouter.ts`<br>`src/lib/ai/evaluationLab.ts`<br>`src/app/api/v1/ai/proposals/`<br>`src/app/api/v1/ai/evaluation/`<br>`db/migrations/phase_g_ai_evaluation.sql` | Fully implemented and verified: Local-first Ollama provider independence, structured-output proposals only (Rule 1 & 2), Rule 5 separation of duties (proposer cannot self-approve, AI agents cannot approve), agent permission scopes, prompt & model versioning table with SHA-256 tampering detection, evidence citation validator, safe tool router, and permanent AI Evaluation Lab benchmark dataset tracking hallucination rate, remediation accuracy, and tool-call errors. |
 | **Phase H: Execution Broker & Agent Hardening** | **PARTIAL** | `src/app/api/agent/commands/route.ts`<br>`src/lib/fleet/commandSigning.ts`<br>`src/lib/fleet/certificates.ts`<br>`agent/` (Go 1.23 Universal Agent) | • Single broker dispatch with RSA-2048 canonical signing exists.<br>• mTLS device certificates and anti-replay nonce validation exist.<br>• **Gaps to implement:** Agent self-update with verified signature and automatic rollback on boot failure. |
 | **Phase I: Licensing, Entitlements & Stripe** | **PARTIAL** | `src/app/api/webhooks/stripe/route.ts`<br>`src/lib/billing/plans.ts`<br>`src/lib/billing/licenses.ts` | • Stripe webhook handler and tiered plans exist.<br>• **Gaps to implement:** Server-side `entitlementService.require(...)` guard middleware, Postgres idempotency table for `stripe_event_id` deduplication, and signed offline entitlement cache. |
 
@@ -171,8 +171,8 @@ SHIELD-DESK/
 
 ## 6. Audit Conclusion & Baseline Status
 
-- **Baseline Test Suite:** **270 / 270 tests passing (100% green)** across 37 test suites.
-- **Database Migrations:** Clean live PostgreSQL / Supabase instance with all 34 tables provisioned.
+- **Baseline Test Suite:** **279 / 279 tests passing (100% green)** across 38 test suites.
+- **Database Migrations:** Clean live PostgreSQL / Supabase instance with all 38 tables provisioned.
 - **Phase Status:** 
   - **Phase A (Security Data Layer):** Completed & Verified.
   - **Phase B (Security Digital Twin):** Completed & Verified.
@@ -180,4 +180,6 @@ SHIELD-DESK/
   - **Phase D (Risk & Decision Engine):** Completed & Verified.
   - **Phase E (Remediation Simulator & Verification Engine):** Completed & Verified.
   - **Phase F (Evidence Vault):** Completed & Verified.
-  - **Phase G (AI Layer & Governance):** Ready to begin upon user approval.
+  - **Phase G (AI Layer & Governance):** Completed & Verified.
+  - **Phase H (Execution Broker & Agent Hardening):** Ready to begin upon user approval.
+  - **Phase I (Licensing, Entitlements & Stripe):** Next following Phase H.

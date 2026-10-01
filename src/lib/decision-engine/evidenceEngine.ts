@@ -34,6 +34,24 @@ export interface ExplainableRiskResult {
 }
 
 export class EvidenceEngine {
+  private static evidenceRegistry: Map<string, DecisionEvidenceItem> = new Map();
+
+  /**
+   * Stores an evidence item in the registry.
+   */
+  public static storeEvidence(item: DecisionEvidenceItem): void {
+    if (item.id) {
+      this.evidenceRegistry.set(item.id, item);
+    }
+  }
+
+  /**
+   * Retrieves an evidence item by ID.
+   */
+  public static getEvidence(id: string): DecisionEvidenceItem | undefined {
+    return this.evidenceRegistry.get(id);
+  }
+
   /**
    * Constructs a canonical, tamper-evident DecisionEvidenceItem with deterministic SHA-256 hash.
    */
@@ -48,7 +66,7 @@ export class EvidenceEngine {
     const hash = crypto.createHash("sha256").update(canonicalPayload).digest("hex");
     const id = `evi-${hash.slice(0, 16)}`;
 
-    return {
+    const item: DecisionEvidenceItem = {
       id,
       type,
       source,
@@ -56,6 +74,8 @@ export class EvidenceEngine {
       data,
       hash,
     };
+    this.storeEvidence(item);
+    return item;
   }
 
   /**
