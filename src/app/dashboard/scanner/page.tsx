@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { GlassDialog } from "@/components/ui/GlassDialog";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
 import {
   Scan,
@@ -259,22 +260,22 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
   };
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="sd-dashboard-content flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         {/* Header Bar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[var(--sd-border)] pb-5">
           <div>
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed]">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="p-2 shrink-0 rounded-xl sd-surface border border-[var(--sd-border)] text-[var(--sd-wheat)]">
                 <Scan className="h-5 w-5" />
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--sd-text)]">
-                Security Scanner &amp; Remediation Center
+              <h1 className="tracking-tight text-[var(--sd-text)] text-3xl font-light leading-tight">
+                Security scanner
               </h1>
             </div>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
               Automated Trivy container CVE inspection, Gitleaks secrets detection, and SSH snapshot patching.
             </p>
           </div>
@@ -282,20 +283,20 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
           <div className="flex items-center gap-2">
             <span
               className={cn(
-                "px-2.5 py-1 rounded-md text-[11px] font-semibold border flex items-center gap-1.5",
+                "px-2.5 py-1 rounded-md text-[11px] font-medium border flex items-center gap-1.5",
                 serviceConnected
                   ? "bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] border-[var(--sd-pine-border)]"
-                  : "bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
+                  : "sd-surface text-[var(--sd-text-muted)] border-[var(--sd-border)]"
               )}
             >
               <Cpu className="h-3 w-3" />
-              {serviceConnected ? "Scan Microservice: Live" : "FastAPI Scanner: Ready"}
+              {serviceConnected ? "Scanner connected" : "Scanner offline"}
             </span>
 
             <button
               onClick={triggerTrivyScan}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+              className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
               <span>Trigger Trivy Scan</span>
@@ -305,108 +306,78 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
         {/* Scan Status Toast Banner */}
         {scanResult && (
-          <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-xs text-[var(--sd-pine-bright)] flex items-center justify-between">
+          <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-[13px] text-[var(--sd-pine-bright)] flex items-center justify-between">
             <span>{scanResult}</span>
             <button
               onClick={() => setScanResult(null)}
-              className="text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono text-xs cursor-pointer"
+              className="sd-button text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono text-[13px] cursor-pointer"
             >
               Dismiss
             </button>
           </div>
         )}
 
+        <p className="sd-sample-label w-fit">Illustrative findings &amp; summary metrics</p>
+
         {/* Metric Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">Critical CVEs</span>
+              <span className="text-[13px] font-medium">Critical CVEs</span>
               <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-danger)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">CVSS &gt;= 9.0 (RCE &amp; Auth Bypass)</p>
+            <div className="text-2xl font-medium text-[var(--sd-danger)] font-mono">2</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">CVSS &gt;= 9.0 (RCE &amp; Auth Bypass)</p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">High Severity</span>
+              <span className="text-[13px] font-medium">High Severity</span>
               <AlertTriangle className="h-4 w-4 text-[var(--sd-warning)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-warning)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">runc &amp; libwebp heap overflows</p>
+            <div className="text-2xl font-medium text-[var(--sd-warning)] font-mono">2</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">runc &amp; libwebp heap overflows</p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">Secrets Leaked</span>
+              <span className="text-[13px] font-medium">Secrets Leaked</span>
               <Key className="h-4 w-4 text-[var(--sd-danger)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-text)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">AWS IAM key &amp; GitHub token</p>
+            <div className="text-2xl font-medium text-[var(--sd-text)] font-mono">2</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">AWS IAM key &amp; GitHub token</p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">LVM Snapshots</span>
+              <span className="text-[13px] font-medium">LVM Snapshots</span>
               <HardDrive className="h-4 w-4 text-[var(--sd-pine-bright)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-pine-bright)] font-mono">14</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">Pre-patch rollback restore points</p>
+            <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">14</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Pre-patch rollback restore points</p>
           </div>
         </div>
 
         {/* Tab Controls */}
-        <div className="flex items-center gap-2 border-b border-[var(--sd-border)]">
-          <button
-            onClick={() => setActiveTab("cve")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "cve"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+        <div className="sd-tabs" role="group" aria-label="Scanner views">
+          <button type="button" aria-pressed={activeTab === "cve"} onClick={() => setActiveTab("cve")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Scan className="h-3.5 w-3.5" />
-            <span>Trivy CVE Findings ({cves.length})</span>
+            <span>Vulnerabilities ({cves.length})</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("secrets")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "secrets"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "secrets"} onClick={() => setActiveTab("secrets")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Key className="h-3.5 w-3.5" />
-            <span>Gitleaks Secret Detection ({secrets.length})</span>
+            <span>Secret detection ({secrets.length})</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("patch")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "patch"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "patch"} onClick={() => setActiveTab("patch")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Terminal className="h-3.5 w-3.5" />
-            <span>SSH Patch Orchestrator &amp; LVM Rollback</span>
+            <span>Patch &amp; rollback</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("intel")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "intel"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "intel"} onClick={() => setActiveTab("intel")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Globe className="h-3.5 w-3.5" />
-            <span>External Attack Surface (Shodan / HIBP)</span>
+            <span>External intelligence</span>
           </button>
         </div>
 
@@ -417,13 +388,13 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
               {cves.map((cve) => (
                 <div
                   key={cve.cve_id}
-                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
+                  className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex flex-wrap items-center gap-2.5">
                       <span
                         className={cn(
-                          "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
+                          "px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider font-mono",
                           cve.severity === "CRITICAL"
                             ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
                             : "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
@@ -431,16 +402,16 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                       >
                         {cve.severity}
                       </span>
-                      <span className="font-mono text-sm font-bold text-[var(--sd-text)]">
+                      <span className="font-mono text-sm font-medium text-[var(--sd-text)]">
                         {cve.cve_id}
                       </span>
-                      <span className="text-xs text-[var(--sd-text-muted)]">
-                        Target: <code className="text-[var(--sd-text)] font-semibold">{cve.asset_id}</code>
+                      <span className="text-[13px] text-[var(--sd-text-muted)]">
+                        Target: <code className="text-[var(--sd-text)] font-medium">{cve.asset_id}</code>
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-3 text-xs font-mono">
-                      <span className="text-[var(--sd-danger)] font-bold">
+                    <div className="flex items-center gap-3 text-[13px] font-mono">
+                      <span className="text-[var(--sd-danger)] font-medium">
                         CVSS {cve.cvss_score}
                       </span>
                       <span className="text-[var(--sd-warning)]">
@@ -449,19 +420,19 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                     </div>
                   </div>
 
-                  <p className="text-xs text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
+                  <p className="text-[13px] text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
 
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-xs">
-                    <div className="flex items-center gap-3 text-[var(--sd-text-muted)]">
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-[13px]">
+                    <div className="flex flex-wrap items-center gap-3 text-[var(--sd-text-muted)]">
                       <span>Package: <strong className="text-[var(--sd-text)]">{cve.package_name}</strong></span>
                       <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
                       <span>Fixed in: <code className="bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] px-1.5 py-0.5 rounded border border-[var(--sd-pine-border)]">{cve.fixed_version}</code></span>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button
                         onClick={() => runBlastRadius(cve)}
-                        className="px-2.5 py-1 rounded-md border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer flex items-center gap-1.5"
+                        className="sd-button px-2.5 py-1 rounded-full border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-[13px] font-medium text-[var(--sd-text)] transition cursor-pointer flex items-center gap-1.5"
                       >
                         <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
                         <span>Simulate Blast Radius</span>
@@ -469,7 +440,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
                       <button
                         onClick={() => generateRunbook(cve)}
-                        className="px-2.5 py-1 rounded-md bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                        className="sd-button sd-button-primary px-2.5 py-1 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
                       >
                         <FileCode className="h-3 w-3" />
                         <span>Claude Runbook</span>
@@ -485,20 +456,20 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         {/* Tab 2: Gitleaks Secrets Detection */}
         {activeTab === "secrets" && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-[var(--sd-text-muted)]">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-[13px] text-[var(--sd-text-muted)]">
                 Automated regex and high-entropy secret detection scanning git commits and environment variables.
               </p>
               <button
                 onClick={triggerSecretsScan}
-                className="px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] text-[#f7f4ed] text-xs font-semibold hover:bg-[var(--sd-pine-hover)] transition cursor-pointer"
+                className="sd-button sd-button-primary px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer"
               >
                 Scan Repository Now
               </button>
             </div>
 
-            <div className="rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs">
+            <div className="rounded-xl border border-[var(--sd-border)] sd-surface overflow-x-auto shadow-xs">
+              <table className="min-w-[760px] w-full text-left text-[13px]">
                 <thead className="bg-[var(--sd-bg)] border-b border-[var(--sd-border)] text-[var(--sd-text-muted)] font-medium">
                   <tr>
                     <th className="p-3">Secret Type</th>
@@ -511,7 +482,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                 <tbody className="divide-y divide-[var(--sd-border)]">
                   {secrets.map((sec, i) => (
                     <tr key={i} className="hover:bg-[var(--sd-panel-hover)] transition">
-                      <td className="p-3 font-semibold text-[var(--sd-text)] flex items-center gap-2">
+                      <td className="p-3 font-medium text-[var(--sd-text)] flex items-center gap-2">
                         <Key className="h-3.5 w-3.5 text-[var(--sd-danger)]" />
                         {sec.type}
                       </td>
@@ -522,14 +493,14 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                         <code>{sec.snippet_masked}</code>
                       </td>
                       <td className="p-3">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
+                        <span className="px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
                           {sec.risk_level}
                         </span>
                       </td>
                       <td className="p-3 text-right">
                         <button
                           onClick={() => rotateKey(sec.type)}
-                          className="px-2.5 py-1 rounded bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white font-semibold text-xs transition cursor-pointer shadow-xs"
+                          className="sd-button px-2.5 py-1 rounded bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-[var(--sd-on-accent)] font-medium text-[13px] transition cursor-pointer shadow-xs"
                         >
                           {sec.action_available}
                         </button>
@@ -546,18 +517,18 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         {activeTab === "patch" && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-4 shadow-xs">
-                <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+              <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
+                <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                   <Terminal className="h-4 w-4 text-[var(--sd-pine)]" />
                   Patch Configuration
                 </h3>
 
                 <div>
-                  <label className="text-xs text-[var(--sd-text-muted)] block mb-1">Target Host</label>
+                  <label className="text-[13px] text-[var(--sd-text-muted)] block mb-1">Target Host</label>
                   <select
                     value={patchHost}
                     onChange={(e) => setPatchHost(e.target.value)}
-                    className="w-full p-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-xs text-[var(--sd-text)] font-mono"
+                    className="sd-input w-full p-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[13px] text-[var(--sd-text)] font-mono"
                   >
                     <option value="10.0.4.12 (srv-prod-api-01)">10.0.4.12 (srv-prod-api-01 - Ubuntu 22.04)</option>
                     <option value="10.0.4.15 (srv-app-worker-02)">10.0.4.15 (srv-app-worker-02 - Debian 11)</option>
@@ -565,8 +536,8 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                   </select>
                 </div>
 
-                <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-xs text-[var(--sd-pine-bright)] space-y-1">
-                  <div className="font-semibold flex items-center gap-1.5">
+                <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-[13px] text-[var(--sd-pine-bright)] space-y-1">
+                  <div className="font-medium flex items-center gap-1.5">
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     LVM Snapshot Guard Verified
                   </div>
@@ -583,7 +554,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                     onChange={(e) => setIsDryRun(e.target.checked)}
                     className="rounded border-[var(--sd-border)]"
                   />
-                  <label htmlFor="dryrun" className="text-xs text-[var(--sd-text)] cursor-pointer">
+                  <label htmlFor="dryrun" className="text-[13px] text-[var(--sd-text)] cursor-pointer">
                     Dry Run Mode (Simulate without applying changes)
                   </label>
                 </div>
@@ -592,7 +563,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                   <button
                     onClick={() => executePatch(isDryRun)}
                     disabled={loading}
-                    className="flex-1 px-3 py-2 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                    className="sd-button sd-button-primary flex-1 px-3 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
                   >
                     <Play className="h-3.5 w-3.5" />
                     <span>{isDryRun ? "Execute Dry Run" : "Apply Security Patch"}</span>
@@ -600,7 +571,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
                   <button
                     onClick={rollbackSnapshot}
-                    className="px-3 py-2 rounded-lg border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] hover:bg-[var(--sd-warning-dim)]/80 text-[var(--sd-warning)] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                    className="sd-button px-3 py-2 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] hover:bg-[var(--sd-warning-dim)]/80 text-[var(--sd-warning)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
                     title="Rollback target host to pre-patch snapshot"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
@@ -610,11 +581,11 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
               </div>
 
               {/* Terminal Logs */}
-              <div className="lg:col-span-2 p-4 rounded-xl border border-[var(--sd-border)] bg-[#121417] text-[#a9b7c6] font-mono text-xs flex flex-col h-80 shadow-xs">
-                <div className="flex items-center justify-between border-b border-[#2d3239] pb-2 mb-2 text-[#7f8a9a]">
+              <div className="lg:col-span-2 p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[13px] flex flex-col h-80 shadow-xs">
+                <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-2 mb-2 text-[var(--sd-text-dim)]">
                   <span className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-[#10b981]" />
-                    SSH Patching Console &amp; LVM Attestation
+                    <span className="h-2 w-2 rounded-full bg-[var(--sd-success)]" />
+                    SSH Patching Console &amp; LVM Attestation · Sample baseline
                   </span>
                   <span>port 22 / mTLS</span>
                 </div>
@@ -622,13 +593,13 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                   {patchLogs.map((log, index) => (
                     <div key={index} className="leading-relaxed">
                       {log.startsWith("[SNAPSHOT]") ? (
-                        <span className="text-[#38bdf8]">{log}</span>
+                        <span className="text-[var(--sd-wheat)]">{log}</span>
                       ) : log.startsWith("[STATUS]") ? (
-                        <span className="text-[#4ade80]">{log}</span>
+                        <span className="text-[var(--sd-success)]">{log}</span>
                       ) : log.startsWith("[ROLLBACK") ? (
-                        <span className="text-[#f59e0b] font-bold">{log}</span>
+                        <span className="text-[var(--sd-warning)] font-medium">{log}</span>
                       ) : log.startsWith("[RESTORE") ? (
-                        <span className="text-[#10b981] font-bold">{log}</span>
+                        <span className="text-[var(--sd-success)] font-medium">{log}</span>
                       ) : (
                         log
                       )}
@@ -643,32 +614,32 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         {/* Tab 4: Attack Surface & Threat Intel (OSINT) */}
         {activeTab === "intel" && (
           <div className="space-y-4">
-            <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-4 shadow-xs">
-              <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+            <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
+              <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                 <Globe className="h-4 w-4 text-[var(--sd-pine)]" />
-                External Attack Surface Management (Shodan &amp; HIBP)
+                External Attack Surface Management (Shodan &amp; HIBP) · Sample overview
               </h3>
-              <p className="text-xs text-[var(--sd-text-muted)]">
+              <p className="text-[13px] text-[var(--sd-text-muted)]">
                 Inspect public internet perimeter exposure, open ports, and corporate credential breach disclosures.
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[var(--sd-text)]">Shodan Perimeter Inspection</span>
-                    <span className="text-[10px] font-mono text-[var(--sd-pine-bright)]">24 Hosts Monitored</span>
+                    <span className="text-[13px] font-medium text-[var(--sd-text)]">Shodan Perimeter Inspection</span>
+                    <span className="text-[11px] font-mono text-[var(--sd-pine-bright)]">24 Hosts Monitored</span>
                   </div>
-                  <p className="text-xs text-[var(--sd-text-muted)]">
-                    Detected Ports: <code className="text-[var(--sd-text)] font-semibold">80, 443, 22 (SSH Restrict)</code>. No unauthorized RDP (3389) or Elasticsearch (9200) exposed to WAN.
+                  <p className="text-[13px] text-[var(--sd-text-muted)]">
+                    Detected Ports: <code className="text-[var(--sd-text)] font-medium">80, 443, 22 (SSH Restrict)</code>. No unauthorized RDP (3389) or Elasticsearch (9200) exposed to WAN.
                   </p>
                 </div>
 
                 <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[var(--sd-text)]">HaveIBeenPwned Domain Check</span>
-                    <span className="text-[10px] font-mono text-[var(--sd-warning)]">1 Domain Flagged</span>
+                    <span className="text-[13px] font-medium text-[var(--sd-text)]">HaveIBeenPwned Domain Check</span>
+                    <span className="text-[11px] font-mono text-[var(--sd-warning)]">1 Domain Flagged</span>
                   </div>
-                  <p className="text-xs text-[var(--sd-text-muted)]">
+                  <p className="text-[13px] text-[var(--sd-text-muted)]">
                     0 active corporate credentials leaked in paste sites within the last 30 days. Forced TOTP MFA enabled on all IAM accounts.
                   </p>
                 </div>
@@ -679,32 +650,32 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
         {/* Advisor Output Modal */}
         {advisorContent && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] p-6 space-y-4 shadow-xl">
+          <GlassDialog open onClose={() => setAdvisorContent(null)} labelledBy="scanner-advisor-title" className="max-w-2xl">
+            <div className="p-6 space-y-4">
               <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
-                <h3 className="text-sm font-bold text-[var(--sd-text)]">{advisorTitle}</h3>
+                <h3 id="scanner-advisor-title" className="text-lg font-normal text-[var(--sd-text)]">{advisorTitle}</h3>
                 <button
                   onClick={() => setAdvisorContent(null)}
-                  className="text-xs text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer"
+                  className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer"
                 >
                   ✕ Close
                 </button>
               </div>
 
-              <pre className="p-4 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs font-mono text-[var(--sd-text)] overflow-x-auto max-h-96 whitespace-pre-wrap leading-relaxed">
+              <pre className="p-4 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[13px] font-mono text-[var(--sd-text)] overflow-x-auto max-h-96 whitespace-pre-wrap leading-relaxed">
                 {advisorContent}
               </pre>
 
               <div className="flex justify-end pt-2">
                 <button
                   onClick={() => setAdvisorContent(null)}
-                  className="px-4 py-2 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold cursor-pointer"
+                  className="sd-button sd-button-primary px-4 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer"
                 >
                   Done
                 </button>
               </div>
             </div>
-          </div>
+          </GlassDialog>
         )}
       </main>
     </div>

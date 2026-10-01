@@ -93,6 +93,7 @@ const SEED_TASKS: MitigationTaskItem[] = [
 
 export default function SOCTaskBoardPage() {
   const { activeUserId, activeUser } = useChat();
+  const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);
   const [filterHorizon, setFilterHorizon] = useState<string>("all");
   const [activeModalToken, setActiveModalToken] = useState<ApprovalTokenRecord | null>(null);
@@ -116,12 +117,19 @@ export default function SOCTaskBoardPage() {
           const data = await res.json();
           if (isMounted) {
             setTasks(data.tasks || []);
+            setIsSampleData(data._source === "demo_fallback");
           }
         } else {
-          if (isMounted) setTasks(activeUserId === "dev-other" ? [] : SEED_TASKS);
+          if (isMounted) {
+            setTasks(activeUserId === "dev-other" ? [] : SEED_TASKS);
+            setIsSampleData(activeUserId !== "dev-other");
+          }
         }
       } catch {
-        if (isMounted) setTasks(activeUserId === "dev-other" ? [] : SEED_TASKS);
+        if (isMounted) {
+            setTasks(activeUserId === "dev-other" ? [] : SEED_TASKS);
+            setIsSampleData(activeUserId !== "dev-other");
+          }
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -252,43 +260,40 @@ export default function SOCTaskBoardPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="sd-dashboard-content flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
+        {isSampleData && <p className="sd-sample-label w-fit">Sample tasks · Local fallback data</p>}
         {/* Header & Controls */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--sd-border)] pb-5">
           <div>
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl sd-surface border border-[var(--sd-border)] text-[var(--sd-wheat)] shadow-xs">
                 <CheckSquare className="h-4.5 w-4.5" />
               </div>
-              <h1 className="text-xl font-bold tracking-tight text-[var(--sd-pine)]">SOC Task Board</h1>
-              <span className="rounded-md bg-white border border-[var(--sd-border)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--sd-pine)] font-mono shadow-xs">
+              <h1 className="tracking-tight text-[var(--sd-text)] text-3xl font-light leading-tight">Task board</h1>
+              <span className="rounded-md sd-surface border border-[var(--sd-border)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--sd-pine)] font-mono shadow-xs">
                 Tenant: {activeUser.tenantName}
               </span>
             </div>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
               Multi-Tenant Remediation Task Board with Tier-Gated Approvals
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
             {/* Horizon Filter */}
-            <div className="flex items-center gap-1 bg-white border border-[var(--sd-border)] rounded-xl p-1 text-xs shadow-xs">
-              <span className="text-[10px] uppercase font-semibold text-[var(--sd-text-muted)] px-2 flex items-center gap-1 font-mono">
+            <div className="sd-tabs">
+              <span className="shrink-0 text-[11px] uppercase font-medium text-[var(--sd-text-muted)] px-2 flex items-center gap-1 font-mono">
                 <Filter className="h-3 w-3 text-[var(--sd-pine)]" /> Horizon:
               </span>
               {["all", "immediate", "short_term", "long_term"].map((h) => (
                 <button
                   key={h}
                   onClick={() => setFilterHorizon(h)}
-                  className={cn(
-                    "px-2.5 py-1 rounded-lg text-xs capitalize transition cursor-pointer font-medium",
-                    filterHorizon === h
-                      ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs"
-                      : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
-                  )}
+                  aria-pressed={filterHorizon === h}
+                  className="capitalize"
                 >
                   {h.replace("_", " ")}
                 </button>
@@ -298,9 +303,9 @@ export default function SOCTaskBoardPage() {
             {/* Quick Add Task */}
             <button
               onClick={() => setIsCreatingTask(!isCreatingTask)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer shadow-xs"
+              className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer shadow-xs"
             >
-              <Plus className="h-3.5 w-3.5 text-[#e6dbbf]" />
+              <Plus className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
               <span>Add Custom Task</span>
             </button>
           </div>
@@ -310,16 +315,16 @@ export default function SOCTaskBoardPage() {
         {isCreatingTask && (
           <form
             onSubmit={handleCreateTask}
-            className="p-5 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs space-y-4"
+            className="p-5 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-4"
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+              <h3 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
                 Draft New Remediation Task
               </h3>
               <button
                 type="button"
                 onClick={() => setIsCreatingTask(false)}
-                className="text-xs text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] cursor-pointer"
+                className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] cursor-pointer"
               >
                 Cancel
               </button>
@@ -331,7 +336,7 @@ export default function SOCTaskBoardPage() {
                   placeholder="Task title (e.g., Flush ARP table on Gateway router)"
                   value={newTaskTitle}
                   onChange={(e) => setNewTaskTitle(e.target.value)}
-                  className="w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-xs text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)]"
+                  className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)]"
                   required
                 />
               </div>
@@ -339,7 +344,7 @@ export default function SOCTaskBoardPage() {
                 <select
                   value={newTaskTier}
                   onChange={(e) => setNewTaskTier(e.target.value as "Tier 1" | "Tier 2" | "Tier 3")}
-                  className="w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-xs text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)]"
+                  className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-[13px] text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)]"
                 >
                   <option value="Tier 1">Tier 1 (Automatic Action)</option>
                   <option value="Tier 2">Tier 2 (Human Sign-off)</option>
@@ -347,7 +352,7 @@ export default function SOCTaskBoardPage() {
                 </select>
                 <button
                   type="submit"
-                  className="px-4 py-2 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] text-[#f7f4ed] text-xs font-semibold shrink-0 cursor-pointer transition shadow-xs"
+                  className="sd-button sd-button-primary px-4 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shrink-0 cursor-pointer transition shadow-xs"
                 >
                   Create
                 </button>
@@ -361,36 +366,36 @@ export default function SOCTaskBoardPage() {
           {columns.map((col) => (
             <div
               key={col.id}
-              className="rounded-2xl border border-[var(--sd-border)] bg-white flex flex-col min-h-[500px] overflow-hidden shadow-xs"
+              className="rounded-2xl border border-[var(--sd-border)] sd-surface flex flex-col min-h-[500px] overflow-hidden shadow-xs"
             >
               {/* Column Header */}
               <div className="p-3.5 border-b border-[var(--sd-border)] flex items-center justify-between bg-[var(--sd-bg-alt)]/50">
-                <span className="text-xs font-bold text-[var(--sd-pine)]">{col.label}</span>
-                <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border", col.headerBadge)}>
+                <span className="text-[13px] font-medium text-[var(--sd-pine)]">{col.label}</span>
+                <span className={cn("px-2 py-0.5 rounded-full text-[11px] font-mono font-medium border", col.headerBadge)}>
                   {col.items.length}
                 </span>
               </div>
 
               {/* Tasks List */}
-              <div className="p-3 space-y-3 flex-1 overflow-y-auto bg-white">
+              <div className="p-3 space-y-3 flex-1 overflow-y-auto sd-surface">
                 {col.items.length === 0 ? (
-                  <div className="py-12 text-center text-xs text-[var(--sd-text-muted)] border border-dashed border-[var(--sd-border)] rounded-xl my-2 bg-[var(--sd-panel-raised)]">
+                  <div className="py-12 text-center text-[13px] text-[var(--sd-text-muted)] border border-dashed border-[var(--sd-border)] rounded-xl my-2 bg-[var(--sd-panel-raised)]">
                     No tasks in this lane
                   </div>
                 ) : (
                   col.items.map((task) => (
                     <div
                       key={task.id}
-                      className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-2.5 text-xs group"
+                      className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-2.5 text-[13px] group"
                     >
                       <div className="flex items-center justify-between">
                         <AutonomyTierBadge tier={task.tier} size="sm" showLabel={false} />
-                        <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--sd-pine)] font-semibold">
+                        <span className="text-[11px] font-mono uppercase tracking-wider text-[var(--sd-pine)] font-medium">
                           {task.horizon.replace("_", " ")}
                         </span>
                       </div>
 
-                      <h4 className="font-semibold text-xs text-[var(--sd-text)] leading-snug group-hover:text-[var(--sd-pine)] transition-colors">
+                      <h4 className="font-medium text-[13px] text-[var(--sd-text)] leading-snug group-hover:text-[var(--sd-pine)] transition-colors">
                         {task.title}
                       </h4>
 
@@ -398,7 +403,7 @@ export default function SOCTaskBoardPage() {
                         {task.description}
                       </p>
 
-                      <div className="pt-2 border-t border-[var(--sd-border)] flex items-center justify-between text-[10.5px]">
+                      <div className="pt-2 border-t border-[var(--sd-border)] flex items-center justify-between text-[11px]">
                         <span className="text-[var(--sd-text-muted)] font-mono truncate max-w-[130px]">
                           {task.blast_radius}
                         </span>
@@ -406,7 +411,7 @@ export default function SOCTaskBoardPage() {
                         {task.status === "pending" && (
                           <button
                             onClick={() => handleOpenApproval(task)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-bold cursor-pointer transition shadow-xs"
+                            className="sd-button flex items-center gap-1 px-2.5 py-1 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-medium cursor-pointer transition shadow-xs"
                           >
                             <Lock className="h-3 w-3" />
                             <span>Sign Off</span>
@@ -414,14 +419,14 @@ export default function SOCTaskBoardPage() {
                         )}
 
                         {task.status === "approved" && (
-                          <span className="flex items-center gap-1 text-[var(--sd-pine)] font-semibold text-[11px]">
+                          <span className="flex items-center gap-1 text-[var(--sd-pine)] font-medium text-[11px]">
                             <ShieldCheck className="h-3.5 w-3.5" />
                             <span>Approved</span>
                           </span>
                         )}
 
                         {task.status === "completed" && (
-                          <span className="flex items-center gap-1 text-[var(--sd-success)] font-semibold text-[11px]">
+                          <span className="flex items-center gap-1 text-[var(--sd-success)] font-medium text-[11px]">
                             <ShieldCheck className="h-3.5 w-3.5" />
                             <span>Executed</span>
                           </span>

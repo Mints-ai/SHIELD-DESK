@@ -24,32 +24,32 @@ export default function ErrorBoundary({
   }, [error]);
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col items-center justify-center p-4 font-sans relative">
-      <div className="max-w-md w-full p-6 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xl space-y-4">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col items-center justify-center p-4 font-sans relative">
+      <div className="max-w-md w-full p-6 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xl space-y-4">
         <div className="flex items-center gap-3">
           <div className="p-2.5 rounded-xl bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
             <ShieldAlert className="h-6 w-6" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-[var(--sd-text)]">
+            <h2 className="text-base font-medium text-[var(--sd-text)]">
               Operational Exception Intercepted
             </h2>
-            <p className="text-xs text-[var(--sd-text-muted)]">
+            <p className="text-[13px] text-[var(--sd-text-muted)]">
               ShieldDesk isolated this runtime failure to protect state integrity.
             </p>
           </div>
         </div>
 
-        <div className="p-3 rounded-xl bg-[#121417] text-[#a9b7c6] font-mono text-xs space-y-1">
-          <div className="flex justify-between text-[#7f8a9a] border-b border-[#2d3239] pb-1">
+        <div className="p-3 rounded-xl bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[13px] space-y-1">
+          <div className="flex justify-between text-[var(--sd-text-dim)] border-b border-[var(--sd-border)] pb-1">
             <span>Incident ID:</span>
-            <span className="text-[#38bdf8]">{errorId || "generating..."}</span>
+            <span className="text-[var(--sd-wheat)]">{errorId || "generating..."}</span>
           </div>
-          <div className="pt-1 text-[#f87171] break-words">
+          <div className="pt-1 text-[var(--sd-danger)] break-words">
             {error.message || "An unexpected operational fault occurred."}
           </div>
           {error.digest && (
-            <div className="text-[10px] text-[#7f8a9a]">
+            <div className="text-[11px] text-[var(--sd-text-dim)]">
               Digest: {error.digest}
             </div>
           )}
@@ -58,7 +58,7 @@ export default function ErrorBoundary({
         <div className="flex items-center gap-2 pt-2">
           <button
             onClick={() => reset()}
-            className="flex-1 px-4 py-2 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+            className="sd-button sd-button-primary flex-1 px-4 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
           >
             <RefreshCw className="h-3.5 w-3.5" />
             <span>Attempt Recovery</span>
@@ -66,7 +66,7 @@ export default function ErrorBoundary({
 
           <Link
             href="/"
-            className="px-4 py-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text)] text-xs font-medium transition cursor-pointer flex items-center gap-1.5"
+            className="px-4 py-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
           >
             <Home className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
             <span>SOC Home</span>

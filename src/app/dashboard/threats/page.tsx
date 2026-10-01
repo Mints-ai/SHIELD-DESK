@@ -200,28 +200,28 @@ export default function ThreatsDashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="sd-dashboard-content flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         {/* Header Bar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[var(--sd-border)] pb-5">
           <div>
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed]">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="p-2 shrink-0 rounded-xl sd-surface border border-[var(--sd-border)] text-[var(--sd-wheat)]">
                 <Flame className="h-5 w-5" />
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--sd-text)]">
-                Threat Detection &amp; Telemetry Engine
+              <h1 className="tracking-tight text-[var(--sd-text)] text-3xl font-light leading-tight">
+                Threat intelligence
               </h1>
             </div>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
               Go gRPC streaming ingestion, YARA/Sigma rule matching, 3-sigma statistical anomaly scoring, and HMAC webhooks.
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] border border-[var(--sd-pine-border)] flex items-center gap-1.5 font-mono">
+            <span className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] border border-[var(--sd-pine-border)] flex items-center gap-1.5 font-mono">
               <Radio className="h-3 w-3 animate-pulse" />
               gRPC Ingest: 4,120 ev/min
             </span>
@@ -229,7 +229,7 @@ export default function ThreatsDashboardPage() {
             <button
               onClick={triggerAnomalySimulation}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+              className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer"
             >
               <Sparkles className="h-3.5 w-3.5" />
               <span>Simulate Anomaly Burst</span>
@@ -239,135 +239,97 @@ export default function ThreatsDashboardPage() {
 
         {/* Simulation Feedback Alert */}
         {simFeedback && (
-          <div className="p-3 rounded-lg border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-xs text-[var(--sd-danger)] flex items-center justify-between shadow-xs">
-            <span className="font-semibold">{simFeedback}</span>
+          <div className="p-3 rounded-lg border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[13px] text-[var(--sd-danger)] flex items-center justify-between shadow-xs">
+            <span className="font-medium">{simFeedback}</span>
             <button
               onClick={resetAnomaly}
-              className="px-2 py-0.5 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs hover:bg-[var(--sd-panel-hover)] font-medium cursor-pointer"
+              className="sd-button px-2 py-0.5 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[13px] hover:bg-[var(--sd-panel-hover)] font-medium cursor-pointer"
             >
               Reset Baseline
             </button>
           </div>
         )}
 
+        <p className="sd-sample-label w-fit">Illustrative baselines &amp; throughput benchmarks</p>
+
         {/* Stat Highlights */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">Active Threat Rules</span>
+              <span className="text-[13px] font-medium">Active Threat Rules</span>
               <Binary className="h-4 w-4 text-[var(--sd-pine)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-text)] font-mono">
+            <div className="text-2xl font-medium text-[var(--sd-text)] font-mono">
               {yaraRules.length + sigmaRules.length}
             </div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">YARA Malware + Sigma Behavioral</p>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">YARA Malware + Sigma Behavioral</p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">3σ Anomaly Baselines</span>
+              <span className="text-[13px] font-medium">3σ Anomaly Baselines</span>
               <Activity className="h-4 w-4 text-[var(--sd-warning)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-text)] font-mono">
+            <div className="text-2xl font-medium text-[var(--sd-text)] font-mono">
               {anomalies.filter((a) => a.is_anomaly).length > 0 ? (
                 <span className="text-[var(--sd-danger)]">1 ANOMALY ACTIVE</span>
               ) : (
                 <span className="text-[var(--sd-pine-bright)]">NOMINAL</span>
               )}
             </div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">Rolling statistical bounds</p>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Rolling statistical bounds</p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">PII Scrubbed Today</span>
+              <span className="text-[13px] font-medium">PII Scrubbed Today</span>
               <EyeOff className="h-4 w-4 text-[var(--sd-pine-bright)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-text)] font-mono">
+            <div className="text-2xl font-medium text-[var(--sd-text)] font-mono">
               {telemetry?.pii_redacted_today || 184}
             </div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">Zero plaintext tokens on bus</p>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Zero plaintext tokens on bus</p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">NATS Throughput</span>
+              <span className="text-[13px] font-medium">NATS Throughput</span>
               <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-pine-bright)] font-mono">
+            <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">
               {telemetry?.events_per_minute || 4120} / 10k
             </div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">Events/min capacity</p>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Events/min capacity</p>
           </div>
         </div>
 
         {/* Tab Controls */}
-        <div className="flex items-center gap-2 border-b border-[var(--sd-border)]">
-          <button
-            onClick={() => setActiveTab("anomaly")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "anomaly"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+        <div className="sd-tabs" role="group" aria-label="Threats views">
+          <button type="button" aria-pressed={activeTab === "anomaly"} onClick={() => setActiveTab("anomaly")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Activity className="h-3.5 w-3.5" />
-            <span>3-Sigma ML Anomaly Engine</span>
+            <span>Anomaly detection</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("yara")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "yara"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "yara"} onClick={() => setActiveTab("yara")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Binary className="h-3.5 w-3.5" />
-            <span>YARA Malware Rules ({yaraRules.length})</span>
+            <span>YARA rules ({yaraRules.length})</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("sigma")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "sigma"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "sigma"} onClick={() => setActiveTab("sigma")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Layers className="h-3.5 w-3.5" />
-            <span>Sigma Behavioral Detection ({sigmaRules.length})</span>
+            <span>Sigma rules ({sigmaRules.length})</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("ingest")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "ingest"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "ingest"} onClick={() => setActiveTab("ingest")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Send className="h-3.5 w-3.5" />
-            <span>gRPC Ingestion &amp; HMAC Webhooks</span>
+            <span>Ingestion &amp; webhooks</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("alerts")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "alerts"
-                ? "border-[var(--sd-danger)] text-[var(--sd-danger)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "alerts"} onClick={() => setActiveTab("alerts")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <ShieldAlert className="h-3.5 w-3.5" />
             <span>Alerts</span>
             {canViewAuthAlerts && securityAlerts.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[var(--sd-danger)] text-white font-mono animate-pulse">
+              <span className="px-1.5 py-0.2 rounded-full text-[11px] font-medium bg-[var(--sd-danger)] text-[var(--sd-on-accent)] font-mono animate-pulse">
                 {securityAlerts.length}
               </span>
             )}
@@ -377,12 +339,12 @@ export default function ThreatsDashboardPage() {
         {/* Tab 1: 3-Sigma Anomaly Baselines */}
         {activeTab === "anomaly" && (
           <div className="space-y-4">
-            <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-4 shadow-xs">
+            <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
               <div>
-                <h3 className="text-sm font-bold text-[var(--sd-text)]">
+                <h3 className="text-sm font-medium text-[var(--sd-text)]">
                   Statistical Anomaly Engine (3σ Autonomic Baselines)
                 </h3>
-                <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+                <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
                   ShieldDesk models dynamic Gaussian distributions per tenant. If a live event rate exceeds $\mu + 3\sigma$, an immediate Tier 1 containment or Tier 2 approval workflow is initiated.
                 </p>
               </div>
@@ -403,12 +365,12 @@ export default function ThreatsDashboardPage() {
                       )}
                     >
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-[var(--sd-text)]">{anom.metric}</span>
+                        <span className="text-[13px] font-medium text-[var(--sd-text)]">{anom.metric}</span>
                         <span
                           className={cn(
-                            "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
+                            "px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider font-mono",
                             anom.is_anomaly
-                              ? "bg-[var(--sd-danger)] text-white"
+                              ? "bg-[var(--sd-danger)] text-[var(--sd-on-accent)]"
                               : "bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)]"
                           )}
                         >
@@ -418,10 +380,10 @@ export default function ThreatsDashboardPage() {
 
                       <div className="space-y-1">
                         <div className="flex items-baseline justify-between font-mono">
-                          <span className="text-2xl font-bold text-[var(--sd-text)]">
+                          <span className="text-2xl font-medium text-[var(--sd-text)]">
                             {anom.current_value.toFixed(1)}
                           </span>
-                          <span className="text-xs text-[var(--sd-text-muted)]">
+                          <span className="text-[13px] text-[var(--sd-text-muted)]">
                             Threshold: {threshold.toFixed(1)} {anom.unit}
                           </span>
                         </div>
@@ -430,7 +392,7 @@ export default function ThreatsDashboardPage() {
                         <div className="h-2 w-full rounded-full bg-[var(--sd-border)] overflow-hidden">
                           <div
                             className={cn(
-                              "h-full transition-all duration-300",
+                              "h-full transition-all duration-200",
                               anom.is_anomaly ? "bg-[var(--sd-danger)]" : "bg-[var(--sd-pine)]"
                             )}
                             style={{ width: `${ratio}%` }}
@@ -457,14 +419,14 @@ export default function ThreatsDashboardPage() {
             {yaraRules.map((rule) => (
               <div
                 key={rule.id}
-                className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs space-y-2.5"
+                className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-2.5"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] font-mono">
+                    <span className="px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] font-mono">
                       {rule.severity}
                     </span>
-                    <span className="font-mono text-xs font-bold text-[var(--sd-text)]">
+                    <span className="font-mono text-[13px] font-medium text-[var(--sd-text)]">
                       {rule.name}
                     </span>
                     <span className="text-[11px] text-[var(--sd-text-muted)]">
@@ -472,12 +434,12 @@ export default function ThreatsDashboardPage() {
                     </span>
                   </div>
 
-                  <span className="text-xs font-mono text-[var(--sd-pine-bright)] font-semibold">
+                  <span className="text-[13px] font-mono text-[var(--sd-pine-bright)] font-medium">
                     {rule.matches_today} matches today
                   </span>
                 </div>
 
-                <p className="text-xs text-[var(--sd-text-muted)]">{rule.description}</p>
+                <p className="text-[13px] text-[var(--sd-text-muted)]">{rule.description}</p>
                 <div className="text-[11px] font-mono text-[var(--sd-text-muted)]">
                   Target Inspection Zone: <code className="text-[var(--sd-text)]">{rule.target}</code>
                 </div>
@@ -492,21 +454,21 @@ export default function ThreatsDashboardPage() {
             {sigmaRules.map((rule) => (
               <div
                 key={rule.id}
-                className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs space-y-2.5"
+                className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-2.5"
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2.5">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)] font-mono">
+                    <span className="px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)] font-mono">
                       {rule.severity}
                     </span>
-                    <span className="text-xs font-bold text-[var(--sd-text)]">{rule.title}</span>
+                    <span className="text-[13px] font-medium text-[var(--sd-text)]">{rule.title}</span>
                   </div>
-                  <span className="text-xs font-mono text-[var(--sd-text)] font-semibold">
+                  <span className="text-[13px] font-mono text-[var(--sd-text)] font-medium">
                     {rule.matches_today} matched
                   </span>
                 </div>
 
-                <p className="text-xs text-[var(--sd-text-muted)]">
+                <p className="text-[13px] text-[var(--sd-text-muted)]">
                   Detection Logic: <code className="text-[var(--sd-text)] font-mono">{rule.detection_logic}</code>
                 </p>
                 <div className="text-[11px] font-mono text-[var(--sd-text-muted)]">
@@ -522,56 +484,56 @@ export default function ThreatsDashboardPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Telemetry Card */}
-              <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-3 shadow-xs">
-                <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+              <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-3 shadow-xs">
+                <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                   <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
                   gRPC Ingest Service &amp; PII Scrubbing
                 </h3>
-                <p className="text-xs text-[var(--sd-text-muted)]">
+                <p className="text-[13px] text-[var(--sd-text-muted)]">
                   In-flight regex tokenizer redacting sensitive credentials before events reach the NATS message bus.
                 </p>
 
                 <div className="space-y-2 pt-2">
-                  <div className="flex justify-between text-xs py-1.5 border-b border-[var(--sd-border)]">
+                  <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Agent Handshake Protocol:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-semibold">mTLS v1.3 with X.509 cert</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">mTLS v1.3 with X.509 cert</span>
                   </div>
-                  <div className="flex justify-between text-xs py-1.5 border-b border-[var(--sd-border)]">
+                  <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Active Enrolled Endpoints:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-semibold">48 agents online</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">48 agents online</span>
                   </div>
-                  <div className="flex justify-between text-xs py-1.5 border-b border-[var(--sd-border)]">
+                  <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Rate Limit Policy:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-semibold">10,000 ev/min per tenant</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">10,000 ev/min per tenant</span>
                   </div>
-                  <div className="flex justify-between text-xs py-1.5 border-b border-[var(--sd-border)]">
+                  <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">TimescaleDB Hypertable Events:</span>
-                    <span className="font-mono text-[var(--sd-pine-bright)] font-semibold">148,290 records</span>
+                    <span className="font-mono text-[var(--sd-pine-bright)] font-medium">148,290 records</span>
                   </div>
                 </div>
               </div>
 
               {/* Webhook Dispatcher Card */}
-              <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-3 shadow-xs">
+              <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-3 shadow-xs">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+                  <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                     <Send className="h-4 w-4 text-[var(--sd-pine)]" />
                     HMAC-SHA256 Webhook Dispatcher
                   </h3>
                   <button
                     onClick={dispatchTestWebhook}
                     disabled={loading}
-                    className="px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold shadow-xs transition cursor-pointer"
+                    className="sd-button sd-button-primary px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer"
                   >
                     Dispatch Test Webhook
                   </button>
                 </div>
-                <p className="text-xs text-[var(--sd-text-muted)]">
+                <p className="text-[13px] text-[var(--sd-text-muted)]">
                   Dispatches signed webhook payloads with <code>X-ShieldDesk-Signature</code> and exponential backoff retry.
                 </p>
 
                 {webhookLog && (
-                  <pre className="p-3 rounded-lg bg-[#121417] text-[#a9b7c6] font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap leading-relaxed">
+                  <pre className="p-3 rounded-lg bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap leading-relaxed">
                     {JSON.stringify(webhookLog, null, 2)}
                   </pre>
                 )}
@@ -583,14 +545,14 @@ export default function ThreatsDashboardPage() {
         {/* Tab 5: Alerts (Positioned right near gRPC Ingestion & HMAC Webhooks) */}
         {activeTab === "alerts" && (
           <div className="space-y-4">
-            <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-1 shadow-xs">
+            <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-1 shadow-xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+                  <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                     <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)]" />
                     <span>Authentication &amp; Threat Security Alerts</span>
                   </h3>
-                  <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+                  <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
                     Continuous monitoring of unauthorized login attempts, credential brute-forcing, and anomalous access spikes.
                   </p>
                 </div>
@@ -606,7 +568,7 @@ export default function ThreatsDashboardPage() {
                         body: JSON.stringify({ action: "reset_alerts" }),
                       }).then(() => setSecurityAlerts([]));
                     }}
-                    className="px-2.5 py-1 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs hover:bg-[var(--sd-panel-hover)] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] cursor-pointer self-start sm:self-auto transition"
+                    className="sd-button px-2.5 py-1 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[13px] hover:bg-[var(--sd-panel-hover)] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] cursor-pointer self-start sm:self-auto transition"
                   >
                     Clear All Alerts
                   </button>
@@ -621,15 +583,15 @@ export default function ThreatsDashboardPage() {
                   {securityAlerts.map((alert) => (
                     <div
                       key={alert.id}
-                      className="p-5 rounded-xl border border-[var(--sd-danger)] bg-[var(--sd-danger-dim)] shadow-xs space-y-4 animate-in fade-in duration-300"
+                      className="p-5 rounded-xl border border-[var(--sd-danger)] bg-[var(--sd-danger-dim)] shadow-xs space-y-4 animate-in fade-in duration-200"
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--sd-danger-border)] pb-3">
                         <div className="flex items-center gap-2.5">
-                          <div className="p-1.5 rounded-lg bg-[var(--sd-danger)] text-white">
+                          <div className="p-1.5 rounded-lg bg-[var(--sd-danger)] text-[var(--sd-on-accent)]">
                             <ShieldAlert className="h-5 w-5" />
                           </div>
                           <div>
-                            <h4 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+                            <h4 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                               <span>🚨 {alert.title}</span>
                             </h4>
                             <span className="text-[11px] text-[var(--sd-text-muted)]">
@@ -639,19 +601,19 @@ export default function ThreatsDashboardPage() {
                         </div>
 
                         <div className="flex items-center gap-2 self-start sm:self-center">
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-950/40 text-purple-300 border border-purple-500/40 font-mono flex items-center gap-1.5 shadow-xs">
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-medium uppercase tracking-wider bg-purple-950/40 text-purple-300 border border-purple-500/40 font-mono flex items-center gap-1.5 shadow-xs">
                             <Lock className="h-3 w-3" />
                             Restricted Visibility: System Admin &amp; Globex Analyst Only
                           </span>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-[13px]">
                         <div className="p-2.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1">
                           <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5">
                             <Mail className="h-3.5 w-3.5" /> Target User Email
                           </span>
-                          <p className="font-mono font-bold text-[var(--sd-text)] truncate">
+                          <p className="font-mono font-medium text-[var(--sd-text)] truncate">
                             {alert.targetUser}
                           </p>
                         </div>
@@ -660,7 +622,7 @@ export default function ThreatsDashboardPage() {
                           <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5">
                             <Globe className="h-3.5 w-3.5" /> Source IP
                           </span>
-                          <p className="font-mono font-bold text-[var(--sd-text)]">
+                          <p className="font-mono font-medium text-[var(--sd-text)]">
                             {alert.clientIp}
                           </p>
                         </div>
@@ -669,7 +631,7 @@ export default function ThreatsDashboardPage() {
                           <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5">
                             <AlertTriangle className="h-3.5 w-3.5" /> Status / Condition
                           </span>
-                          <p className="font-semibold text-[var(--sd-danger)] truncate">
+                          <p className="font-medium text-[var(--sd-danger)] truncate">
                             {alert.failureReason}
                           </p>
                         </div>
@@ -687,14 +649,14 @@ export default function ThreatsDashboardPage() {
                       <div className="flex items-center justify-end gap-2.5 pt-1">
                         <button
                           onClick={() => handleAcknowledgeAlert(alert.id)}
-                          className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+                          className="sd-button px-3.5 py-1.5 rounded-full border border-[var(--sd-border)] sd-surface hover:bg-[var(--sd-panel-hover)] text-[13px] font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
                         >
                           Acknowledge Alert
                         </button>
 
                         <button
                           onClick={() => handleInvestigateInChat(alert)}
-                          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-bright)] text-white text-xs font-semibold transition cursor-pointer shadow-xs"
+                          className="sd-button sd-button-primary flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer shadow-xs"
                         >
                           <Bot className="h-3.5 w-3.5" />
                           <span>Investigate in AI Chat</span>
@@ -704,27 +666,27 @@ export default function ThreatsDashboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="p-8 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-3">
+                <div className="p-8 rounded-xl border border-[var(--sd-border)] sd-surface text-center space-y-3">
                   <div className="inline-flex p-3 rounded-full bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)]">
                     <CheckCircle2 className="h-6 w-6" />
                   </div>
-                  <h4 className="text-sm font-bold text-[var(--sd-text)]">
+                  <h4 className="text-sm font-medium text-[var(--sd-text)]">
                     Zero Active Security Alerts
                   </h4>
-                  <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
+                  <p className="text-[13px] text-[var(--sd-text-muted)] max-w-md mx-auto">
                     All authentication events and statistical baselines are nominal. Failed logins or anomaly bursts will appear here in real-time.
                   </p>
                 </div>
               )
             ) : (
-              <div className="p-6 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-3">
+              <div className="p-6 rounded-xl border border-[var(--sd-border)] sd-surface text-center space-y-3">
                 <div className="inline-flex p-3 rounded-full bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]">
                   <Lock className="h-6 w-6" />
                 </div>
-                <h4 className="text-sm font-bold text-[var(--sd-text)]">
+                <h4 className="text-sm font-medium text-[var(--sd-text)]">
                   Access Restricted
                 </h4>
-                <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
+                <p className="text-[13px] text-[var(--sd-text-muted)] max-w-md mx-auto">
                   Authentication Security Alerts are restricted to <strong>System Admin</strong> and <strong>Globex Analyst</strong> roles. Switch your persona in the top navigation bar to inspect alerts.
                 </p>
               </div>

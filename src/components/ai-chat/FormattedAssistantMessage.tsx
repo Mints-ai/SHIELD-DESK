@@ -76,30 +76,30 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
     const plain = cell.replace(/\*\*/g, "").trim();
     const lower = plain.toLowerCase();
 
-    let dotColor = "bg-slate-400";
+    let dotColor = "bg-[var(--sd-text-dim)]";
     let textColor = "text-[var(--sd-text)]";
 
     if (lower.includes("critical")) {
-      dotColor = "bg-[#dc2626]";
-      textColor = "text-[#dc2626]";
+      dotColor = "bg-[var(--sd-danger)]";
+      textColor = "text-[var(--sd-danger)]";
     } else if (lower.includes("high")) {
-      dotColor = "bg-[#ea580c]";
-      textColor = "text-[#ea580c]";
+      dotColor = "bg-[var(--sd-warning)]";
+      textColor = "text-[var(--sd-warning)]";
     } else if (lower.includes("medium") && !lower.includes("low-to-medium")) {
-      dotColor = "bg-[#d97706]";
-      textColor = "text-[#d97706]";
+      dotColor = "bg-[var(--sd-warning)]";
+      textColor = "text-[var(--sd-warning)]";
     } else if (lower.includes("low-to-medium")) {
-      dotColor = "bg-[#2563eb]";
-      textColor = "text-[#2563eb]";
+      dotColor = "bg-[var(--sd-text-muted)]";
+      textColor = "text-[var(--sd-text-muted)]";
     } else if (lower.includes("low")) {
-      dotColor = "bg-[#059669]";
-      textColor = "text-[#059669]";
+      dotColor = "bg-[var(--sd-success)]";
+      textColor = "text-[var(--sd-success)]";
     }
 
     return (
       <div className="inline-flex items-center gap-1.5 whitespace-nowrap">
         <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
-        <span className={`font-bold text-xs ${textColor}`}>{plain}</span>
+        <span className={`font-bold text-[13px] ${textColor}`}>{plain}</span>
       </div>
     );
   };
@@ -130,7 +130,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
         return (
           <code
             key={i}
-            className="rounded bg-[var(--sd-bg-alt)] px-1.5 py-0.5 font-mono text-[10.5px] text-[var(--sd-pine)] border border-[var(--sd-border)] font-medium"
+            className="rounded bg-[var(--sd-bg-alt)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--sd-pine)] border border-[var(--sd-border)] font-medium"
           >
             {part.slice(1, -1)}
           </code>
@@ -152,7 +152,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] font-mono"
+            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] font-mono"
           >
             <ShieldAlert className="h-3 w-3" />
             CRITICAL
@@ -163,7 +163,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)] font-mono"
+            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)] font-mono"
           >
             <AlertTriangle className="h-3 w-3" />
             HIGH
@@ -174,7 +174,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-[var(--sd-panel-raised)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] font-mono"
+            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-[var(--sd-panel-raised)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] font-mono"
           >
             <Info className="h-3 w-3" />
             MEDIUM
@@ -185,7 +185,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200 font-mono"
+            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-[var(--sd-panel-raised)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] font-mono"
           >
             <Info className="h-3 w-3" />
             LOW-TO-MEDIUM
@@ -196,7 +196,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-[var(--sd-success-dim)] text-[var(--sd-success)] border border-[var(--sd-success-border)] font-mono"
+            className="inline-flex items-center gap-1 mx-1 px-1.5 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-[var(--sd-success-dim)] text-[var(--sd-success)] border border-[var(--sd-success-border)] font-mono"
           >
             <CheckCircle className="h-3 w-3" />
             {upper}
@@ -209,7 +209,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 mx-0.5 px-1.5 py-0.5 rounded font-mono text-[10.5px] font-semibold bg-white text-[var(--sd-pine)] border border-[var(--sd-border)] shadow-xs"
+            className="inline-flex items-center gap-1 mx-0.5 px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold bg-[var(--sd-panel-raised)] text-[var(--sd-pine)] border border-[var(--sd-border)] shadow-none"
           >
             <Tag className="h-2.5 w-2.5 text-[var(--sd-pine)]" />
             {part.toUpperCase()}
@@ -222,7 +222,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 mx-0.5 px-1.5 py-0.5 rounded font-mono text-[10.5px] font-bold bg-white text-[var(--sd-pine)] border border-[var(--sd-border)] shadow-xs"
+            className="inline-flex items-center gap-1 mx-0.5 px-1.5 py-0.5 rounded font-mono text-[11px] font-bold bg-[var(--sd-panel-raised)] text-[var(--sd-pine)] border border-[var(--sd-border)] shadow-none"
           >
             {part.toUpperCase()}
           </span>
@@ -251,8 +251,8 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
     const numberedMatch = line.match(/^(\d+)\.\s+(.*)$/);
     if (numberedMatch) {
       return (
-        <div key={index} className="my-1.5 flex items-start gap-2.5 text-xs leading-relaxed text-[var(--sd-text)]">
-          <span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full bg-[var(--sd-pine)] text-[10px] font-bold text-[#f7f4ed] font-mono mt-0.5 shadow-xs">
+        <div key={index} className="my-1.5 flex items-start gap-2.5 text-[13px] leading-relaxed text-[var(--sd-text)]">
+          <span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-full bg-[var(--sd-pine)] text-[11px] font-bold text-[var(--sd-on-accent)] font-mono mt-0.5 shadow-none">
             {numberedMatch[1]}
           </span>
           <div className="flex-1 leading-relaxed">{renderTokens(numberedMatch[2])}</div>
@@ -264,7 +264,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
     const bulletMatch = line.match(/^[-*]\s+(.*)$/);
     if (bulletMatch) {
       return (
-        <div key={index} className="my-1 flex items-start gap-2 text-xs leading-relaxed text-[var(--sd-text)] pl-1">
+        <div key={index} className="my-1 flex items-start gap-2 text-[13px] leading-relaxed text-[var(--sd-text)] pl-1">
           <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--sd-pine)]" />
           <div className="flex-1">{renderTokens(bulletMatch[1])}</div>
         </div>
@@ -278,7 +278,7 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
 
     // Standard paragraph line
     return (
-      <p key={index} className="my-1 text-xs leading-relaxed text-[var(--sd-text)]">
+      <p key={index} className="my-1 text-[13px] leading-relaxed text-[var(--sd-text)]">
         {renderTokens(line)}
       </p>
     );
@@ -287,21 +287,22 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
   const blocks = parseBlocks(content);
 
   return (
-    <div className="space-y-0.5">
+    <div className="min-w-0 space-y-0.5 break-words">
       {blocks.map((block, bIdx) => {
         if (block.type === "table") {
           return (
             <div
               key={bIdx}
-              className="my-3 overflow-hidden rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs"
+              className="my-3 max-w-full overflow-hidden rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-none"
             >
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
+              <div className="overflow-x-auto" tabIndex={0} aria-label="Assistant response table">
+                <table className="w-full text-left text-[13px] border-collapse">
                   <thead className="bg-[var(--sd-panel-raised)] border-b border-[var(--sd-border)]">
                     <tr>
                       {block.headers.map((h, hIdx) => (
                         <th
                           key={hIdx}
+                          scope="col"
                           className={`py-2.5 px-3 font-semibold text-[var(--sd-text)] tracking-wider text-[11px] ${
                             hIdx === 0
                               ? "w-[125px] min-w-[110px]"
@@ -323,10 +324,10 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
                             key={cIdx}
                             className={`py-2.5 px-3 align-top leading-relaxed ${
                               cIdx === 0
-                                ? "font-semibold text-[var(--sd-pine)] text-xs whitespace-nowrap"
+                                ? "font-semibold text-[var(--sd-pine)] text-[13px] whitespace-nowrap"
                                 : cIdx === 1
-                                ? "text-xs font-semibold whitespace-nowrap"
-                                : "text-xs text-[var(--sd-text)]"
+                                ? "text-[13px] font-semibold whitespace-nowrap"
+                                : "text-[13px] text-[var(--sd-text)]"
                             }`}
                           >
                             {cIdx === 1 ? renderDamageLevel(cell) : renderTokens(cell)}
