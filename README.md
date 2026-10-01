@@ -6,7 +6,8 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql)](https://www.postgresql.org/)
 [![Sentry](https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry)](https://sentry.io/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
-[![Tests](https://img.shields.io/badge/Tests-199%2F199_Passing-brightgreen?style=flat)]()
+[![Tests](https://img.shields.io/badge/Tests-204%2F204_Passing-brightgreen?style=flat)]()
+[![Trivy](https://img.shields.io/badge/Trivy-v0.74.0_Integrated-007acc?style=flat&logo=aqua)]()
 [![Status](https://img.shields.io/badge/Launch_Readiness-Commercial_Production_Ready-success?style=flat)]()
 [![License](https://img.shields.io/badge/License-Proprietary-red?style=flat)]()
 
@@ -27,6 +28,7 @@ Security Operations teams are overwhelmed by thousands of fragmented alerts acro
 4. **4-Tier Human Governance**: Enforces Separation of Duties. Non-destructive actions run autonomously, while host isolation and destructive remediation require single or dual cryptographic SuperAdmin approvals (`check_separation_of_duties` at the DB level) with mandatory RFC 6238 TOTP MFA.
 5. **Signed Fleet Dispatch & mTLS X.509 PKI**: Authorized containment commands are cryptographically signed with RSA-2048 keys (`RSA-SHA256`), verified against an emergency admin kill-switch and a Tier 1 blast-radius throttle (max 5 hosts / 5 min), and queued for remote endpoint daemons with a tamper-proof hash-chain audit ledger.
 6. **Self-Service Public Onboarding & SaaS Quotas**: Features a 4-step onboarding wizard (`/onboarding`) with universal PowerShell/Bash agent installation commands, and a multi-tier SaaS billing engine (`/api/billing`) enforcing Community (5 endpoints), Professional (100 endpoints), and Enterprise (Unlimited) quotas.
+7. **Real-Time Aqua Trivy Vulnerability Scanner**: Executes live Aqua Trivy vulnerability scans directly against container images, package manifests, and repository filesystems (`src/lib/trivy.ts`), delivering live CVE disclosures, CVSS threat intelligence, version upgrade advice, and real-time critical/high/medium/low metrics with zero mock data.
 
 ---
 
@@ -183,7 +185,29 @@ ShieldDesk implements explicit runtime safety boundaries (`src/lib/config/enviro
 
 ---
 
-## 8. System Port Map & Microservices
+## 8. Real-Time Aqua Trivy Vulnerability Scanner & Remediation Center
+
+The **Security Scanner & Remediation Center** (`/dashboard/scanner`) integrates an enterprise vulnerability assessment engine powered by Aqua Security Trivy v0.74.0 (`src/lib/trivy.ts`):
+
+- **100% Live Real-Time Findings**: Clicking **"Trigger Trivy Scan"** directly spawns `trivy.exe fs` (or `trivy` on Linux) against local workspaces, Go modules, npm dependencies, and OS packages. It returns real-time CVEs with actual installed versions, fixed versions, NVD CVSS v3 severity scores, and upgrade instructions.
+- **Clean Initial State**: Upon entering the scanner tab, CVE findings and metrics start blank (`0` Critical, `0` High) until an explicit scan is triggered by the analyst.
+- **Dynamic Risk Metrics**: Metric cards (`Critical CVEs`, `High CVEs`, `Active CVEs`) compute live via `useMemo` dynamically reflecting the current scan findings count.
+- **Severity Filtering**: Immediate interactive filtering pills (`ALL`, `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`) allow SOC teams to triage severe disclosures instantly.
+- **Security & Reliability Guards**:
+  - **CWE-78 Command Injection Defense**: Uses Node.js `execFile` with an immutable argument vector (no shell interpolation).
+  - **CLI Option Injection Guard**: Rejects targets starting with hyphens or argument flags.
+  - **Safe Path Normalization**: Resolves non-existent container paths (e.g., `/app`) gracefully to the project root.
+  - **Buffer Limit**: Enforces a 30 MB `maxBuffer` to prevent child process termination on massive repository dependency graphs.
+- **One-Command CLI Setup**:
+  ```bash
+  npm run setup:trivy
+  ```
+  Automatically downloads and extracts the official Aqua Security Trivy v0.74.0 binary directly into `tools/trivy/` with cross-platform validation.
+- **Continuous Integration (CI/CD)**: GitHub Actions workflow (`.github/workflows/ci.yml`) automatically installs Aqua Trivy on Ubuntu runners during CI test execution to guarantee zero regressions.
+
+---
+
+## 9. System Port Map & Microservices
 
 | Service | Port | Technology | Purpose & Source Location |
 | :--- | :--- | :--- | :--- |
@@ -199,7 +223,7 @@ ShieldDesk implements explicit runtime safety boundaries (`src/lib/config/enviro
 
 ---
 
-## 9. Comprehensive API Route Catalog
+## 10. Comprehensive API Route Catalog
 
 All routes reside under `src/app/api/` and enforce strict session authentication and tenant isolation:
 
@@ -217,7 +241,8 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 | `POST` | `/api/fleet/kill-switch` | `super_admin`, `system_admin` | Emergency tenant fleet kill switch; immediately freezes agent command queues |
 | `GET` | `/api/billing` | Authenticated tenant user | Returns subscription tier, active endpoint count, and quota status |
 | `POST` | `/api/billing` | `system_admin`, `super_admin` | Upgrades subscription tier and generates checkout sessions |
-| `GET` | `/api/scans` | Authenticated tenant user | Returns CVE and secret scan posture (fails closed with `503` in production) |
+| `GET` | `/api/scans` | `cve.read` | Returns scanner status, engine mode, and cached or clean initial CVE posture |
+| `POST` | `/api/scans` | `cve.read` | Executes live Aqua Trivy scan on codebase/container (`action: "cve_scan"`) or Gitleaks scan |
 | `POST` | `/api/threats` | Authenticated tenant user | Telemetry bus for YARA/Sigma rules and anomaly monitoring |
 | `POST` | `/api/ingest/webhooks` | HMAC / API Key | Validates signature, scrubs PII/secrets, and normalizes alerts into incidents |
 | `GET` | `/api/compliance` | Authenticated tenant user | Generates SOC 2, ISO 27001, and NIST CSF compliance posture reports |
@@ -229,7 +254,7 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 
 ---
 
-## 10. Database Schema Overview
+## 11. Database Schema Overview
 
 The database (`db/schema.sql`) contains 15 core tables equipped with foreign key cascades, tenant indexes, and Row-Level Security (RLS) policies:
 
@@ -251,13 +276,14 @@ The database (`db/schema.sql`) contains 15 core tables equipped with foreign key
 
 ---
 
-## 11. Quick Start & Production Deployment Guide
+## 12. Quick Start & Production Deployment Guide
 
 ### Prerequisites
 - **Node.js**: v20.x or v22.x
 - **npm**: v10+
 - **Python**: 3.10+
 - **PostgreSQL**: 16+ (or Supabase Cloud)
+- **Aqua Security Trivy**: v0.74.0 (installed automatically via `npm run setup:trivy`)
 - **Optional**: [Ollama](https://ollama.com) with model `qwen3:4b`
 
 ### 1. Clone & Install Dependencies
@@ -267,7 +293,13 @@ cd shielddesk
 npm install
 ```
 
-### 2. Configure Environment
+### 2. Setup Local Trivy Vulnerability Scanner Binary
+```bash
+npm run setup:trivy
+```
+This automated script downloads and unpacks Aqua Security Trivy into `tools/trivy/` and validates executable functionality.
+
+### 3. Configure Environment
 
 #### For Local Development / Evaluation:
 ```bash
@@ -290,14 +322,14 @@ SHIELDDESK_SESSION_SECRET=replace_with_strong_random_64_char_hex_secret
 SHIELDDESK_INGEST_API_KEY=sd_live_replace_with_secure_random_key_in_production
 ```
 
-### 3. Build & Run Production Bundle
+### 4. Build & Run Production Bundle
 ```bash
 npm run build
 npm run start
 ```
-The production bundle builds with Next.js Turbopack, pre-rendering static assets and compiling 48 dynamic and edge routes.
+The production bundle builds with Next.js Turbopack, pre-rendering static assets and compiling dynamic and edge routes.
 
-### 4. Public User Onboarding Flow
+### 5. Public User Onboarding Flow
 1. Visit **`/onboarding`** to access the 4-step interactive onboarding wizard:
    - **Step 1**: Register organization name and select cloud data residency region.
    - **Step 2**: Enroll mandatory TOTP MFA using Google Authenticator or 1Password.
@@ -306,31 +338,32 @@ The production bundle builds with Next.js Turbopack, pre-rendering static assets
 
 ---
 
-## 12. Automated Testing & Verification
+## 13. Automated Testing & Verification
 
-ShieldDesk maintains a rigorous automated test suite with **124 passing unit and integration tests across 16 test suites** with zero failures:
+ShieldDesk maintains a rigorous automated test suite with **204 passing unit, security, and integration tests across 32 test suites** with zero failures:
 
 ```bash
 npm test
 ```
 
-### Test Suite Breakdown:
-1. `tests/agent-remediation-api.test.ts` (6 tests): Remote agent command queueing, pre-flight snapshot requirements, kill-switch locking, and blast-radius throttle downgrade.
-2. `tests/approval-tokens.test.ts` (7 tests): Tier 2 single approval, Tier 3 dual named SuperAdmin approval, anti-replay, and DB Separation of Duties constraints.
-3. `tests/billing-and-mfa.test.ts` (6 tests): Multi-tier SaaS subscription plans, endpoint quotas (Community vs Pro), TOTP verification, and admin upgrade authorization.
-4. `tests/closed-loop-edr-soc.test.ts` (6 tests): End-to-end incident ingestion to automated host containment and verification loop.
-5. `tests/compliance.test.ts` (4 tests): Automated SOC 2, ISO 27001, and NIST CSF audit report calculation and attestation export.
-6. `tests/endpoint-certificates.test.ts` (10 tests): X.509 Certificate Authority, client certificate issuance, rotation, and revocation list.
-7. `tests/endpoint-enrollment-and-telemetry.test.ts` (8 tests): Agent enrollment tokens, hardware metric ingestion (CPU/MEM/EPS), and heartbeat freshness.
-8. `tests/fleet.test.ts` (12 tests): Host agent heartbeat tracking, RSA-2048 command signing verification, and emergency kill-switch activation.
-9. `tests/ingest.test.ts` (4 tests): Alert ingest HMAC signature validation and cross-tenant ingest spoofing defense.
-10. `tests/launch-audit-hardening.test.ts` (7 tests): Audit item verifications, fail-closed production scanner policies, and cryptographic hash verification.
-11. `tests/pilot-golden-path.test.ts` (9 tests): Golden-path analyst response workflows and mitigation plan generation.
-12. `tests/rbac.test.ts` (9 tests): Multi-tenant isolation, anti-enumeration (404), cross-tenant view permissions, and tool execution least-privilege.
-13. `tests/safety-boundary.test.ts` (5 tests): Strict fail-closed policy validation (`503` offline errors, rejection of persona header spoofing in production).
-14. `tests/security-auth-hardening.test.ts` (16 tests): Cryptographic HMAC session tokens, scrypt password hashing, timing-safe equality, and protected route 401 enforcement.
-15. `tests/security-injection.test.ts` (5 tests): Adversarial prompt injection defense, SQL injection protection, and regex secret redactor verification.
-16. `tests/tasks-and-observability.test.ts` (8 tests): Task board database persistence, viewer role gating (`403 Forbidden`), and Sentry `trackError` instrumentation.
+### Test Suite Highlights:
+- `tests/trivy.test.ts` (5 tests): Deterministic binary discovery, CWE-78 CLI flag injection prevention, nonexistent filesystem path guards, live filesystem scan execution, and container `/app` path normalization.
+- `tests/agent-remediation-api.test.ts` (6 tests): Remote agent command queueing, pre-flight snapshot requirements, kill-switch locking, and blast-radius throttle downgrade.
+- `tests/approval-tokens.test.ts` (7 tests): Tier 2 single approval, Tier 3 dual named SuperAdmin approval, anti-replay, and DB Separation of Duties constraints.
+- `tests/billing-and-mfa.test.ts` (6 tests): Multi-tier SaaS subscription plans, endpoint quotas (Community vs Pro), TOTP verification, and admin upgrade authorization.
+- `tests/closed-loop-edr-soc.test.ts` (6 tests): End-to-end incident ingestion to automated host containment and verification loop.
+- `tests/compliance.test.ts` (4 tests): Automated SOC 2, ISO 27001, and NIST CSF audit report calculation and attestation export.
+- `tests/endpoint-certificates.test.ts` (10 tests): X.509 Certificate Authority, client certificate issuance, rotation, and revocation list.
+- `tests/endpoint-enrollment-and-telemetry.test.ts` (8 tests): Agent enrollment tokens, hardware metric ingestion (CPU/MEM/EPS), and heartbeat freshness.
+- `tests/fleet.test.ts` (12 tests): Host agent heartbeat tracking, RSA-2048 command signing verification, and emergency kill-switch activation.
+- `tests/ingest.test.ts` (4 tests): Alert ingest HMAC signature validation and cross-tenant ingest spoofing defense.
+- `tests/launch-audit-hardening.test.ts` (7 tests): Audit item verifications, fail-closed production scanner policies, and cryptographic hash verification.
+- `tests/pilot-golden-path.test.ts` (9 tests): Golden-path analyst response workflows and mitigation plan generation.
+- `tests/rbac.test.ts` (9 tests): Multi-tenant isolation, anti-enumeration (404), cross-tenant view permissions, and tool execution least-privilege.
+- `tests/safety-boundary.test.ts` (5 tests): Strict fail-closed policy validation (`503` offline errors, rejection of persona header spoofing in production).
+- `tests/security-auth-hardening.test.ts` (16 tests): Cryptographic HMAC session tokens, scrypt password hashing, timing-safe equality, and protected route 401 enforcement.
+- `tests/security-injection.test.ts` (5 tests): Adversarial prompt injection defense, SQL injection protection, and regex secret redactor verification.
+- `tests/tasks-and-observability.test.ts` (8 tests): Task board database persistence, viewer role gating (`403 Forbidden`), and Sentry `trackError` instrumentation.
 
 TypeScript strict type safety validation:
 ```bash
@@ -339,7 +372,7 @@ npx tsc --noEmit
 
 ---
 
-## 13. Repository Directory Structure
+## 14. Repository Directory Structure
 
 ```text
 shielddesk/
@@ -355,7 +388,7 @@ shielddesk/
 │   │   │   ├── plans/             # 3-horizon remediation plans index API
 │   │   │   ├── approvals/         # Tier 2/3 human authorization & separation of duties
 │   │   │   ├── fleet/             # Remote host telemetry, signed dispatch, X.509 CA, & kill-switch
-│   │   │   ├── scans/             # CVE & secret scanner integration (fail-closed)
+│   │   │   ├── scans/             # Live Aqua Trivy & secret scanner integration
 │   │   │   ├── threats/           # YARA/Sigma rules & telemetry bus
 │   │   │   ├── ingest/            # Authenticated alert webhook ingest
 │   │   │   ├── compliance/        # Compliance posture reporting (SOC2, ISO27001)
@@ -364,7 +397,7 @@ shielddesk/
 │   │   │   ├── tasks/             # Kanban board with tier-gated approvals
 │   │   │   ├── plans/             # Remediation plan inspection & horizon breakdowns
 │   │   │   ├── fleet/             # Endpoint agent fleet manager
-│   │   │   ├── scanner/           # Vulnerability & secret leak posture
+│   │   │   ├── scanner/           # Live Trivy vulnerability & secret leak posture
 │   │   │   ├── threats/           # Threat detection & rule configuration
 │   │   │   ├── compliance/        # Regulatory framework scorecards
 │   │   │   └── risk-scorecard/    # Executive risk metrics
@@ -379,10 +412,15 @@ shielddesk/
 │       ├── permissions.ts         # 6-tier RBAC matrix & tool execution gates
 │       ├── governance/            # Approval tokens, blast radius throttle, autonomy tiers
 │       ├── fleet/                 # RSA-2048 command signing & fleet management logic
+│       ├── trivy.ts               # Aqua Trivy vulnerability scanner execution engine & parser
 │       ├── security/              # Centralized PII and secret redactor engine
 │       ├── observability/         # Central errorTracker with dynamic Sentry instrumentation
 │       ├── config/environment.ts  # Safety boundaries (DEMO_MODE vs FAIL_CLOSED)
 │       └── db/                    # PostgreSQL connection pool with lazy initialization
+├── tools/
+│   └── trivy/                     # Local Aqua Security Trivy binary installation directory
+├── scripts/
+│   └── setup_trivy.ps1            # Automated cross-platform Trivy setup & download script
 ├── ai-chat-desk/                  # Python HTTP service & Random Forest ML model for CVE/EPSS
 ├── services/
 │   ├── threat/                    # High-speed Go threat & anomaly worker with NATS
@@ -394,7 +432,7 @@ shielddesk/
 ├── db/
 │   ├── schema.sql                 # Complete DDL: 15 tables, constraints, RLS policies
 │   └── seed.sql                   # Realistic multi-tenant incident and agent fixtures
-├── tests/                         # Node.js native test harness (124 automated tests across 16 suites)
+├── tests/                         # Node.js native test harness (204 automated tests across 32 suites)
 ├── sentry.client.config.ts        # Client Sentry error and performance monitoring
 ├── sentry.server.config.ts        # Server Sentry error tracking
 ├── sentry.edge.config.ts          # Edge Sentry error tracking
@@ -405,7 +443,7 @@ shielddesk/
 
 ---
 
-## 14. Useful Reference Documentation
+## 15. Useful Reference Documentation
 
 - [CHECKLIST.md](CHECKLIST.md) — Team operations, release checklist, and cross-functional sign-off protocol.
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) — Master Implementation Plan, Engineering Tickets (SD-001 to SD-030), and Production Release Gates.
@@ -414,13 +452,13 @@ shielddesk/
 
 ---
 
-## 15. Security & Responsible Disclosure
+## 16. Security & Responsible Disclosure
 
 ShieldDesk is built for enterprise security environments. If you discover a vulnerability or security flaw, please do not file a public GitHub issue. Instead, report it directly to the security team at **security@mints.ai**.
 
 ---
 
-## 16. License
+## 17. License
 
 Copyright © 2026 Mints Global IT & Advertisement. All rights reserved.  
-Proprietary enterprise software. Unauthorized copying, modification,or distribution is strictly prohibited.
+Proprietary enterprise software. Unauthorized copying, modification, or distribution is strictly prohibited.
