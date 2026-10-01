@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { updateTenantSubscription, type BillingTier } from "@/lib/billing/plans";
+import { StripeWebhookManager } from "@/lib/billing/stripeWebhook";
 import { recordHashChainEvent } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
 
@@ -42,11 +43,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Verify Stripe webhook signature (or dev bypass if in test environment)
+    // 2. Verify Stripe webhook signature with StripeWebhookManager
     if (!verified && stripeSignature) {
       const stripeSecret = process.env.STRIPE_WEBHOOK_SECRET || razorpaySecret;
-      verified = true; // In production: stripe.webhooks.constructEvent(rawBody, stripeSignature, stripeSecret)
-      provider = "stripe";
+      const stripeCheck = StripeWebhookManager.verifyStripeSignature(rawBody, stripeSignature, stripeSecret);
+      if (stripeCheck.valid || process.env.NODE_ENV !== "production") {
+        verified = true;
+        provider = "stripe";
+      }
     }
 
     // Dev/Test mode fallback
@@ -60,6 +64,38 @@ export async function POST(req: NextRequest) {
     }
 
     const event = JSON.parse(rawBody);
+
+    // If Stripe provider, handle deduplication and queueing
+    if (provider === "stripe" && event.id) {
+      const stripeEventId = event.id;
+      const tenantId =
+        event.payload?.payment?.entity?.notes?.tenant_id ||
+        (event.data?.object?.metadata as any)?.tenant_id ||
+        event.tenantId ||
+        "acme-tenant";
+
+      const queueResult = await StripeWebhookManager.recordAndQueueStripeEvent({
+        stripeEventId,
+        eventType: event.type || "checkout.session.completed",
+        tenantId,
+        payload: event.data?.object || event,
+      });
+
+      if (queueResult.isDuplicate) {
+        return NextResponse.json({
+          success: true,
+          message: `Stripe event ${stripeEventId} already processed (idempotent response).`,
+          isDuplicate: true,
+        }, { status: 200 });
+      }
+
+      const processResult = await StripeWebhookManager.processQueuedStripeEvent(stripeEventId);
+      return NextResponse.json({
+        success: true,
+        message: `Stripe event ${stripeEventId} processed: ${processResult.actionTaken}`,
+        stripeEventId,
+      }, { status: 200 });
+    }
     const tenantId = event.payload?.payment?.entity?.notes?.tenant_id || event.tenantId || "acme-tenant";
     const targetTier: BillingTier = event.payload?.payment?.entity?.notes?.tier || event.tier || "pro";
 
