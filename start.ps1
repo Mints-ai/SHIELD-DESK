@@ -131,12 +131,19 @@ Write-Host ""
 Write-Host "  Launching services..." -ForegroundColor White
 Write-Host ""
 
+# Verify Trivy scanner readiness
+$hasTrivy = (Get-Command "trivy" -ErrorAction SilentlyContinue) -or (Test-Path "$ROOT\tools\trivy\trivy.exe") -or (Test-Path "C:\trivy\trivy.exe")
+if ($hasTrivy) {
+    Write-Status "OK" "Trivy Engine" "native scanner detected" "Green"
+} else {
+    Write-Host "  [WARN] Trivy binary missing. Run 'npm run setup:trivy' to download scanner." -ForegroundColor Yellow
+}
+
 $ollamaJob = Start-Service "Ollama"      "ollama serve"   $ROOT
 $pythonJob = Start-Service "PythonBrain" "python server.py" $PYTHON
-$scanJob   = Start-Service "GoScanner"   "go run ."        (Join-Path $ROOT "services/scan")
 $nextJob   = Start-Service "NextJS"      "npm run dev"    $ROOT
 
-$allJobs = @($ollamaJob, $pythonJob, $scanJob, $nextJob)
+$allJobs = @($ollamaJob, $pythonJob, $nextJob)
 
 Write-Host ""
 Write-Host "  Waiting for all ports to open..." -ForegroundColor DarkGray
@@ -144,11 +151,10 @@ Write-Host ""
 
 $ok1 = Wait-ForPort 11434 "Ollama LLM"
 $ok2 = Wait-ForPort 8000  "Python CVE Brain"
-$ok3 = Wait-ForPort 8001  "Go Trivy Scanner"
-$ok4 = Wait-ForPort 3000  "Next.js UI"
+$ok3 = Wait-ForPort 3000  "Next.js UI"
 
 Write-Host ""
-if ($ok1 -and $ok2 -and $ok3 -and $ok4) {
+if ($ok1 -and $ok2 -and $ok3) {
     Write-Host "  [ALL UP] All services are running!" -ForegroundColor Green
 } else {
     Write-Host "  [WARN] Some services may not have started -- check logs below." -ForegroundColor Yellow
@@ -158,7 +164,7 @@ Write-Host ""
 Write-Host "  +-------------------------------------------------+" -ForegroundColor DarkGreen
 Write-Host "  |  ShieldDesk UI   -->  http://localhost:3000     |" -ForegroundColor Green
 Write-Host "  |  Python AI Brain -->  http://localhost:8000     |" -ForegroundColor Yellow
-Write-Host "  |  Go Trivy Scanner -->  http://localhost:8001     |" -ForegroundColor Green
+Write-Host "  |  Trivy Scanner   -->  Embedded (/api/scans)     |" -ForegroundColor Green
 Write-Host "  |  Ollama LLM      -->  http://localhost:11434    |" -ForegroundColor Magenta
 Write-Host "  +-------------------------------------------------+" -ForegroundColor DarkGreen
 Write-Host ""

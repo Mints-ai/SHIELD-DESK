@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
 import {
   Scan,
@@ -27,12 +27,13 @@ interface CveFinding {
   package_name: string;
   installed_version: string;
   fixed_version: string;
-  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-  cvss_score: number;
-  epss_score: number;
-  asset_id: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  cvss_score?: number;
+  epss_score?: number;
+  asset_id?: string;
+  target?: string;
   description: string;
-  remediation: string;
+  remediation?: string;
 }
 
 interface SecretFinding {
@@ -56,6 +57,22 @@ export default function ScannerDashboardPage() {
   const [secrets, setSecrets] = useState<SecretFinding[]>([]);
   const [serviceConnected, setServiceConnected] = useState(false);
 
+  const criticalCvesCount = useMemo(
+    () => cves.filter((c) => c.severity?.toUpperCase() === "CRITICAL").length,
+    [cves]
+  );
+  const highCvesCount = useMemo(
+    () => cves.filter((c) => c.severity?.toUpperCase() === "HIGH").length,
+    [cves]
+  );
+
+  const [severityFilter, setSeverityFilter] = useState<"ALL" | "CRITICAL" | "HIGH" | "MEDIUM" | "LOW">("ALL");
+
+  const filteredCves = useMemo(() => {
+    if (severityFilter === "ALL") return cves;
+    return cves.filter((c) => c.severity?.toUpperCase() === severityFilter);
+  }, [cves, severityFilter]);
+
   // Patching state
   const [patchHost, setPatchHost] = useState("10.0.4.12 (srv-prod-api-01)");
   const [isDryRun, setIsDryRun] = useState(false);
@@ -75,7 +92,7 @@ export default function ScannerDashboardPage() {
         headers: { "X-ShieldDesk-User": activeUserId },
       });
       const data = await res.json();
-      if (data.findings) setCves(data.findings);
+      // Keep Trivy CVE findings blank upon initial tab entry until user triggers scan
       if (data.secretFindings) setSecrets(data.secretFindings);
       setServiceConnected(Boolean(data.serviceConnected));
     } catch (err) {
@@ -99,15 +116,26 @@ export default function ScannerDashboardPage() {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "cve_scan", target_path: "/app", scan_type: "full" }),
+        body: JSON.stringify({ action: "cve_scan", target_path: ".", scan_type: "full" }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        setScanResult(`Scan Failed (${res.status}): ${data.error || "Unable to complete scan"}`);
+        return;
+      }
       if (data.findings && Array.isArray(data.findings)) {
         setCves(data.findings);
       }
-      setScanResult(`Scan Completed: ${data.message || `${data.findings?.length || 0} vulnerabilities found.`}`);
-    } catch {
-      setScanResult("Scan finished with local cached signatures.");
+      setActiveTab("cve");
+      setScanResult(`Scan Completed: ${data.message || `Found ${data.findings?.length || 0} vulnerabilities.`}`);
+      setTimeout(() => {
+        const el = document.getElementById("findings-tabs");
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 100);
+    } catch (err: any) {
+      setScanResult(`Scan network error: ${err.message || "Failed to reach scan API"}`);
     } finally {
       setLoading(false);
     }
@@ -197,7 +225,6 @@ export default function ScannerDashboardPage() {
 
   const handleDismissScan = () => {
     setScanResult(null);
-    setCves([]);
   };
 
   const handleViewVulnerabilities = () => {
@@ -300,16 +327,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
           </div>
 
           <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "px-2.5 py-1 rounded-md text-[11px] font-semibold border flex items-center gap-1.5",
-                serviceConnected
-                  ? "bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] border-[var(--sd-pine-border)]"
-                  : "bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
-              )}
-            >
-              <Cpu className="h-3 w-3" />
-              {serviceConnected ? "Scan Microservice: Live" : "FastAPI Scanner: Ready"}
+            <span className="px-2.5 py-1 rounded-md text-[11px] font-semibold border border-[var(--sd-border)] bg-[var(--sd-panel)] text-[var(--sd-text-muted)] flex items-center gap-1.5 shadow-xs">
+              <Cpu className="h-3 w-3 text-[var(--sd-text-muted)]" />
+              <span>FastAPI Scanner: Ready</span>
             </span>
 
             <button
@@ -354,8 +374,10 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               <span className="text-xs font-medium">Critical CVEs</span>
               <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-danger)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">CVSS &gt;= 9.0 (RCE &amp; Auth Bypass)</p>
+            <div className="text-2xl font-bold text-[var(--sd-danger)] font-mono">{criticalCvesCount}</div>
+            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">
+              {criticalCvesCount === 0 ? "0 critical severity issues" : `${criticalCvesCount} critical issues detected`}
+            </p>
           </div>
 
           <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
@@ -363,8 +385,10 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               <span className="text-xs font-medium">High Severity</span>
               <AlertTriangle className="h-4 w-4 text-[var(--sd-warning)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-warning)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">runc &amp; libwebp heap overflows</p>
+            <div className="text-2xl font-bold text-[var(--sd-warning)] font-mono">{highCvesCount}</div>
+            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">
+              {highCvesCount === 0 ? "0 high severity issues" : `${highCvesCount} high severity vulnerabilities`}
+            </p>
           </div>
 
           <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
@@ -446,27 +470,59 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
           <div className="space-y-4">
             {cves.length === 0 ? (
               <div className="p-12 text-center rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-3">
-                <CheckCircle2 className="h-8 w-8 text-[var(--sd-pine-bright)] mx-auto" />
+                <Scan className="h-8 w-8 text-[var(--sd-text-muted)] mx-auto opacity-60" />
                 <h3 className="text-sm font-semibold text-[var(--sd-text)]">No Vulnerabilities Displayed</h3>
                 <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
-                  Findings have been dismissed. Click &quot;Trigger Trivy Scan&quot; above to run a fresh scan and display findings.
+                  Click &quot;Trigger Trivy Scan&quot; to execute a live scan across workspace packages and display vulnerabilities.
                 </p>
                 <button
                   onClick={triggerTrivyScan}
                   disabled={loading}
-                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold cursor-pointer disabled:opacity-50"
+                  className="mt-2 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold cursor-pointer disabled:opacity-50 transition shadow-xs"
                 >
                   <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
                   <span>Trigger Trivy Scan</span>
                 </button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-3.5">
-                {cves.map((cve, index) => (
-                  <div
-                    key={`${cve.cve_id}-${index}`}
-                    className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
-                  >
+              <>
+                {/* Severity Filter Controls */}
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)]">
+                  <div className="flex items-center gap-2 overflow-x-auto">
+                    <span className="text-xs font-medium text-[var(--sd-text-muted)]">Filter:</span>
+                    {(["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).map((sev) => {
+                      const count =
+                        sev === "ALL"
+                          ? cves.length
+                          : cves.filter((c) => c.severity?.toUpperCase() === sev).length;
+                      return (
+                        <button
+                          key={sev}
+                          onClick={() => setSeverityFilter(sev)}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-xs font-semibold font-mono transition cursor-pointer flex items-center gap-1.5",
+                            severityFilter === sev
+                              ? "bg-[var(--sd-pine)] text-[#f7f4ed]"
+                              : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] border border-[var(--sd-border)]"
+                          )}
+                        >
+                          <span>{sev}</span>
+                          <span className="opacity-80 font-normal">({count})</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="text-xs text-[var(--sd-text-muted)]">
+                    Showing <strong className="text-[var(--sd-text)]">{filteredCves.length}</strong> of {cves.length} findings
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3.5">
+                  {filteredCves.map((cve, index) => (
+                    <div
+                      key={`${cve.cve_id}-${index}`}
+                      className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
+                    >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5">
                         <span
@@ -474,7 +530,11 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                             "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
                             cve.severity === "CRITICAL"
                               ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
-                              : "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                              : cve.severity === "HIGH"
+                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                              : cve.severity === "MEDIUM"
+                              ? "bg-[var(--sd-warning-dim)] text-amber-500 border border-amber-500/20"
+                              : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]"
                           )}
                         >
                           {cve.severity}
@@ -482,9 +542,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                         <span className="font-mono text-sm font-bold text-[var(--sd-text)]">
                           {cve.cve_id}
                         </span>
-                        {cve.asset_id && (
+                        {(cve.target || cve.asset_id) && (
                           <span className="text-xs text-[var(--sd-text-muted)]">
-                            Target: <code className="text-[var(--sd-text)] font-semibold">{cve.asset_id}</code>
+                            Target: <code className="text-[var(--sd-text)] font-semibold">{cve.target || cve.asset_id}</code>
                           </span>
                         )}
                       </div>
@@ -493,10 +553,13 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     <p className="text-xs text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
 
                     <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-xs">
-                      <div className="flex items-center gap-3 text-[var(--sd-text-muted)]">
+                      <div className="flex items-center gap-3 text-[var(--sd-text-muted)] flex-wrap">
                         <span>Package: <code className="text-[var(--sd-text)] font-semibold">{cve.package_name}</code></span>
                         {cve.installed_version && (
                           <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
+                        )}
+                        {cve.fixed_version && cve.fixed_version !== "N/A" && (
+                          <span>Fixed in: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)] text-emerald-500 font-semibold">{cve.fixed_version}</code></span>
                         )}
                       </div>
 
@@ -522,8 +585,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            </>
+          )}
+        </div>
         )}
 
         {/* Tab 2: Gitleaks Secrets Detection */}

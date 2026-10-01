@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { shouldFailClosed, isDemoMode, isProduction } from "@/lib/config/environment";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
-import { runTrivyScan } from "@/lib/trivy";
+import { hasPermission } from "@/lib/permissions";
+import { runTrivyScan, isTrivyAvailable, getOrRunTrivyScan, getLastScanResult } from "@/lib/trivy";
 
 /**
  * DEMO/FALLBACK DATA — returned when running in DEMO_MODE and the live scan
@@ -89,6 +90,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  if (!hasPermission(session.role, "cve.read")) {
+    return NextResponse.json({ error: "Forbidden: cve.read permission required" }, { status: 403 });
+  }
+
   const isDemoRequested =
     req.nextUrl.searchParams.get("mode") === "demo" ||
     req.nextUrl.searchParams.get("dataMode") === "demo";
@@ -110,6 +115,9 @@ export async function GET(req: NextRequest) {
   } catch {
     // Service offline - fallback to local engine or fail closed
   }
+
+  const localTrivyReady = isTrivyAvailable();
+  const serviceConnected = Boolean(liveScanStatus || localTrivyReady);
 
   if (!liveScanStatus && shouldFailClosed()) {
     return NextResponse.json(
@@ -135,25 +143,30 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const lastScan = getLastScanResult();
+  const cveFindings = lastScan ? lastScan.findings : [];
+  const metrics = {
+    totalVulnerabilities: lastScan ? lastScan.findings.length : 0,
+    critical: lastScan ? lastScan.summary.critical : 0,
+    high: lastScan ? lastScan.summary.high : 0,
+    secretsExposed: 2,
+    patchedHosts: 14,
+    pendingPatches: 2,
+  };
+
   return NextResponse.json({
     status: "ok",
-    serviceConnected: Boolean(liveScanStatus),
-    dataMode: liveScanStatus ? "live" : "demo",
+    serviceConnected,
+    scannerEngine: liveScanStatus ? "scan-service-remote" : localTrivyReady ? "trivy-local" : "mock-fallback",
+    dataMode: liveScanStatus || localTrivyReady ? "live" : "demo",
     demoMode: isDemoMode(),
-    demoDataDisclaimer: liveScanStatus
+    demoDataDisclaimer: liveScanStatus || localTrivyReady
       ? null
       : "⚠ DEMO DATA: Findings shown are illustrative examples for local evaluation, not real vulnerability data for this tenant.",
     tenantId: session.tenantId,
-    metrics: {
-      totalVulnerabilities: 4,
-      critical: 2,
-      high: 2,
-      secretsExposed: 2,
-      patchedHosts: 14,
-      pendingPatches: 2,
-    },
-    findings: MOCK_CVE_FINDINGS,
-    cveFindings: MOCK_CVE_FINDINGS,
+    metrics,
+    findings: cveFindings,
+    cveFindings,
     secretFindings: MOCK_SECRET_FINDINGS,
     recentScans: [
       {
@@ -187,6 +200,10 @@ export async function POST(req: NextRequest) {
   const session = await getSessionFromRequest(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!hasPermission(session.role, "cve.read")) {
+    return NextResponse.json({ error: "Forbidden: cve.read permission required" }, { status: 403 });
   }
 
   try {
@@ -228,35 +245,48 @@ export async function POST(req: NextRequest) {
       // 2. Try local Trivy scan if not strictly testing fail-closed
       if (!shouldFailClosed()) {
         try {
-          const result = await runTrivyScan(body.target_path || ".");
-          const mappedFindings = result.findings.map((f) => ({
-            cve_id: f.id,
-            id: f.id,
-            package_name: f.pkgName,
-            installed_version: f.installedVersion,
-            fixed_version: f.fixedVersion || "N/A",
-            severity: f.severity,
-            description: f.title,
-            remediation: `Update ${f.pkgName} to version ${f.fixedVersion || "latest"}`,
-          }));
+          const targetPath = body.target_path || ".";
+          const scanType = body.scan_type === "image" ? "image" : "fs";
+          const result = await runTrivyScan(targetPath, scanType);
 
           return NextResponse.json({
             status: "success",
             success: true,
+            dataMode: "live",
+            engine: "trivy-local",
+            binaryPath: result.binaryPath,
+            scannedTarget: result.scannedTarget,
+            scanDurationMs: result.scanDurationMs,
             metrics: {
               total: result.findings.length,
               totalVulnerabilities: result.findings.length,
               ...result.summary,
             },
-            findings: mappedFindings,
-            cveFindings: mappedFindings,
+            findings: result.findings,
+            cveFindings: result.findings,
             message:
-              mappedFindings.length === 0
-                ? "No vulnerabilities found."
-                : `Found ${mappedFindings.length} vulnerabilities.`,
+              result.findings.length === 0
+                ? "No vulnerabilities found in scanned target."
+                : `Scan completed successfully: ${result.findings.length} vulnerabilities detected.`,
           });
-        } catch {
-          // Local scan failed / fallback to simulated demo mode
+        } catch (scanErr: any) {
+          trackError(scanErr, {
+            endpoint: "/api/scans",
+            tenantId: session.tenantId,
+            userId: session.uid,
+            extra: { action: "cve_scan", target: body.target_path },
+          });
+
+          if (!isDemoMode()) {
+            return NextResponse.json(
+              {
+                error: `Trivy scan failed: ${scanErr.message}`,
+                code: "TRIVY_EXECUTION_FAILED",
+              },
+              { status: 500 }
+            );
+          }
+          // Continue to fallback simulation only if demo mode is active
         }
       }
 

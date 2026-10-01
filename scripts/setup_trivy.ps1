@@ -1,51 +1,59 @@
 # setup_trivy.ps1
-# This script automates the download and installation of Trivy for Windows
+# Automates downloading and setting up Aqua Trivy for ShieldDesk on Windows
 
-# Force TLS 1.2 for GitHub downloads
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$trivyVersion = "0.50.1" 
-$url = "https://github.com/aquasecurity/trivy/releases/download/v$trivyVersion/trivy_$trivyVersion_windows-64bit.zip"
-$destFolder = "C:\trivy"
-$zipFile = "C:\trivy\trivy.zip"
+$trivyVersion = "0.74.0"
+$url = "https://github.com/aquasecurity/trivy/releases/download/v$trivyVersion/trivy_${trivyVersion}_windows-64bit.zip"
+$toolsFolder = Join-Path $PSScriptRoot "..\tools\trivy"
+$zipFile = Join-Path $env:TEMP "trivy_${trivyVersion}_temp.zip"
 
-Write-Host "--- ShieldDesk Trivy Installer ---" -ForegroundColor Cyan
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "  ShieldDesk Trivy Security Scanner Setup    " -ForegroundColor Green
+Write-Host "=============================================" -ForegroundColor Cyan
 
-# 1. Create destination folder
-if (!(Test-Path $destFolder)) {
-    Write-Host "Creating folder $destFolder..."
-    New-Item -ItemType Directory -Force -Path $destFolder | Out-Null
+# 1. Ensure tools/trivy exists
+if (!(Test-Path $toolsFolder)) {
+    Write-Host "Creating directory $toolsFolder..." -ForegroundColor DarkGray
+    New-Item -ItemType Directory -Force -Path $toolsFolder | Out-Null
 }
 
-# 2. Download Trivy
-Write-Host "Downloading Trivy v$trivyVersion from GitHub..." -ForegroundColor Yellow
+# 2. Check if already installed
+$localExe = Join-Path $toolsFolder "trivy.exe"
+if (Test-Path $localExe) {
+    Write-Host "Trivy binary found at $localExe" -ForegroundColor Green
+    & $localExe --version
+    Write-Host "Trivy is already installed and ready." -ForegroundColor Green
+    exit 0
+}
+
+# 3. Download Trivy release
+Write-Host "Downloading Trivy v$trivyVersion from GitHub releases..." -ForegroundColor Yellow
 try {
-    # Using a more robust download method
-    $webClient = New-Object System.Net.WebClient
-    $webClient.DownloadFile($url, $zipFile)
-    Write-Host "Download complete." -ForegroundColor Green
+    Invoke-WebRequest -Uri $url -OutFile $zipFile -UseBasicParsing
+    Write-Host "Download complete ($((Get-Item $zipFile).Length / 1MB | ForEach-Object { $_.ToString('N1') }) MB)." -ForegroundColor Green
 } catch {
-    Write-Host "Download failed: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Error "Failed to download Trivy. Please check your internet connection or firewall."
-    exit
+    Write-Error "Failed to download Trivy archive. Please check internet connection: $($_.Exception.Message)"
+    exit 1
 }
 
-# 3. Extract Trivy
-Write-Host "Extracting files..." -ForegroundColor Yellow
+# 4. Extract into tools/trivy
+Write-Host "Extracting Trivy into tools/trivy..." -ForegroundColor Yellow
 try {
-    Expand-Archive -Path $zipFile -DestinationPath $destFolder -Force
-    Remove-Item $zipFile
+    Expand-Archive -Path $zipFile -DestinationPath $toolsFolder -Force
+    Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
 } catch {
-    Write-Error "Failed to extract Trivy zip file."
-    exit
+    Write-Error "Failed to extract Trivy archive: $($_.Exception.Message)"
+    exit 1
 }
 
-Write-Host "`n--- INSTALLATION SUCCESSFUL ---" -ForegroundColor Green
-Write-Host "Trivy is now installed at: $destFolder" -ForegroundColor White
-Write-Host "`nIMPORTANT NEXT STEPS:" -ForegroundColor Cyan
-Write-Host "1. Open 'Edit the system environment variables'"
-Write-Host "2. Edit the 'Path' variable in System Variables"
-Write-Host "3. Add 'C:\trivy' to the list"
-Write-Host "4. RESTART VS Code completely" -ForegroundColor Yellow
-Write-Host "--------------------------------------------"
-
+# 5. Verify installation
+if (Test-Path $localExe) {
+    Write-Host "`n--- INSTALLATION SUCCESSFUL ---" -ForegroundColor Green
+    Write-Host "Trivy binary ready at: $localExe" -ForegroundColor White
+    & $localExe --version
+    Write-Host "`nShieldDesk can now run live offline/online CVE scans natively!" -ForegroundColor Cyan
+} else {
+    Write-Error "Extraction finished but trivy.exe was not found in $toolsFolder"
+    exit 1
+}

@@ -76,30 +76,38 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
 
         elif url.path == "/api/trigger_scan":
             try:
-                # Call the Next.js API which now runs Trivy locally
+                # Call the Next.js API which runs Trivy locally with dev user identity
+                user_id = data.get("user_id") if isinstance(data, dict) else "dev-admin"
                 scan_url = "http://localhost:3000/api/scans"
-                response = requests.post(scan_url, timeout=60)
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-ShieldDesk-User": user_id or "dev-admin",
+                }
+                payload = {
+                    "action": "cve_scan",
+                    "target_path": data.get("target_path", ".") if isinstance(data, dict) else ".",
+                    "scan_type": data.get("scan_type", "fs") if isinstance(data, dict) else "fs",
+                }
+                response = requests.post(scan_url, json=payload, headers=headers, timeout=180)
                 
                 if response.ok:
-                    data = response.json()
-                    if "message" in data and "no any vulnerable" in data["message"].lower():
+                    data_res = response.json()
+                    findings = data_res.get("findings", [])
+                    if findings and len(findings) > 0:
                         self._send_json({
                             "success": True, 
-                            "message": data["message"]
-                        })
-                    elif "findings" in data and len(data["findings"]) > 0:
-                        self._send_json({
-                            "success": True, 
-                            "message": f"Scan completed: {len(data['findings'])} vulnerabilities found.", 
-                            "findings": data["findings"]
+                            "message": f"Scan completed: {len(findings)} vulnerabilities found.", 
+                            "findings": findings,
+                            "metrics": data_res.get("metrics", {}),
                         })
                     else:
                         self._send_json({
                             "success": True, 
-                            "message": "There is no any vulnerable till now"
+                            "message": data_res.get("message") or "No vulnerabilities detected.",
+                            "findings": [],
                         })
                 else:
-                    self._send_json({"error": f"Scan service returned error: {response.status_code}"}, status=500)
+                    self._send_json({"error": f"Scan service returned error: {response.status_code}"}, status=response.status_code)
             except Exception as e:
                 self._send_json({"error": f"Failed to trigger scan: {str(e)}"}, status=500)
             return
