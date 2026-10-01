@@ -7,15 +7,17 @@ import os
 import json
 import urllib.parse
 import requests
+import importlib
 from typing import Any
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from cve_ai_engine import CVEAIEngine
 
 # Initialize Sentry error reporting if SENTRY_DSN is configured
+sentry_sdk: Any = None
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
     try:
-        import sentry_sdk
+        sentry_sdk = importlib.import_module("sentry_sdk")
         sentry_sdk.init(
             dsn=sentry_dsn,
             traces_sample_rate=1.0,
@@ -23,7 +25,8 @@ if sentry_dsn:
             environment=os.getenv("NODE_ENV", "production")
         )
         print("[Sentry] Python CVE AI Engine error tracking initialized.")
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
+        sentry_sdk = None
         print("[Sentry] sentry-sdk not installed, continuing without cloud error reporting.")
     except Exception as init_err:
         print(f"[Sentry] Initialization warning: {init_err}")
@@ -66,11 +69,11 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                 )
                 self._send_json(result)
             except Exception as e:
-                try:
-                    import sentry_sdk
-                    sentry_sdk.capture_exception(e)
-                except Exception:
-                    pass
+                if sentry_sdk is not None:
+                    try:
+                        sentry_sdk.capture_exception(e)
+                    except Exception:
+                        pass
                 self._send_json({"error": str(e)}, status=500)
             return
 
