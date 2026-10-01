@@ -9,6 +9,9 @@ import {
   recordThreatAlert,
   acknowledgeThreatAlert,
   resetThreatAlerts,
+  getBlockedIps,
+  unblockIp,
+  blockIp,
 } from "@/lib/alerts/threatAlertStore";
 
 const YARA_RULES = [
@@ -208,6 +211,7 @@ export async function GET(req: NextRequest) {
     },
     can_view_auth_alerts: canViewAuthAlerts,
     security_alerts: securityAlerts,
+    blocked_ips: getBlockedIps(),
   });
 }
 
@@ -231,12 +235,51 @@ export async function POST(req: NextRequest) {
         severity: body.severity,
       });
 
-      return NextResponse.json({ success: true, alert });
+      return NextResponse.json({
+        success: true,
+        alert,
+        isBlocked: alert.isBlocked || false,
+        blocked_ips: getBlockedIps(),
+      });
     }
 
     const session = await getSessionFromRequest(req);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
+    const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
+
+    if (action === "unblock_ip") {
+      if (!isSystemAdmin && !isGlobexAnalyst) {
+        return NextResponse.json({ error: "Forbidden: IP unblocking restricted" }, { status: 403 });
+      }
+      if (!body.ip) {
+        return NextResponse.json({ error: "Missing target IP to unblock" }, { status: 400 });
+      }
+      const unblocked = unblockIp(body.ip);
+      return NextResponse.json({
+        success: true,
+        unblocked,
+        ip: body.ip,
+        blocked_ips: getBlockedIps(),
+      });
+    }
+
+    if (action === "block_ip") {
+      if (!isSystemAdmin && !isGlobexAnalyst) {
+        return NextResponse.json({ error: "Forbidden: IP blocking restricted" }, { status: 403 });
+      }
+      if (!body.ip) {
+        return NextResponse.json({ error: "Missing target IP to block" }, { status: 400 });
+      }
+      blockIp(body.ip, body.reason || "Manual SOC IP containment");
+      return NextResponse.json({
+        success: true,
+        ip: body.ip,
+        blocked_ips: getBlockedIps(),
+      });
     }
 
     if (action === "simulate_burst") {
@@ -271,9 +314,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
-    const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
-
     if (action === "acknowledge_alert") {
       if (!isSystemAdmin && !isGlobexAnalyst) {
         return NextResponse.json({ error: "Forbidden: Alert acknowledgement restricted" }, { status: 403 });
@@ -287,7 +327,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Forbidden: Alert clearing restricted" }, { status: 403 });
       }
       resetThreatAlerts();
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, blocked_ips: [] });
     }
 
     if (action === "toggle_rule") {

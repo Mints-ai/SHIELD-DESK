@@ -84,17 +84,26 @@ function LoginForm() {
             password,
           });
           if (error) {
-            setErrorMessage(`Supabase Auth: ${error.message}`);
             // Report to Threat Engine so it immediately appears in the Alerts tab
-            fetch("/api/threats", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "record_login_failure",
-                email,
-                reason: `Supabase Auth: ${error.message}`,
-              }),
-            }).catch(() => {});
+            try {
+              const threatRes = await fetch("/api/threats", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  action: "record_login_failure",
+                  email,
+                  reason: `Supabase Auth: ${error.message}`,
+                }),
+              });
+              const threatData = await threatRes.json();
+              if (threatData?.isBlocked) {
+                setErrorMessage(`🚫 IP BLOCKED: Source IP is blocked due to excessive failed attempts (>5). Contact SOC administrator.`);
+              } else {
+                setErrorMessage(`Supabase Auth: ${error.message}`);
+              }
+            } catch {
+              setErrorMessage(`Supabase Auth: ${error.message}`);
+            }
           } else {
             setSuccessMessage(`Authenticated via Supabase as ${data.user?.email || "Operator"}! Redirecting...`);
             setTimeout(() => router.push(redirectTarget), 800);
@@ -110,7 +119,9 @@ function LoginForm() {
         if (res.ok) {
           router.push(redirectTarget);
         } else {
-          if (data.mfaRequired) {
+          if (data.blocked) {
+            setErrorMessage(`🚫 ${data.error || "IP Address Blocked: Excessive failed login attempts (>5). Contact your SOC administrator."}`);
+          } else if (data.mfaRequired) {
             setMfaRequired(true);
             setErrorMessage("Enter your 6-digit TOTP code from your authenticator app.");
           } else {
@@ -128,7 +139,11 @@ function LoginForm() {
         if (res.ok) {
           router.push(redirectTarget);
         } else {
-          setErrorMessage(data.error || "Authentication failed");
+          if (data.blocked) {
+            setErrorMessage(`🚫 ${data.error || "IP Address Blocked: Excessive failed login attempts (>5)."}`);
+          } else {
+            setErrorMessage(data.error || "Authentication failed");
+          }
         }
       }
     } catch {

@@ -8,16 +8,35 @@ import { getTotpSecret, verifyTotpCode } from "@/lib/auth/totp";
 import type { ShieldDeskRole } from "@/lib/permissions";
 import { isDevPersonaAllowed } from "@/lib/config/environment";
 import { trackError } from "@/lib/observability/errorTracker";
-import { recordThreatAlert } from "@/lib/alerts/threatAlertStore";
+import {
+  recordThreatAlert,
+  isIpBlocked,
+  clearIpFailures,
+  getIpFailureCount,
+} from "@/lib/alerts/threatAlertStore";
 
 export async function POST(req: NextRequest) {
-  // S7: Rate limit login attempts (max 10 attempts per minute per IP)
   const forwarded = req.headers.get("x-forwarded-for");
   const realIp = req.headers.get("x-real-ip");
   const cfConnectingIp = req.headers.get("cf-connecting-ip");
   let clientIp = forwarded ? forwarded.split(",")[0].trim() : (realIp || cfConnectingIp || "127.0.0.1");
   if (clientIp === "::1") clientIp = "127.0.0.1";
 
+  // Check Autonomous IP Containment (Block if >5 failed attempts recorded)
+  if (isIpBlocked(clientIp)) {
+    const failures = getIpFailureCount(clientIp);
+    return NextResponse.json(
+      {
+        error: `Access Denied: Source IP ${clientIp} has been blocked after ${failures || ">5"} failed login attempts. Contact SOC security administrator.`,
+        blocked: true,
+        clientIp,
+        attempts: failures,
+      },
+      { status: 403 }
+    );
+  }
+
+  // S7: Rate limit login attempts (max 10 attempts per minute per IP)
   const rateLimit = checkRateLimit(`login:${clientIp}`, { limit: 10, windowMs: 60000 });
 
   if (!rateLimit.allowed) {
@@ -228,6 +247,9 @@ export async function POST(req: NextRequest) {
         }
       }
     }
+
+    // Clear IP failure counters on successful authentication
+    clearIpFailures(clientIp);
 
     // S2: Cryptographically sign session token (HMAC-SHA256)
     const sessionToken = createSessionToken({

@@ -23,6 +23,8 @@ import {
   Mail,
   UserCheck,
   Clock,
+  Ban,
+  Unlock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +53,13 @@ interface AnomalyMetric {
   unit: string;
 }
 
+export interface BlockedIpItem {
+  ip: string;
+  blockedAt: string;
+  reason: string;
+  attempts: number;
+}
+
 export interface ThreatSecurityAlert {
   id: string;
   type: string;
@@ -61,6 +70,7 @@ export interface ThreatSecurityAlert {
   clientIp: string;
   failureReason: string;
   attemptsCount: number;
+  isBlocked?: boolean;
   allowedRecipients: string[];
   status: string;
   createdAt: string;
@@ -77,7 +87,9 @@ export default function ThreatsDashboardPage() {
   const [anomalies, setAnomalies] = useState<AnomalyMetric[]>([]);
   const [telemetry, setTelemetry] = useState<any>(null);
   const [securityAlerts, setSecurityAlerts] = useState<ThreatSecurityAlert[]>([]);
+  const [blockedIps, setBlockedIps] = useState<BlockedIpItem[]>([]);
   const [canViewAuthAlerts, setCanViewAuthAlerts] = useState<boolean>(false);
+  const [unblockFeedback, setUnblockFeedback] = useState<string | null>(null);
 
   // Strictly restricted: Only System Admin (dev-admin / system_admin) and Globex Analyst (dev-other / globex-tenant) can view alerts
   const isAuthorizedForAlerts =
@@ -111,6 +123,7 @@ export default function ThreatsDashboardPage() {
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
       if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
+      if (data.blocked_ips) setBlockedIps(data.blocked_ips);
       if (data.security_alerts && isAuthorizedForAlerts) {
         setSecurityAlerts(data.security_alerts);
       } else {
@@ -179,6 +192,48 @@ export default function ThreatsDashboardPage() {
       setSecurityAlerts((prev) => prev.filter((a) => a.id !== alertId));
     } catch (err) {
       console.error("Failed to acknowledge alert:", err);
+    }
+  };
+
+  const handleUnblockIp = async (ip: string) => {
+    try {
+      const res = await fetch("/api/threats", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({ action: "unblock_ip", ip }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUnblockFeedback(`IP ${ip} successfully unblocked and containment restored.`);
+        setTimeout(() => setUnblockFeedback(null), 4000);
+        fetchThreatData(true);
+      }
+    } catch (err) {
+      console.error("Failed to unblock IP:", err);
+    }
+  };
+
+  const handleBlockIp = async (ip: string) => {
+    try {
+      const res = await fetch("/api/threats", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({ action: "block_ip", ip, reason: "Manual SOC operator containment" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setUnblockFeedback(`IP ${ip} manually blocked.`);
+        setTimeout(() => setUnblockFeedback(null), 4000);
+        fetchThreatData(true);
+      }
+    } catch (err) {
+      console.error("Failed to block IP:", err);
     }
   };
 
@@ -628,6 +683,57 @@ export default function ThreatsDashboardPage() {
             </div>
           ) : (
             <div className="space-y-4">
+              {/* Feedback toast */}
+              {unblockFeedback && (
+                <div className="p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  <span>{unblockFeedback}</span>
+                </div>
+              )}
+
+              {/* Autonomous IP Containment Active Banner */}
+              {blockedIps.length > 0 && (
+                <div className="p-4 rounded-xl border border-red-500/40 bg-red-500/10 space-y-3 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-[var(--sd-danger)] text-white">
+                        <Ban className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-[var(--sd-danger)] uppercase tracking-wider font-mono flex items-center gap-2">
+                          <span>Autonomous IP Containment Active</span>
+                          <span className="px-2 py-0.2 rounded-full bg-[var(--sd-danger)] text-white text-[10px]">
+                            {blockedIps.length} Blocked
+                          </span>
+                        </h4>
+                        <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">
+                          IPs attempting login more than 5 times with invalid credentials are automatically blocked from authenticating.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap pt-1">
+                    {blockedIps.map((b) => (
+                      <div
+                        key={b.ip}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--sd-panel)] border border-red-500/30 text-xs font-mono shadow-xs"
+                      >
+                        <span className="text-[var(--sd-danger)] font-bold">{b.ip}</span>
+                        <span className="text-[10px] text-[var(--sd-text-muted)]">({b.attempts} attempts)</span>
+                        <button
+                          onClick={() => handleUnblockIp(b.ip)}
+                          className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[11px] font-sans font-semibold cursor-pointer transition"
+                        >
+                          <Unlock className="h-3 w-3" />
+                          <span>Unblock</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-1 shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
@@ -664,11 +770,14 @@ export default function ThreatsDashboardPage() {
                               "X-ShieldDesk-User": activeUserId,
                             },
                             body: JSON.stringify({ action: "reset_alerts" }),
-                          }).then(() => setSecurityAlerts([]));
+                          }).then(() => {
+                            setSecurityAlerts([]);
+                            setBlockedIps([]);
+                          });
                         }}
                         className="px-3 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs hover:bg-[var(--sd-panel-hover)] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] cursor-pointer transition shadow-xs"
                       >
-                        Clear All Alerts
+                        Clear All Alerts &amp; Reset Blocks
                       </button>
                     )}
                   </div>
@@ -680,13 +789,17 @@ export default function ThreatsDashboardPage() {
                 {securityAlerts.map((alert) => {
                   const isCritical = alert.severity === "critical";
                   const isHigh = alert.severity === "high";
+                  const isIpCurrentlyBlocked =
+                    alert.isBlocked || blockedIps.some((b) => b.ip === alert.clientIp);
 
                   return (
                     <div
                       key={alert.id}
                       className={cn(
                         "p-5 rounded-xl border shadow-xs space-y-4 animate-in fade-in duration-300",
-                        isCritical
+                        isIpCurrentlyBlocked
+                          ? "border-[var(--sd-danger)] bg-[var(--sd-danger-dim)]/80"
+                          : isCritical
                           ? "border-[var(--sd-danger)] bg-[var(--sd-danger-dim)]"
                           : isHigh
                           ? "border-amber-500/50 bg-amber-500/10"
@@ -698,7 +811,11 @@ export default function ThreatsDashboardPage() {
                           <div
                             className={cn(
                               "p-2 rounded-lg text-white",
-                              isCritical ? "bg-[var(--sd-danger)]" : isHigh ? "bg-amber-600" : "bg-blue-600"
+                              isIpCurrentlyBlocked || isCritical
+                                ? "bg-[var(--sd-danger)]"
+                                : isHigh
+                                ? "bg-amber-600"
+                                : "bg-blue-600"
                             )}
                           >
                             <ShieldAlert className="h-5 w-5" />
@@ -711,7 +828,7 @@ export default function ThreatsDashboardPage() {
                               <span
                                 className={cn(
                                   "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
-                                  isCritical
+                                  isIpCurrentlyBlocked || isCritical
                                     ? "bg-[var(--sd-danger)] text-white"
                                     : isHigh
                                     ? "bg-amber-600 text-white"
@@ -725,9 +842,15 @@ export default function ThreatsDashboardPage() {
                                   {alert.attemptsCount} ATTEMPTS
                                 </span>
                               )}
+                              {isIpCurrentlyBlocked && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--sd-danger)] text-white border border-red-400 font-mono flex items-center gap-1 animate-pulse">
+                                  <Ban className="h-3 w-3" />
+                                  IP BLOCKED
+                                </span>
+                              )}
                             </div>
                             <span className="text-[11px] text-[var(--sd-text-muted)]">
-                              Real-time authentication telemetry anomaly detection
+                              Real-time authentication telemetry anomaly detection &amp; containment
                             </span>
                           </div>
                         </div>
@@ -754,9 +877,16 @@ export default function ThreatsDashboardPage() {
                           <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
                             <Globe className="h-3.5 w-3.5 text-emerald-400" /> Source IP Address
                           </span>
-                          <p className="font-mono font-bold text-sm text-emerald-400">
-                            {alert.clientIp}
-                          </p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-mono font-bold text-sm text-emerald-400">
+                              {alert.clientIp}
+                            </p>
+                            {isIpCurrentlyBlocked && (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-[var(--sd-danger)] text-white font-mono flex items-center gap-1">
+                                <Ban className="h-2.5 w-2.5" /> BLOCKED
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
@@ -778,7 +908,25 @@ export default function ThreatsDashboardPage() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-end gap-2.5 pt-1">
+                      <div className="flex items-center justify-end gap-2.5 pt-1 flex-wrap">
+                        {isIpCurrentlyBlocked ? (
+                          <button
+                            onClick={() => handleUnblockIp(alert.clientIp)}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold transition cursor-pointer shadow-xs"
+                          >
+                            <Unlock className="h-3.5 w-3.5" />
+                            <span>Unblock IP ({alert.clientIp})</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleBlockIp(alert.clientIp)}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-danger)]/20 hover:text-[var(--sd-danger)] text-xs font-semibold text-[var(--sd-text-muted)] transition cursor-pointer shadow-xs"
+                          >
+                            <Ban className="h-3.5 w-3.5" />
+                            <span>Block IP</span>
+                          </button>
+                        )}
+
                         <button
                           onClick={() => handleAcknowledgeAlert(alert.id)}
                           className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-text)] transition cursor-pointer shadow-xs"

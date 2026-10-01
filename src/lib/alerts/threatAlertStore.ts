@@ -11,9 +11,17 @@ export interface ThreatAlert {
   clientIp: string;
   failureReason: string;
   attemptsCount: number;
+  isBlocked?: boolean;
   allowedRecipients: string[];
   status: "active" | "acknowledged" | "resolved";
   createdAt: string;
+}
+
+export interface BlockedIpRecord {
+  ip: string;
+  blockedAt: string;
+  reason: string;
+  attempts: number;
 }
 
 // Global in-memory storage so alerts persist across requests in dev/Node runtime
@@ -22,6 +30,10 @@ declare global {
   var __shieldDeskThreatAlerts: ThreatAlert[] | undefined;
   // eslint-disable-next-line no-var
   var __shieldDeskRecentLoginFailures: Map<string, number> | undefined;
+  // eslint-disable-next-line no-var
+  var __shieldDeskIpLoginFailures: Map<string, number> | undefined;
+  // eslint-disable-next-line no-var
+  var __shieldDeskBlockedIps: Map<string, BlockedIpRecord> | undefined;
 }
 
 if (!global.__shieldDeskThreatAlerts) {
@@ -32,8 +44,94 @@ if (!global.__shieldDeskRecentLoginFailures) {
   global.__shieldDeskRecentLoginFailures = new Map<string, number>();
 }
 
+if (!global.__shieldDeskIpLoginFailures) {
+  global.__shieldDeskIpLoginFailures = new Map<string, number>();
+}
+
+if (!global.__shieldDeskBlockedIps) {
+  global.__shieldDeskBlockedIps = new Map<string, BlockedIpRecord>();
+}
+
 const alertsStore = global.__shieldDeskThreatAlerts;
 const failureTracker = global.__shieldDeskRecentLoginFailures;
+const ipFailureTracker = global.__shieldDeskIpLoginFailures;
+const blockedIpsStore = global.__shieldDeskBlockedIps;
+
+/**
+ * Maximum allowed login failures before automatic IP containment kicks in
+ */
+export const MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK = 5;
+
+/**
+ * Check if a given client IP is currently blocked
+ */
+export function isIpBlocked(ip?: string | null): boolean {
+  if (!ip) return false;
+  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+  return blockedIpsStore.has(cleanIp);
+}
+
+/**
+ * Block a specific IP address
+ */
+export function blockIp(ip: string, reason: string = "Exceeded 5 failed login attempts", attempts: number = 6): void {
+  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+  blockedIpsStore.set(cleanIp, {
+    ip: cleanIp,
+    blockedAt: new Date().toISOString(),
+    reason,
+    attempts,
+  });
+}
+
+/**
+ * Unblock a specific IP address and clear its failure records
+ */
+export function unblockIp(ip: string): boolean {
+  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+  const deleted = blockedIpsStore.delete(cleanIp);
+  ipFailureTracker.delete(cleanIp);
+  for (const key of failureTracker.keys()) {
+    if (key.startsWith(`${cleanIp}:`)) {
+      failureTracker.delete(key);
+    }
+  }
+  // Update any existing active alert for this IP
+  for (const alert of alertsStore) {
+    if (alert.clientIp === cleanIp) {
+      alert.isBlocked = false;
+    }
+  }
+  return deleted;
+}
+
+/**
+ * Retrieve all currently blocked IPs
+ */
+export function getBlockedIps(): BlockedIpRecord[] {
+  return Array.from(blockedIpsStore.values());
+}
+
+/**
+ * Clear failed login attempts for a specific IP (e.g., on successful authentication)
+ */
+export function clearIpFailures(ip: string): void {
+  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+  ipFailureTracker.delete(cleanIp);
+  for (const key of failureTracker.keys()) {
+    if (key.startsWith(`${cleanIp}:`)) {
+      failureTracker.delete(key);
+    }
+  }
+}
+
+/**
+ * Get current failure count for an IP
+ */
+export function getIpFailureCount(ip: string): number {
+  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+  return ipFailureTracker.get(cleanIp) || 0;
+}
 
 /**
  * Determine if a user/persona is authorized to view or manage threat alerts.
@@ -51,7 +149,8 @@ export function isUserAuthorizedForAlerts(userId?: string | null): boolean {
 
 /**
  * Record an authentication failure alert in the Threat Engine store.
- * Automatically tracks consecutive failures per IP/email to escalate severity.
+ * Automatically tracks consecutive failures per IP/email to escalate severity
+ * and triggers autonomous IP containment if failures exceed 5 attempts.
  */
 export function recordThreatAlert(params: {
   targetUser: string;
@@ -66,22 +165,40 @@ export function recordThreatAlert(params: {
   const currentCount = (failureTracker.get(key) || 0) + 1;
   failureTracker.set(key, currentCount);
 
-  // Escalate severity based on repetition
+  // Track failures per IP across all target emails
+  const ipFailures = (ipFailureTracker.get(cleanIp) || 0) + 1;
+  ipFailureTracker.set(cleanIp, ipFailures);
+
+  // Autonomous IP Containment: Block IP if failures exceed 5
+  const isBlocked = ipFailures > MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK;
+  if (isBlocked && !blockedIpsStore.has(cleanIp)) {
+    blockedIpsStore.set(cleanIp, {
+      ip: cleanIp,
+      blockedAt: new Date().toISOString(),
+      reason: `Autonomous IP Containment: Exceeded ${MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK} failed login attempts`,
+      attempts: ipFailures,
+    });
+  }
+
+  // Escalate severity based on repetition and blocking status
   let severity: "medium" | "high" | "critical" = params.severity || "medium";
-  if (currentCount >= 3) {
+  if (isBlocked || ipFailures >= 3 || currentCount >= 3) {
     severity = "critical";
-  } else if (currentCount >= 2) {
+  } else if (ipFailures >= 2 || currentCount >= 2) {
     severity = "high";
   }
 
-  const alertTitle =
-    currentCount >= 3
-      ? "CRITICAL SECURITY ALERT: Multiple Invalid Login Attempts Detected"
-      : currentCount === 2
-      ? "HIGH SEVERITY ALERT: Repeated Invalid Login Attempts Detected"
-      : "SECURITY ALERT: Invalid Login Attempt Detected";
+  const alertTitle = isBlocked
+    ? `CRITICAL SECURITY ALERT: Source IP ${cleanIp} Blocked (>5 Failed Logins)`
+    : currentCount >= 3 || ipFailures >= 3
+    ? "CRITICAL SECURITY ALERT: Multiple Invalid Login Attempts Detected"
+    : currentCount === 2 || ipFailures === 2
+    ? "HIGH SEVERITY ALERT: Repeated Invalid Login Attempts Detected"
+    : "SECURITY ALERT: Invalid Login Attempt Detected";
 
-  const alertDescription = `Consecutive failed login attempt (${currentCount}) for account '${cleanEmail}' from IP ${cleanIp}`;
+  const alertDescription = isBlocked
+    ? `Autonomous Containment Triggered: Source IP ${cleanIp} has been BLOCKED after ${ipFailures} failed login attempts.`
+    : `Consecutive failed login attempt (${ipFailures}) for account '${cleanEmail}' from IP ${cleanIp}`;
 
   // Check if an existing active alert for this email and IP exists
   const existingIndex = alertsStore.findIndex(
@@ -95,12 +212,15 @@ export function recordThreatAlert(params: {
     const [existing] = alertsStore.splice(existingIndex, 1);
     alert = {
       ...existing,
-      type: currentCount >= 3 ? "brute_force_spike" : params.type || "auth_failure",
+      type: isBlocked || ipFailures >= 3 ? "brute_force_spike" : params.type || "auth_failure",
       severity,
       title: alertTitle,
       description: alertDescription,
-      failureReason: params.failureReason,
-      attemptsCount: currentCount,
+      failureReason: isBlocked
+        ? `IP Blocked (>5 attempts): ${params.failureReason}`
+        : params.failureReason,
+      attemptsCount: ipFailures,
+      isBlocked,
       allowedRecipients: ["dev-admin", "dev-other"],
       createdAt: new Date().toISOString(),
     };
@@ -108,14 +228,17 @@ export function recordThreatAlert(params: {
     // Create new alert
     alert = {
       id: `alt-${randomUUID().slice(0, 8)}`,
-      type: currentCount >= 3 ? "brute_force_spike" : params.type || "auth_failure",
+      type: isBlocked || ipFailures >= 3 ? "brute_force_spike" : params.type || "auth_failure",
       severity,
       title: alertTitle,
       description: alertDescription,
       targetUser: cleanEmail,
       clientIp: cleanIp,
-      failureReason: params.failureReason,
-      attemptsCount: currentCount,
+      failureReason: isBlocked
+        ? `IP Blocked (>5 attempts): ${params.failureReason}`
+        : params.failureReason,
+      attemptsCount: ipFailures,
+      isBlocked,
       allowedRecipients: ["dev-admin", "dev-other"],
       status: "active",
       createdAt: new Date().toISOString(),
@@ -159,9 +282,11 @@ export function acknowledgeThreatAlert(alertId: string, userId?: string | null):
 }
 
 /**
- * Clear or reset all threat alerts (for testing/demo)
+ * Clear or reset all threat alerts, failures, and unblock IPs (for testing/demo)
  */
 export function resetThreatAlerts(): void {
   alertsStore.length = 0;
   failureTracker.clear();
+  ipFailureTracker.clear();
+  blockedIpsStore.clear();
 }
