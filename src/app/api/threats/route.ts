@@ -13,6 +13,7 @@ import {
   unblockIp,
   blockIp,
 } from "@/lib/alerts/threatAlertStore";
+import { resolveClientIp } from "@/lib/network/clientIp";
 
 const YARA_RULES = [
   {
@@ -222,11 +223,7 @@ export async function POST(req: NextRequest) {
 
     // Public / client-reported login failures (e.g. from frontend Supabase auth failure or direct telemetry probe)
     if (action === "record_login_failure" || action === "simulate_login_failure") {
-      const forwarded = req.headers.get("x-forwarded-for");
-      const realIp = req.headers.get("x-real-ip");
-      const cfConnectingIp = req.headers.get("cf-connecting-ip");
-      let clientIp = body.clientIp || (forwarded ? forwarded.split(",")[0].trim() : (realIp || cfConnectingIp || "127.0.0.1"));
-      if (clientIp === "::1") clientIp = "127.0.0.1";
+      const clientIp = await resolveClientIp(req, body.clientIp);
 
       const alert = recordThreatAlert({
         targetUser: body.email || body.targetUser || "attacker@unauthorized.io",

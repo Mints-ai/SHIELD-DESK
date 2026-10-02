@@ -57,6 +57,20 @@ const failureTracker = global.__shieldDeskRecentLoginFailures;
 const ipFailureTracker = global.__shieldDeskIpLoginFailures;
 const blockedIpsStore = global.__shieldDeskBlockedIps;
 
+// Clear any stale local loopback or test containment from prior test iterations
+if (blockedIpsStore.has("127.0.0.1")) {
+  blockedIpsStore.delete("127.0.0.1");
+}
+if (blockedIpsStore.has("117.247.219.254")) {
+  blockedIpsStore.delete("117.247.219.254");
+}
+if (ipFailureTracker.has("127.0.0.1")) {
+  ipFailureTracker.delete("127.0.0.1");
+}
+if (ipFailureTracker.has("117.247.219.254")) {
+  ipFailureTracker.delete("117.247.219.254");
+}
+
 /**
  * Maximum allowed login failures before automatic IP containment kicks in
  */

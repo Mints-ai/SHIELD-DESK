@@ -38,8 +38,17 @@ function LoginForm() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [devPersonasAllowed, setDevPersonasAllowed] = useState(false);
+  const [clientIp, setClientIp] = useState<string>("");
 
   useEffect(() => {
+    // Detect genuine public client IP
+    fetch("https://api.ipify.org?format=json")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.ip) setClientIp(data.ip);
+      })
+      .catch(() => {});
+
     fetch("/api/health")
       .then((res) => res.json())
       .then((data) => {
@@ -61,12 +70,17 @@ function LoginForm() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    const authHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(clientIp ? { "x-client-ip": clientIp } : {}),
+    };
+
     try {
       if (authMode === "register") {
         const res = await fetch("/api/auth/signup", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password, organizationName: orgName }),
+          headers: authHeaders,
+          body: JSON.stringify({ email, password, organizationName: orgName, clientIp }),
         });
         const data = await res.json();
         if (res.ok) {
@@ -88,16 +102,17 @@ function LoginForm() {
             try {
               const threatRes = await fetch("/api/threats", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: authHeaders,
                 body: JSON.stringify({
                   action: "record_login_failure",
                   email,
+                  clientIp: clientIp || undefined,
                   reason: `Supabase Auth: ${error.message}`,
                 }),
               });
               const threatData = await threatRes.json();
               if (threatData?.isBlocked) {
-                setErrorMessage(`🚫 IP BLOCKED: Source IP is blocked due to excessive failed attempts (>5). Contact SOC administrator.`);
+                setErrorMessage("Too many login attempts. Contact security admin to unblock.");
               } else {
                 setErrorMessage(`Supabase Auth: ${error.message}`);
               }
@@ -112,15 +127,15 @@ function LoginForm() {
       } else if (authMode === "credentials") {
         const res = await fetch("/api/auth/login", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password, mfaCode: mfaCode || undefined }),
+          headers: authHeaders,
+          body: JSON.stringify({ email, password, mfaCode: mfaCode || undefined, clientIp: clientIp || undefined }),
         });
         const data = await res.json();
         if (res.ok) {
           router.push(redirectTarget);
         } else {
           if (data.blocked) {
-            setErrorMessage(`🚫 ${data.error || "IP Address Blocked: Excessive failed login attempts (>5). Contact your SOC administrator."}`);
+            setErrorMessage("Too many login attempts. Contact security admin to unblock.");
           } else if (data.mfaRequired) {
             setMfaRequired(true);
             setErrorMessage("Enter your 6-digit TOTP code from your authenticator app.");
@@ -132,15 +147,15 @@ function LoginForm() {
         // Quick Persona Login (only available when devPersonasAllowed is true)
         const res = await fetch("/api/auth/login", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: selectedUser, mfaCode }),
+          headers: authHeaders,
+          body: JSON.stringify({ userId: selectedUser, mfaCode, clientIp: clientIp || undefined }),
         });
         const data = await res.json();
         if (res.ok) {
           router.push(redirectTarget);
         } else {
           if (data.blocked) {
-            setErrorMessage(`🚫 ${data.error || "IP Address Blocked: Excessive failed login attempts (>5)."}`);
+            setErrorMessage("Too many login attempts. Contact security admin to unblock.");
           } else {
             setErrorMessage(data.error || "Authentication failed");
           }
