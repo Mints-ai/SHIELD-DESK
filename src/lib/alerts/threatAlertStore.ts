@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { DEV_USERS, type DevUserId } from "@/lib/constants/devUsers";
+import { resetRateLimit } from "@/lib/security/rateLimit";
 
 export interface ThreatAlert {
   id: string;
@@ -126,6 +127,7 @@ export function unblockIp(ip: string): boolean {
   const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
   const deleted = blockedIpsStore.delete(cleanIp);
   ipFailureTracker.delete(cleanIp);
+  resetRateLimit(`login:${cleanIp}`);
   for (const key of failureTracker.keys()) {
     if (key.startsWith(`${cleanIp}:`)) {
       failureTracker.delete(key);
@@ -259,10 +261,10 @@ export function getLiveEgressRateMBPerMin(): { current_value: number; is_anomaly
  */
 export function isUserAuthorizedForAlerts(userId?: string | null): boolean {
   if (!userId) return false;
-  if (userId === "dev-admin" || userId === "dev-other") return true;
+  if (userId === "dev-admin" || userId === "dev-other" || userId === "dev-analyst") return true;
   const devUser = DEV_USERS[userId as DevUserId];
   if (devUser) {
-    return devUser.role === "system_admin" || devUser.tenantId === "globex-tenant";
+    return devUser.role === "system_admin" || devUser.tenantId === "globex-tenant" || devUser.role === "analyst";
   }
   return false;
 }
@@ -343,7 +345,7 @@ export function recordThreatAlert(params: {
         : params.failureReason,
       attemptsCount: ipFailures,
       isBlocked,
-      allowedRecipients: ["dev-admin", "dev-other"],
+      allowedRecipients: ["dev-admin", "dev-other", "dev-analyst"],
       createdAt: new Date().toISOString(),
     };
   } else {
@@ -361,7 +363,7 @@ export function recordThreatAlert(params: {
         : params.failureReason,
       attemptsCount: ipFailures,
       isBlocked,
-      allowedRecipients: ["dev-admin", "dev-other"],
+      allowedRecipients: ["dev-admin", "dev-other", "dev-analyst"],
       status: "active",
       createdAt: new Date().toISOString(),
     };

@@ -91,12 +91,14 @@ export default function ThreatsDashboardPage() {
   const [canViewAuthAlerts, setCanViewAuthAlerts] = useState<boolean>(false);
   const [unblockFeedback, setUnblockFeedback] = useState<string | null>(null);
 
-  // Strictly restricted: Only System Admin (dev-admin / system_admin) and Globex Analyst (dev-other / globex-tenant) can view alerts
+  // Authorized personas: System Admin (dev-admin), Globex Analyst (dev-other), and SOC Analyst (dev-analyst)
   const isAuthorizedForAlerts =
     activeUserId === "dev-admin" ||
     activeUserId === "dev-other" ||
+    activeUserId === "dev-analyst" ||
     activeUser?.role === "system_admin" ||
     activeUser?.tenantId === "globex-tenant" ||
+    activeUser?.role === "analyst" ||
     canViewAuthAlerts;
 
   // Auto-switch to anomaly tab if active persona is not authorized for alerts
@@ -201,12 +203,21 @@ export default function ThreatsDashboardPage() {
       });
       const data = await res.json();
       if (data.success) {
+        setBlockedIps((prev) => prev.filter((b) => b.ip !== ip));
+        setSecurityAlerts((prev) =>
+          prev.map((a) => (a.clientIp === ip ? { ...a, isBlocked: false } : a))
+        );
         setUnblockFeedback(`IP ${ip} successfully unblocked and containment restored.`);
         setTimeout(() => setUnblockFeedback(null), 4000);
-        fetchThreatData(true);
+        await fetchThreatData(true);
+      } else {
+        setUnblockFeedback(`Failed to unblock IP ${ip}: ${data.error || "Permission denied"}`);
+        setTimeout(() => setUnblockFeedback(null), 5000);
       }
     } catch (err) {
       console.error("Failed to unblock IP:", err);
+      setUnblockFeedback(`Network error unblocking IP ${ip}`);
+      setTimeout(() => setUnblockFeedback(null), 4000);
     }
   };
 
@@ -824,182 +835,182 @@ export default function ThreatsDashboardPage() {
                 </div>
               </div>
 
-            {securityAlerts.length > 0 ? (
-              <div className="space-y-3">
-                {securityAlerts.map((alert) => {
-                  const isCritical = alert.severity === "critical";
-                  const isHigh = alert.severity === "high";
-                  const isIpCurrentlyBlocked =
-                    alert.isBlocked || blockedIps.some((b) => b.ip === alert.clientIp);
+              {securityAlerts.length > 0 ? (
+                <div className="space-y-3">
+                  {securityAlerts.map((alert) => {
+                    const isCritical = alert.severity === "critical";
+                    const isHigh = alert.severity === "high";
+                    const isIpCurrentlyBlocked =
+                      alert.isBlocked || blockedIps.some((b) => b.ip === alert.clientIp);
 
-                  return (
-                    <div
-                      key={alert.id}
-                      className={cn(
-                        "p-5 rounded-xl border shadow-xs space-y-4 animate-in fade-in duration-300",
-                        isIpCurrentlyBlocked
-                          ? "border-[var(--sd-danger)] bg-[var(--sd-danger-dim)]/80"
-                          : isCritical
-                          ? "border-[var(--sd-danger)] bg-[var(--sd-danger-dim)]"
-                          : isHigh
-                          ? "border-amber-500/50 bg-amber-500/10"
-                          : "border-[var(--sd-border)] bg-[var(--sd-panel)]"
-                      )}
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--sd-border)] pb-3">
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            className={cn(
-                              "p-2 rounded-lg text-white",
-                              isIpCurrentlyBlocked || isCritical
-                                ? "bg-[var(--sd-danger)]"
-                                : isHigh
-                                ? "bg-amber-600"
-                                : "bg-blue-600"
-                            )}
-                          >
-                            <ShieldAlert className="h-5 w-5" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <h4 className="text-sm font-bold text-[var(--sd-text)]">
-                                {alert.title}
-                              </h4>
-                              <span
-                                className={cn(
-                                  "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
-                                  isIpCurrentlyBlocked || isCritical
-                                    ? "bg-[var(--sd-danger)] text-white"
-                                    : isHigh
-                                    ? "bg-amber-600 text-white"
-                                    : "bg-blue-600 text-white"
-                                )}
-                              >
-                                {alert.severity} SEVERITY
-                              </span>
-                              {alert.attemptsCount > 1 && (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono">
-                                  {alert.attemptsCount} ATTEMPTS
-                                </span>
+                    return (
+                      <div
+                        key={alert.id}
+                        className={cn(
+                          "p-5 rounded-xl border shadow-xs space-y-4 animate-in fade-in duration-300",
+                          isIpCurrentlyBlocked
+                            ? "border-[var(--sd-danger)] bg-[var(--sd-danger-dim)]/80"
+                            : isCritical
+                              ? "border-[var(--sd-danger)] bg-[var(--sd-danger-dim)]"
+                              : isHigh
+                                ? "border-amber-500/50 bg-amber-500/10"
+                                : "border-[var(--sd-border)] bg-[var(--sd-panel)]"
+                        )}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--sd-border)] pb-3">
+                          <div className="flex items-center gap-2.5">
+                            <div
+                              className={cn(
+                                "p-2 rounded-lg text-white",
+                                isIpCurrentlyBlocked || isCritical
+                                  ? "bg-[var(--sd-danger)]"
+                                  : isHigh
+                                    ? "bg-amber-600"
+                                    : "bg-blue-600"
                               )}
-                              {isIpCurrentlyBlocked && (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--sd-danger)] text-white border border-red-400 font-mono flex items-center gap-1 animate-pulse">
-                                  <Ban className="h-3 w-3" />
-                                  IP BLOCKED
-                                </span>
-                              )}
+                            >
+                              <ShieldAlert className="h-5 w-5" />
                             </div>
-                            <span className="text-[11px] text-[var(--sd-text-muted)]">
-                              Real-time authentication telemetry anomaly detection &amp; containment
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="text-sm font-bold text-[var(--sd-text)]">
+                                  {alert.title}
+                                </h4>
+                                <span
+                                  className={cn(
+                                    "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
+                                    isIpCurrentlyBlocked || isCritical
+                                      ? "bg-[var(--sd-danger)] text-white"
+                                      : isHigh
+                                        ? "bg-amber-600 text-white"
+                                        : "bg-blue-600 text-white"
+                                  )}
+                                >
+                                  {alert.severity} SEVERITY
+                                </span>
+                                {alert.attemptsCount > 1 && (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono">
+                                    {alert.attemptsCount} ATTEMPTS
+                                  </span>
+                                )}
+                                {isIpCurrentlyBlocked && (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--sd-danger)] text-white border border-red-400 font-mono flex items-center gap-1 animate-pulse">
+                                    <Ban className="h-3 w-3" />
+                                    IP BLOCKED
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-[var(--sd-text-muted)]">
+                                Real-time authentication telemetry anomaly detection &amp; containment
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-start sm:self-center">
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] font-mono flex items-center gap-1.5 shadow-xs">
+                              <Lock className="h-3 w-3 text-[var(--sd-pine)]" />
+                              SOC Verified Event
                             </span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 self-start sm:self-center">
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] font-mono flex items-center gap-1.5 shadow-xs">
-                            <Lock className="h-3 w-3 text-[var(--sd-pine)]" />
-                            SOC Verified Event
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                        <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
-                          <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
-                            <Mail className="h-3.5 w-3.5 text-blue-400" /> Target User Email
-                          </span>
-                          <p className="font-mono font-bold text-sm text-[var(--sd-text)] break-all" title={alert.targetUser}>
-                            {alert.targetUser}
-                          </p>
-                        </div>
-
-                        <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
-                          <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
-                            <Globe className="h-3.5 w-3.5 text-emerald-400" /> Source IP Address
-                          </span>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-mono font-bold text-sm text-emerald-400">
-                              {alert.clientIp}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                          <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
+                            <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
+                              <Mail className="h-3.5 w-3.5 text-blue-400" /> Target User Email
+                            </span>
+                            <p className="font-mono font-bold text-sm text-[var(--sd-text)] break-all" title={alert.targetUser}>
+                              {alert.targetUser}
                             </p>
-                            {isIpCurrentlyBlocked && (
-                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-[var(--sd-danger)] text-white font-mono flex items-center gap-1">
-                                <Ban className="h-2.5 w-2.5" /> BLOCKED
-                              </span>
-                            )}
+                          </div>
+
+                          <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
+                            <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
+                              <Globe className="h-3.5 w-3.5 text-emerald-400" /> Source IP Address
+                            </span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-mono font-bold text-sm text-emerald-400">
+                                {alert.clientIp}
+                              </p>
+                              {isIpCurrentlyBlocked && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-[var(--sd-danger)] text-white font-mono flex items-center gap-1">
+                                  <Ban className="h-2.5 w-2.5" /> BLOCKED
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
+                            <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
+                              <AlertTriangle className="h-3.5 w-3.5 text-amber-400" /> Failure Reason / Condition
+                            </span>
+                            <p className="font-semibold text-xs text-[var(--sd-danger)] line-clamp-2" title={alert.failureReason}>
+                              {alert.failureReason}
+                            </p>
+                          </div>
+
+                          <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
+                            <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
+                              <Clock className="h-3.5 w-3.5 text-purple-400" /> Detected Timestamp
+                            </span>
+                            <p className="font-mono text-xs text-[var(--sd-text)]">
+                              {new Date(alert.createdAt).toLocaleTimeString()} ({alert.attemptsCount} attempt{alert.attemptsCount > 1 ? "s" : ""})
+                            </p>
                           </div>
                         </div>
 
-                        <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
-                          <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
-                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400" /> Failure Reason / Condition
-                          </span>
-                          <p className="font-semibold text-xs text-[var(--sd-danger)] line-clamp-2" title={alert.failureReason}>
-                            {alert.failureReason}
-                          </p>
-                        </div>
+                        <div className="flex items-center justify-end gap-2.5 pt-1 flex-wrap">
+                          {isIpCurrentlyBlocked ? (
+                            <button
+                              onClick={() => handleUnblockIp(alert.clientIp)}
+                              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold transition cursor-pointer shadow-xs"
+                            >
+                              <Unlock className="h-3.5 w-3.5" />
+                              <span>Unblock IP ({alert.clientIp})</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleBlockIp(alert.clientIp)}
+                              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-danger)]/20 hover:text-[var(--sd-danger)] text-xs font-semibold text-[var(--sd-text-muted)] transition cursor-pointer shadow-xs"
+                            >
+                              <Ban className="h-3.5 w-3.5" />
+                              <span>Block IP</span>
+                            </button>
+                          )}
 
-                        <div className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] space-y-1 shadow-xs">
-                          <span className="text-[11px] text-[var(--sd-text-muted)] flex items-center gap-1.5 font-medium">
-                            <Clock className="h-3.5 w-3.5 text-purple-400" /> Detected Timestamp
-                          </span>
-                          <p className="font-mono text-xs text-[var(--sd-text)]">
-                            {new Date(alert.createdAt).toLocaleTimeString()} ({alert.attemptsCount} attempt{alert.attemptsCount > 1 ? "s" : ""})
-                          </p>
+                          <button
+                            onClick={() => handleAcknowledgeAlert(alert.id)}
+                            className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+                          >
+                            Acknowledge Alert
+                          </button>
+
+                          <button
+                            onClick={() => handleInvestigateInChat(alert)}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-bright)] text-white text-xs font-semibold transition cursor-pointer shadow-xs"
+                          >
+                            <Bot className="h-3.5 w-3.5" />
+                            <span>Investigate in AI Chat</span>
+                          </button>
                         </div>
                       </div>
-
-                      <div className="flex items-center justify-end gap-2.5 pt-1 flex-wrap">
-                        {isIpCurrentlyBlocked ? (
-                          <button
-                            onClick={() => handleUnblockIp(alert.clientIp)}
-                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-semibold transition cursor-pointer shadow-xs"
-                          >
-                            <Unlock className="h-3.5 w-3.5" />
-                            <span>Unblock IP ({alert.clientIp})</span>
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleBlockIp(alert.clientIp)}
-                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-danger)]/20 hover:text-[var(--sd-danger)] text-xs font-semibold text-[var(--sd-text-muted)] transition cursor-pointer shadow-xs"
-                          >
-                            <Ban className="h-3.5 w-3.5" />
-                            <span>Block IP</span>
-                          </button>
-                        )}
-
-                        <button
-                          onClick={() => handleAcknowledgeAlert(alert.id)}
-                          className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-text)] transition cursor-pointer shadow-xs"
-                        >
-                          Acknowledge Alert
-                        </button>
-
-                        <button
-                          onClick={() => handleInvestigateInChat(alert)}
-                          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-bright)] text-white text-xs font-semibold transition cursor-pointer shadow-xs"
-                        >
-                          <Bot className="h-3.5 w-3.5" />
-                          <span>Investigate in AI Chat</span>
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="p-8 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-3">
-                <div className="inline-flex p-3 rounded-full bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)]">
-                  <CheckCircle2 className="h-6 w-6" />
+                    );
+                  })}
                 </div>
-                <h4 className="text-sm font-bold text-[var(--sd-text)]">
-                  Zero Active Security Alerts
-                </h4>
-                <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
-                  All authentication events and statistical baselines are nominal. Failed logins or anomaly bursts will appear here automatically with their source IP and target email.
-                </p>
-              </div>
-            )}
-          </div>
+              ) : (
+                <div className="p-8 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-3">
+                  <div className="inline-flex p-3 rounded-full bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)]">
+                    <CheckCircle2 className="h-6 w-6" />
+                  </div>
+                  <h4 className="text-sm font-bold text-[var(--sd-text)]">
+                    Zero Active Security Alerts
+                  </h4>
+                  <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
+                    All authentication events and statistical baselines are nominal. Failed logins or anomaly bursts will appear here automatically with their source IP and target email.
+                  </p>
+                </div>
+              )}
+            </div>
           )
         )}
       </main>

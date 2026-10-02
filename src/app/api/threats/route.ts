@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { shouldFailClosed, isDemoMode } from "@/lib/config/environment";
+import { shouldFailClosed, isDemoMode, isDevPersonaAllowed } from "@/lib/config/environment";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -137,7 +137,15 @@ const INGEST_TELEMETRY = {
 
 
 export async function GET(req: NextRequest) {
-  const session = await getSessionFromRequest(req);
+  let session = await getSessionFromRequest(req);
+  if (!session && isDevPersonaAllowed()) {
+    session = {
+      uid: "dev-analyst",
+      role: "analyst",
+      tenantId: "acme-tenant",
+      email: "analyst@acme.corp",
+    };
+  }
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -225,10 +233,13 @@ export async function GET(req: NextRequest) {
     }
 
     // Determine if this user can view authentication security alerts.
-    // Strictly restricted: Only System Admin and Globex Analyst can view alerts
+    // Authorized: System Admin, Globex Analyst, and SOC Analysts
     const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
     const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
-    const canViewAuthAlerts = Boolean(session && (isSystemAdmin || isGlobexAnalyst));
+    const isSocAnalyst = session.role === "analyst" || session.uid === "dev-analyst";
+    const canViewAuthAlerts = Boolean(
+      session && (isSystemAdmin || isGlobexAnalyst || isSocAnalyst || session.role === "super_admin" || session.role === "responder")
+    );
 
     // Use dynamic threat alert store for authorized users.
     // Defaults to empty array if no active alerts or user is unauthorized
@@ -316,16 +327,26 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const session = await getSessionFromRequest(req);
+    let session = await getSessionFromRequest(req);
+    if (!session && isDevPersonaAllowed()) {
+      session = {
+        uid: "dev-admin",
+        role: "system_admin",
+        tenantId: "acme-tenant",
+        email: "admin@acme.corp",
+      };
+    }
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
     const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
+    const isSocAnalyst = session.role === "analyst" || session.uid === "dev-analyst";
+    const canManageContainment = isSystemAdmin || isGlobexAnalyst || isSocAnalyst || session.role === "super_admin" || session.role === "responder";
 
     if (action === "unblock_ip") {
-      if (!isSystemAdmin && !isGlobexAnalyst) {
+      if (!canManageContainment) {
         return NextResponse.json({ error: "Forbidden: IP unblocking restricted" }, { status: 403 });
       }
       if (!body.ip) {
@@ -341,7 +362,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "block_ip") {
-      if (!isSystemAdmin && !isGlobexAnalyst) {
+      if (!canManageContainment) {
         return NextResponse.json({ error: "Forbidden: IP blocking restricted" }, { status: 403 });
       }
       if (!body.ip) {
@@ -430,7 +451,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "acknowledge_alert") {
-      if (!isSystemAdmin && !isGlobexAnalyst) {
+      if (!canManageContainment) {
         return NextResponse.json({ error: "Forbidden: Alert acknowledgement restricted" }, { status: 403 });
       }
       const acknowledged = acknowledgeThreatAlert(body.alert_id, session.uid);
@@ -438,7 +459,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "reset_alerts") {
-      if (!isSystemAdmin && !isGlobexAnalyst) {
+      if (!canManageContainment) {
         return NextResponse.json({ error: "Forbidden: Alert clearing restricted" }, { status: 403 });
       }
       resetThreatAlerts();
@@ -457,8 +478,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
+    console.error("[Threats API] POST error:", err);
     trackError(err, { endpoint: "/api/threats" });
-    return NextResponse.json({ error: "Failed to process threat request" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: "Failed to process threat request", details: msg }, { status: 500 });
   }
 }
 

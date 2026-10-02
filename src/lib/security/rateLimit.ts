@@ -69,3 +69,7 @@ export function checkRateLimit(
     resetAt: record.resetAt,
   };
 }
+
+export function resetRateLimit(identifier: string): void {
+  IP_RATE_LIMITS.delete(identifier);
+}
