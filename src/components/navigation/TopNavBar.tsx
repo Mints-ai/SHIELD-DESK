@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
+import { ThemeSwitch } from "./ThemeSwitch";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 export function TopNavBar() {
@@ -123,6 +124,7 @@ export function TopNavBar() {
           <Sparkles size={17} className="text-[var(--sd-wheat)]" /><span>Ask about an incident, vulnerability, or response…</span>
         </button>
         <div className="sd-header-controls">
+          <ThemeSwitch />
           <details className="sd-health-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false; }} onKeyDown={(event) => { if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
             <summary className="sd-health-trigger"><Activity size={18} className="text-[var(--sd-wheat)]" /><div className="sd-health-caption">System health<p>{healthLoaded ? `${connectedCount} of 4 services connected` : "Checking services…"}</p></div><ChevronDown size={12} /></summary>
             <div className="sd-popover"><p className="sd-eyebrow mb-2">System connections</p>{services.map(({ label, connected, icon: Icon }) => <div key={label} className="sd-health-row"><span><Icon size={14} />{label}</span><span className={connected ? "text-[var(--sd-success)]" : "text-[var(--sd-text-muted)]"}><i className="sd-status-dot" />{healthLoaded ? connected ? "Connected" : "Offline" : "Checking"}</span></div>)}</div>

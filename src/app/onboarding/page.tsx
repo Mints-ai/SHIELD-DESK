@@ -1,5 +1,7 @@
 "use client";
 
+import { ThemeSwitch } from "@/components/navigation/ThemeSwitch";
+
 import React, { useState } from "react";
 import Link from "next/link";
 import {
@@ -66,6 +68,7 @@ export default function OnboardingPage() {
             </div>
           ))}
         </div>
+        <ThemeSwitch />
       </header>
 
       <p className="max-w-2xl mx-auto mt-8 text-[13px] text-[var(--sd-text-muted)]">Sample onboarding walkthrough. The enrollment token, MFA secret, and connection status below are illustrative.</p>

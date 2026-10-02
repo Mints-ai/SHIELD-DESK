@@ -3,6 +3,8 @@ import { ChatWidget } from "@/components/ai-chat/ChatWidget";
 import { ChatProvider } from "@/lib/context/ChatContext";
 import "./globals.css";
 
+const themeInitializationScript = "try{document.documentElement.dataset.theme=localStorage.getItem('shielddesk-theme')==='dark'?'dark':'light'}catch{}";
+
 export const metadata: Metadata = {
   title: "ShieldDesk™ — AI-Powered Security Operations | Mints Global",
   description: "Autonomous Security Operations Center co-pilot and incident orchestration platform by Mints Global.",
@@ -18,7 +20,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
+    <html lang="en" data-theme="light" className="h-full antialiased" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitializationScript }} />
+      </head>
       <body className="sd-scene min-h-full flex flex-col bg-[var(--sd-bg)] text-foreground" suppressHydrationWarning>
         <ChatProvider>
           {children}

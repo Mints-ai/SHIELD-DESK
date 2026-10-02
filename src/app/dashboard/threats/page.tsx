@@ -601,7 +601,7 @@ export default function ThreatsDashboardPage() {
                         </div>
 
                         <div className="flex items-center gap-2 self-start sm:self-center">
-                          <span className="px-2.5 py-1 rounded-full text-[11px] font-medium uppercase tracking-wider bg-purple-950/40 text-purple-300 border border-purple-500/40 font-mono flex items-center gap-1.5 shadow-xs">
+                          <span className="px-2.5 py-1 rounded-full text-[11px] font-medium uppercase tracking-wider bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)] font-mono flex items-center gap-1.5 shadow-xs">
                             <Lock className="h-3 w-3" />
                             Restricted Visibility: System Admin &amp; Globex Analyst Only
                           </span>
