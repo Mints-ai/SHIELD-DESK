@@ -12,6 +12,8 @@ import {
   getBlockedIps,
   unblockIp,
   blockIp,
+  getLiveFailureRatePerMin,
+  recordFailureTimestamp,
 } from "@/lib/alerts/threatAlertStore";
 import { resolveClientIp } from "@/lib/network/clientIp";
 
@@ -193,6 +195,20 @@ export async function GET(req: NextRequest) {
     ? getThreatAlertsForUser(session.uid)
     : [];
 
+  // Dynamically compute Failed Authentications / Min from the sliding-window failure store
+  const liveFailureRate = getLiveFailureRatePerMin();
+  const anomalyBaselines = ANOMALY_BASELINES.map((b) => {
+    if (b.metric === "Failed Authentications / Min") {
+      const threshold = b.threshold_3sigma ?? 10.5;
+      return {
+        ...b,
+        current_value: liveFailureRate,
+        is_anomaly: liveFailureRate > threshold,
+      };
+    }
+    return b;
+  });
+
   return NextResponse.json({
     status: "ok",
     dataMode: isDemoMode() ? "demo" : "live",
@@ -204,7 +220,7 @@ export async function GET(req: NextRequest) {
     detection_rules: engineRules,
     yara_rules: YARA_RULES,
     sigma_rules: SIGMA_RULES,
-    anomaly_baselines: ANOMALY_BASELINES,
+    anomaly_baselines: anomalyBaselines,
     ingest_telemetry: {
       ...INGEST_TELEMETRY,
       active_agents_connected: liveConnectedAgents,
@@ -295,6 +311,9 @@ export async function POST(req: NextRequest) {
         severity: "critical",
         type: "brute_force_spike",
       });
+
+      // Inject burst timestamps so live rate immediately reflects an active anomaly spike (> 10.5 threshold)
+      recordFailureTimestamp(Date.now(), 18);
 
       return NextResponse.json({
         success: true,

@@ -34,6 +34,8 @@ declare global {
   var __shieldDeskIpLoginFailures: Map<string, number> | undefined;
   // eslint-disable-next-line no-var
   var __shieldDeskBlockedIps: Map<string, BlockedIpRecord> | undefined;
+  // eslint-disable-next-line no-var
+  var __shieldDeskFailureTimestamps: number[] | undefined;
 }
 
 if (!global.__shieldDeskThreatAlerts) {
@@ -52,10 +54,15 @@ if (!global.__shieldDeskBlockedIps) {
   global.__shieldDeskBlockedIps = new Map<string, BlockedIpRecord>();
 }
 
+if (!global.__shieldDeskFailureTimestamps) {
+  global.__shieldDeskFailureTimestamps = [];
+}
+
 const alertsStore = global.__shieldDeskThreatAlerts;
 const failureTracker = global.__shieldDeskRecentLoginFailures;
 const ipFailureTracker = global.__shieldDeskIpLoginFailures;
 const blockedIpsStore = global.__shieldDeskBlockedIps;
+const failureTimestamps = global.__shieldDeskFailureTimestamps;
 
 // Clear any stale local loopback or test containment from prior test iterations
 if (blockedIpsStore.has("127.0.0.1")) {
@@ -148,6 +155,32 @@ export function getIpFailureCount(ip: string): number {
 }
 
 /**
+ * Record failure timestamp(s) for the sliding window rate calculation.
+ */
+export function recordFailureTimestamp(timestamp: number = Date.now(), count: number = 1): void {
+  for (let i = 0; i < count; i++) {
+    failureTimestamps.push(timestamp);
+  }
+}
+
+/**
+ * Returns the live login failure rate (failures in the last 60 seconds).
+ * Prunes timestamps older than 60 seconds.
+ */
+export function getLiveFailureRatePerMin(): number {
+  const cutoff = Date.now() - 60_000;
+  let writeIdx = 0;
+  for (let readIdx = 0; readIdx < failureTimestamps.length; readIdx++) {
+    if (failureTimestamps[readIdx] > cutoff) {
+      failureTimestamps[writeIdx] = failureTimestamps[readIdx];
+      writeIdx++;
+    }
+  }
+  failureTimestamps.length = writeIdx;
+  return failureTimestamps.length;
+}
+
+/**
  * Determine if a user/persona is authorized to view or manage threat alerts.
  * Strictly restricted to System Admin (dev-admin / system_admin) and Globex Analyst (dev-other / globex-tenant).
  */
@@ -173,6 +206,8 @@ export function recordThreatAlert(params: {
   severity?: "medium" | "high" | "critical";
   type?: "auth_failure" | "brute_force_spike";
 }): ThreatAlert {
+  recordFailureTimestamp();
+
   const cleanIp = params.clientIp === "::1" || !params.clientIp ? "127.0.0.1" : params.clientIp;
   const cleanEmail = (params.targetUser || "unknown").toLowerCase().trim();
   const key = `${cleanIp}:${cleanEmail}`;
@@ -303,4 +338,5 @@ export function resetThreatAlerts(): void {
   failureTracker.clear();
   ipFailureTracker.clear();
   blockedIpsStore.clear();
+  failureTimestamps.length = 0;
 }
