@@ -10,6 +10,8 @@ import { VerificationMethods } from "./methods";
 import { RollbackEngine } from "../rollback-engine/engine";
 import { RollbackType } from "../rollback-engine/types";
 import { recordHashChainEvent } from "../fleet/fleet";
+import actionSpecs from "./action-specs.json";
+import { getCapability } from "../fleet/capabilities";
 
 export class VerificationEngine {
   /**
@@ -24,65 +26,25 @@ export class VerificationEngine {
     snapshotId?: string;
     target?: string;
     cveId?: string;
+    expectedVersion?: string;
+    serviceName?: string;
     checks?: VerificationCheckSpec[];
   }): VerificationPlan {
-    const { action, agentId, tenantId, commandId, findingId, snapshotId, target, cveId } = params;
+    const { action, agentId, tenantId, commandId, findingId, snapshotId, target, cveId, expectedVersion, serviceName } = params;
     const checks: VerificationCheckSpec[] = params.checks ? [...params.checks] : [];
-    const normalized = action.toLowerCase().replace(/[\s.-]+/g, "_");
 
     if (checks.length === 0) {
-      if (normalized.includes("terminate") || normalized.includes("kill_process")) {
-        const procTarget = target || "suspicious_process";
-        checks.push({
-          method: "process_table_check",
-          target: procTarget,
-          expectedState: { running: false },
-        });
-      } else if (normalized.includes("isolate")) {
-        checks.push({
-          method: "firewall_rule_check",
-          target: "network_interface",
-          expectedState: { active: true },
-        });
-      } else if (normalized.includes("restore") || normalized.includes("unisolate")) {
-        checks.push({
-          method: "firewall_rule_check",
-          target: "network_interface",
-          expectedState: { active: false },
-        });
-      } else if (normalized.includes("block")) {
-        checks.push({
-          method: "firewall_rule_check",
-          target: target || "ip_firewall_rule",
-          expectedState: { active: true },
-        });
-      } else if (normalized.includes("patch") || normalized.includes("upgrade")) {
-        checks.push({
-          method: "package_version_check",
-          target: cveId || target || "CVE-FIX",
-          expectedState: { cveStatus: "not_vulnerable" },
-        });
-        if (cveId) {
-          checks.push({
-            method: "vulnerability_rescan",
-            target: cveId,
-            expectedState: { cveStatus: "not_vulnerable" },
-          });
-        }
-      } else if (normalized.includes("config")) {
-        checks.push({
-          method: "config_state_check",
-          target: target || "system_config",
-          expectedState: { value: "compliant" },
-        });
-      } else {
-        // Default: Check endpoint service connectivity
-        checks.push({
-          method: "service_health_check",
-          target: agentId,
-          expectedState: { status: "healthy" },
-        });
-      }
+      const capability = getCapability(action);
+      const spec = capability && actionSpecs[capability.name as keyof typeof actionSpecs];
+      if (!capability || !spec) throw new Error(`No registered verification specification for action '${action}'.`);
+      const resolvedTarget = target || cveId || snapshotId || serviceName || agentId;
+      checks.push(...spec.verification_methods.map((method) => ({
+        method,
+        target: method === "service_health_check" ? (serviceName || target || agentId) : resolvedTarget,
+        expectedState: method === "package_version_check" && expectedVersion
+          ? { ...spec.expected_state, version: expectedVersion }
+          : { ...spec.expected_state },
+      } as VerificationCheckSpec)));
     }
 
     return {
@@ -129,15 +91,18 @@ export class VerificationEngine {
       } else if (spec.method === "port_reachability_check") {
         const res = await VerificationMethods.checkPortReachability(spec, actualHostEvidence);
         checkResults.push(res);
+      } else if (spec.method === "snapshot_state_check") {
+        checkResults.push(await VerificationMethods.checkSnapshotState(spec, actualHostEvidence));
+      } else if (spec.method === "file_quarantine_check") {
+        checkResults.push(await VerificationMethods.checkFileQuarantine(spec, actualHostEvidence));
       } else {
-        // Fallback check
         checkResults.push({
           method: spec.method,
           target: spec.target,
-          success: actualHostEvidence.status !== "failed",
+          success: false,
           expectedState: spec.expectedState,
-          actualState: actualHostEvidence,
-          details: "Standard service health validation check.",
+          actualState: { status: "unsupported_verification_method" },
+          details: `Verification failed: method '${spec.method}' is unsupported; evidence cannot be accepted.`,
           timestamp: verifiedAt,
         });
       }

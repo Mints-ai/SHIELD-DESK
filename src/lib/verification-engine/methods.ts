@@ -1,6 +1,24 @@
 import { VerificationCheckSpec, VerificationMethodResult } from "./types";
 
 export class VerificationMethods {
+  /** Proves snapshot creation or restoration from explicit agent evidence. */
+  public static async checkSnapshotState(spec: VerificationCheckSpec, evidence?: Record<string, unknown>): Promise<VerificationMethodResult> {
+    const snapshots = Array.isArray(evidence?.snapshots) ? evidence.snapshots as Array<Record<string, unknown> | string> : [];
+    const target = spec.target;
+    const restored = spec.expectedState.restored === true;
+    const matched = snapshots.some((item) => typeof item === "string" ? item === target : item && item.id === target && (!restored || item.restored === true));
+    const success = spec.expectedState.exists === true ? matched : matched;
+    return { method: "snapshot_state_check", target, success, expectedState: spec.expectedState, actualState: { exists: matched, restored: snapshots.some((item) => typeof item === "object" && item?.id === target && item.restored === true) }, details: success ? `Snapshot '${target}' state verified.` : `Verification failed: snapshot '${target}' state is not proven.`, timestamp: new Date().toISOString() };
+  }
+
+  /** Proves a file was moved out of its original path into restricted quarantine. */
+  public static async checkFileQuarantine(spec: VerificationCheckSpec, evidence?: Record<string, unknown>): Promise<VerificationMethodResult> {
+    const records = Array.isArray(evidence?.quarantinedFiles) ? evidence.quarantinedFiles as Array<Record<string, unknown>> : [];
+    const record = records.find((item) => item.originalPath === spec.target);
+    const success = spec.expectedState.quarantined === true && record?.quarantined === true && record.restricted === true && record.originalPathPresent === false;
+    return { method: "file_quarantine_check", target: spec.target, success, expectedState: spec.expectedState, actualState: record ? { quarantined: record.quarantined === true, restricted: record.restricted === true, originalPathPresent: record.originalPathPresent } : { quarantined: false, restricted: false, originalPathPresent: undefined }, details: success ? `File '${spec.target}' is confirmed in restricted quarantine.` : `Verification failed: restricted quarantine and original-path removal are not both proven for '${spec.target}'.`, timestamp: new Date().toISOString() };
+  }
+
   /**
    * Verifies whether a process is absent from the host process table.
    */
