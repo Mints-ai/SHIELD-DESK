@@ -111,7 +111,7 @@ export default function SOCDashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, [activeUserId, filterSeverity, activeIncidentId, setActiveIncidentId]);
+  }, [activeUserId, filterSeverity]);
 
   // Fetch incident detail when activeIncidentId changes
   useEffect(() => {
