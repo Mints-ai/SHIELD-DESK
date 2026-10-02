@@ -1144,7 +1144,7 @@ export async function simulateBlastRadius(
   }
 
   // Fallback defaults if not specified
-  targetCve = targetCve || "CVE-2024-6387";
+  targetCve = targetCve || "CVE-2025-38667";
   targetAsset = targetAsset || "srv-prod-api-01 (Finance Subnet)";
 
   // 2. Query AI Advisor microservice if configured

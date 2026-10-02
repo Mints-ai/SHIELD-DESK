@@ -27,7 +27,7 @@ interface ChatMessage {
 
 const GLOBEX_SUGGESTIONS = [
   "Run a full Trivy vulnerability scan",
-  "Simulate Blast Radius for CVE-2024-6387",
+  "Simulate Blast Radius for CVE-2025-38667",
   "Check for leaked secrets and exposed tokens",
   "Show me todays critical incidents",
 ];
@@ -264,13 +264,13 @@ export function ChatWidget() {
         `Investigate ${activeIncidentId}`,
         "What is the mitigation plan?",
         "What assets are affected?",
-        ...(canSimulateBlastRadius ? ["Simulate Blast Radius for CVE-2024-6387"] : []),
+        ...(canSimulateBlastRadius ? ["Simulate Blast Radius for CVE-2025-38667"] : []),
         "Run a full Trivy vulnerability scan",
         "Show me todays critical incidents",
       ]
     : canSimulateBlastRadius
       ? [
-          "Simulate Blast Radius for CVE-2024-6387",
+          "Simulate Blast Radius for CVE-2025-38667",
           "Run a full Trivy vulnerability scan",
           ...DEFAULT_SUGGESTIONS,
         ]
