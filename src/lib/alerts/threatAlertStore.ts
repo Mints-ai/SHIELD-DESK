@@ -245,21 +245,11 @@ export function getLiveEgressRateMBPerMin(): { current_value: number; is_anomaly
   }
   egressBursts.length = writeIdx;
 
-  if (burstMb > 0) {
-    const spikedValue = Math.round(burstMb * 10) / 10;
-    return {
-      current_value: spikedValue,
-      is_anomaly: spikedValue > 215.0,
-    };
-  }
-
-  // Smooth live fluctuation around mean 130-145 MB/min for normal operational baseline
-  const t = Date.now() / 4500;
-  const variance = Math.sin(t) * 12.3 + Math.cos(t * 1.8) * 6.5;
-  const liveVal = Math.round((134.0 + variance) * 10) / 10;
+  // Pure real data: actual MB transferred in the last 60 seconds (0.0 when idle)
+  const actualMb = Math.round(burstMb * 10) / 10;
   return {
-    current_value: liveVal,
-    is_anomaly: liveVal > 215.0,
+    current_value: actualMb,
+    is_anomaly: actualMb > 215.0,
   };
 }
 
