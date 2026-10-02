@@ -6,6 +6,7 @@
 |---|---|---|---|
 | Application | Decision, policy, approval and signed dispatch flow | done (TESTED) | Covered by repository automated tests; validate production settings before release. |
 | Application | State verification has declarative specs for each registered capability | done (TESTED) | `src/lib/verification-engine/action-specs.json` and tests; evidence is simulated. |
+| Application | Golden-path and rollback failure branches in CI | done (TESTED, simulated) | Dedicated workflow job runs the mock-agent golden path and failure fixtures; required branch protection and live endpoint flow remain outstanding. |
 | Application | Rollback actually restores endpoint state through governed broker | not done | Current rollback engine is descriptive/simulated. Integrate through Decision → Policy → Approval → Execution Broker → Signed Command, then test on hosts. |
 | Security | Tenant controls, MFA, certificate checks and command replay protection | done (TESTED) | Automated tests only; external multi-tenant security review is still required. |
 | Security | Independent penetration test across web, API, PKI, agent, AI, billing and infrastructure | blocked | Schedule and complete external assessment; see `docs/launch-gates/EXTERNAL_PENETRATION_TEST.md`. |
