@@ -3,6 +3,7 @@ import { query } from "@/lib/db";
 import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
 import { evaluateTelemetryBatch } from "@/lib/detection/engine";
+import { recordSudoExecution } from "@/lib/alerts/threatAlertStore";
 
 interface TelemetryEventPayload {
   eventType: string;
@@ -58,6 +59,14 @@ export async function POST(req: NextRequest) {
     // 1. Insert batch into endpoint_telemetry
     try {
       for (const evt of events) {
+        const payloadStr = JSON.stringify(evt.payload || {});
+        if (
+          payloadStr.toLowerCase().includes("sudo") ||
+          (typeof evt.eventType === "string" && evt.eventType.toLowerCase().includes("sudo"))
+        ) {
+          recordSudoExecution();
+        }
+
         await query(
           `INSERT INTO endpoint_telemetry (agent_id, tenant_id, event_type, payload, timestamp)
            VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, now()));`,
@@ -65,7 +74,7 @@ export async function POST(req: NextRequest) {
             agentId,
             tenantId,
             evt.eventType || "SYSTEM",
-            JSON.stringify(evt.payload || {}),
+            payloadStr,
             evt.timestamp || null,
           ]
         );

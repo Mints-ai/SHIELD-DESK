@@ -14,6 +14,8 @@ import {
   blockIp,
   getLiveFailureRatePerMin,
   recordFailureTimestamp,
+  getLiveSudoRatePerMin,
+  recordSudoExecution,
 } from "@/lib/alerts/threatAlertStore";
 import { resolveClientIp } from "@/lib/network/clientIp";
 
@@ -163,6 +165,7 @@ export async function GET(req: NextRequest) {
   // Try to query real telemetry count from DB
   let liveEventsCount = INGEST_TELEMETRY.events_persisted_timescaledb;
   let liveConnectedAgents = INGEST_TELEMETRY.active_agents_connected;
+  let liveSudoDbCount = 0;
 
   try {
     const telRes = await query<{ count: string }>(
@@ -178,6 +181,19 @@ export async function GET(req: NextRequest) {
     );
     if (agentRes.rows.length > 0) {
       liveConnectedAgents = parseInt(agentRes.rows[0].count, 10);
+    }
+    const sudoRes = await query<{ count: string }>(
+      `SELECT count(*) FROM endpoint_telemetry 
+       WHERE tenant_id = $1 
+         AND timestamp >= now() - interval '1 minute'
+         AND (payload::text ILIKE '%sudo%' OR payload::text ILIKE '%command%')`,
+      [session.tenantId]
+    );
+    if (sudoRes.rows.length > 0) {
+      const parsed = parseInt(sudoRes.rows[0].count, 10);
+      if (!isNaN(parsed)) {
+        liveSudoDbCount = parsed;
+      }
     }
   } catch {
     // DB offline fallback
@@ -195,8 +211,9 @@ export async function GET(req: NextRequest) {
     ? getThreatAlertsForUser(session.uid)
     : [];
 
-  // Dynamically compute Failed Authentications / Min from the sliding-window failure store
+  // Dynamically compute Failed Authentications / Min and Sudo Execution Frequency from live event stores
   const liveFailureRate = getLiveFailureRatePerMin();
+  const liveSudoRate = Math.max(getLiveSudoRatePerMin(), liveSudoDbCount);
   const anomalyBaselines = ANOMALY_BASELINES.map((b) => {
     if (b.metric === "Failed Authentications / Min") {
       const threshold = b.threshold_3sigma ?? 10.5;
@@ -204,6 +221,14 @@ export async function GET(req: NextRequest) {
         ...b,
         current_value: liveFailureRate,
         is_anomaly: liveFailureRate > threshold,
+      };
+    }
+    if (b.metric === "Sudo Execution Frequency") {
+      const threshold = b.threshold_3sigma ?? 3.5;
+      return {
+        ...b,
+        current_value: liveSudoRate,
+        is_anomaly: liveSudoRate > threshold,
       };
     }
     return b;
@@ -314,6 +339,7 @@ export async function POST(req: NextRequest) {
 
       // Inject burst timestamps so live rate immediately reflects an active anomaly spike (> 10.5 threshold)
       recordFailureTimestamp(Date.now(), 18);
+      recordSudoExecution(5);
 
       return NextResponse.json({
         success: true,

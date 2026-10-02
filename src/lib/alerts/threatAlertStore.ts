@@ -36,6 +36,8 @@ declare global {
   var __shieldDeskBlockedIps: Map<string, BlockedIpRecord> | undefined;
   // eslint-disable-next-line no-var
   var __shieldDeskFailureTimestamps: number[] | undefined;
+  // eslint-disable-next-line no-var
+  var __shieldDeskSudoTimestamps: number[] | undefined;
 }
 
 if (!global.__shieldDeskThreatAlerts) {
@@ -58,11 +60,16 @@ if (!global.__shieldDeskFailureTimestamps) {
   global.__shieldDeskFailureTimestamps = [];
 }
 
+if (!global.__shieldDeskSudoTimestamps) {
+  global.__shieldDeskSudoTimestamps = [];
+}
+
 const alertsStore = global.__shieldDeskThreatAlerts;
 const failureTracker = global.__shieldDeskRecentLoginFailures;
 const ipFailureTracker = global.__shieldDeskIpLoginFailures;
 const blockedIpsStore = global.__shieldDeskBlockedIps;
 const failureTimestamps = global.__shieldDeskFailureTimestamps;
+const sudoTimestamps = global.__shieldDeskSudoTimestamps;
 
 // Clear any stale local loopback or test containment from prior test iterations
 if (blockedIpsStore.has("127.0.0.1")) {
@@ -178,6 +185,33 @@ export function getLiveFailureRatePerMin(): number {
   }
   failureTimestamps.length = writeIdx;
   return failureTimestamps.length;
+}
+
+/**
+ * Record sudo execution timestamp(s) for the sliding window rate calculation.
+ */
+export function recordSudoExecution(count: number = 1): void {
+  const now = Date.now();
+  for (let i = 0; i < count; i++) {
+    sudoTimestamps.push(now);
+  }
+}
+
+/**
+ * Returns the live sudo command execution rate (executions in the last 60 seconds).
+ * Prunes timestamps older than 60 seconds.
+ */
+export function getLiveSudoRatePerMin(): number {
+  const cutoff = Date.now() - 60_000;
+  let writeIdx = 0;
+  for (let readIdx = 0; readIdx < sudoTimestamps.length; readIdx++) {
+    if (sudoTimestamps[readIdx] > cutoff) {
+      sudoTimestamps[writeIdx] = sudoTimestamps[readIdx];
+      writeIdx++;
+    }
+  }
+  sudoTimestamps.length = writeIdx;
+  return sudoTimestamps.length;
 }
 
 /**
@@ -339,4 +373,5 @@ export function resetThreatAlerts(): void {
   ipFailureTracker.clear();
   blockedIpsStore.clear();
   failureTimestamps.length = 0;
+  sudoTimestamps.length = 0;
 }
