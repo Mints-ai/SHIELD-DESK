@@ -291,6 +291,16 @@ export class ExecutionBroker {
       return { success: false, reason: tokenCheck.reason };
     }
 
+    // Recheck device and kill-switch state at delivery time to close the dispatch/delivery race.
+    const deviceCheck = await MTLSGuard.validateClientCertificate({ agentId, tenantId: tokenCheck.token!.tenantId });
+    if (!deviceCheck.allowed) {
+      tokenCheck.token!.isConsumed = true;
+      return { success: false, reason: `mTLS device check failed: ${deviceCheck.reason}` };
+    }
+
+    // Consume synchronously before any asynchronous persistence so concurrent/replayed delivery is rejected.
+    tokenCheck.token!.isConsumed = true;
+
     this.inMemoryCommandStates.set(commandId, "DELIVERED");
 
     try {
