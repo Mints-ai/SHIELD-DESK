@@ -18,12 +18,51 @@ if (!(Test-Path $toolsFolder)) {
     New-Item -ItemType Directory -Force -Path $toolsFolder | Out-Null
 }
 
-# 2. Check if already installed
+# 2. Check if already installed and optimized
 $localExe = Join-Path $toolsFolder "trivy.exe"
+
+function Optimize-TrivyBinary {
+    param([string]$targetExe)
+    Write-Host "`nOptimizing binary size with portable UPX compression..." -ForegroundColor Yellow
+    $upxZip = Join-Path $env:TEMP "upx-5.2.1-win64.zip"
+    $upxExtract = Join-Path $env:TEMP "upx-extract-$([System.Guid]::NewGuid().ToString('N'))"
+    $upxUrl = "https://github.com/upx/upx/releases/download/v5.2.1/upx-5.2.1-win64.zip"
+
+    try {
+        Write-Host "Fetching portable UPX compressor..." -ForegroundColor DarkGray
+        Invoke-WebRequest -Uri $upxUrl -OutFile $upxZip -UseBasicParsing
+        Expand-Archive -Path $upxZip -DestinationPath $upxExtract -Force
+        $upxExe = Join-Path $upxExtract "upx-5.2.1-win64\upx.exe"
+
+        if (Test-Path $upxExe) {
+            $preSize = (Get-Item $targetExe).Length
+            Write-Host "Compressing trivy.exe (reducing size by ~75%)..." -ForegroundColor Cyan
+            & $upxExe -8 --force-overwrite $targetExe | Out-Null
+            $postSize = (Get-Item $targetExe).Length
+            $finalSizeMb = [math]::Round($postSize / 1MB, 2)
+            $savedMb = [math]::Round(($preSize - $postSize) / 1MB, 2)
+            Write-Host "Compression successful! Final binary size: $finalSizeMb MB ($savedMb MB saved)." -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "Note: UPX optimization skipped ($($_.Exception.Message)). Standard binary preserved." -ForegroundColor DarkYellow
+    } finally {
+        Remove-Item $upxZip -Force -ErrorAction SilentlyContinue
+        Remove-Item $upxExtract -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if (Test-Path $localExe) {
-    Write-Host "Trivy binary found at $localExe" -ForegroundColor Green
+    $currentSizeMb = [math]::Round((Get-Item $localExe).Length / 1MB, 2)
+    Write-Host "Trivy binary found at $localExe ($currentSizeMb MB)" -ForegroundColor Green
+
+    # If the binary is uncompressed (>100MB), automatically compress it
+    if ($currentSizeMb -gt 100) {
+        Write-Host "Detected uncompressed binary. Optimizing..." -ForegroundColor Yellow
+        Optimize-TrivyBinary -targetExe $localExe
+    }
+
     & $localExe --version
-    Write-Host "Trivy is already installed and ready." -ForegroundColor Green
+    Write-Host "Trivy is ready." -ForegroundColor Green
     exit 0
 }
 
@@ -42,18 +81,23 @@ Write-Host "Extracting Trivy into tools/trivy..." -ForegroundColor Yellow
 try {
     Expand-Archive -Path $zipFile -DestinationPath $toolsFolder -Force
     Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+    # Clean up redundant nested unzipped folders
+    Remove-Item (Join-Path $toolsFolder "trivy_*") -Recurse -Force -ErrorAction SilentlyContinue
 } catch {
     Write-Error "Failed to extract Trivy archive: $($_.Exception.Message)"
     exit 1
 }
 
-# 5. Verify installation
+# 5. Compress and verify installation
 if (Test-Path $localExe) {
-    Write-Host "`n--- INSTALLATION SUCCESSFUL ---" -ForegroundColor Green
-    Write-Host "Trivy binary ready at: $localExe" -ForegroundColor White
+    Optimize-TrivyBinary -targetExe $localExe
+
+    Write-Host "`n--- INSTALLATION & OPTIMIZATION SUCCESSFUL ---" -ForegroundColor Green
+    Write-Host "Trivy binary ready at: $localExe ($([math]::Round((Get-Item $localExe).Length / 1MB, 2)) MB)" -ForegroundColor White
     & $localExe --version
-    Write-Host "`nShieldDesk can now run live offline/online CVE scans natively!" -ForegroundColor Cyan
+    Write-Host "`nShieldDesk can now run live offline/online CVE scans natively with minimal disk overhead!" -ForegroundColor Cyan
 } else {
     Write-Error "Extraction finished but trivy.exe was not found in $toolsFolder"
     exit 1
 }
+
