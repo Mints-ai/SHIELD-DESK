@@ -72,13 +72,14 @@ export async function GET(req: NextRequest) {
   try {
     const isCrossTenant = canAccess(session.role, "VIEW_CROSS_TENANT");
     let sql = `
-      SELECT p.id, p.incident_id, p.tenant_id, p.version, p.status, p.summary, p.created_at,
-             i.incident_code, i.title as incident_title, i.severity as incident_severity,
-             COUNT(t.id)::int as task_count
-      FROM mitigation_plans p
-      LEFT JOIN incidents i ON i.id = p.incident_id
-      LEFT JOIN mitigation_tasks t ON t.plan_id = p.id
-      WHERE 1=1
+      WITH plan_summaries AS (
+        SELECT p.id, p.incident_id, p.tenant_id, p.version, p.status, p.summary, p.created_at,
+               i.incident_code, i.title as incident_title, i.severity as incident_severity,
+               COUNT(t.id)::int as task_count
+        FROM mitigation_plans p
+        LEFT JOIN incidents i ON i.id = p.incident_id
+        LEFT JOIN mitigation_tasks t ON t.plan_id = p.id
+        WHERE 1=1
     `;
     const params: unknown[] = [];
 
@@ -88,9 +89,26 @@ export async function GET(req: NextRequest) {
     }
 
     sql += `
-      GROUP BY p.id, p.incident_id, p.tenant_id, p.version, p.status, p.summary, p.created_at,
-               i.incident_code, i.title, i.severity
-      ORDER BY p.created_at DESC
+        GROUP BY p.id, p.incident_id, p.tenant_id, p.version, p.status, p.summary, p.created_at,
+                 i.incident_code, i.title, i.severity
+      ),
+      ranked_plans AS (
+        SELECT plan_summaries.*,
+               ROW_NUMBER() OVER (
+                 PARTITION BY tenant_id, incident_id,
+                   CASE
+                     WHEN status IN ('draft', 'active') THEN 'current'
+                     ELSE id::text
+                   END
+                 ORDER BY version DESC, created_at DESC, id DESC
+               ) AS incident_plan_rank
+        FROM plan_summaries
+      )
+      SELECT id, incident_id, tenant_id, version, status, summary, created_at,
+             incident_code, incident_title, incident_severity, task_count
+      FROM ranked_plans
+      WHERE incident_plan_rank = 1
+      ORDER BY created_at DESC
     `;
 
     const res = await query<PlanSummaryRecord>(sql, params);
