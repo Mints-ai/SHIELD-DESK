@@ -45,3 +45,4 @@ next-env.d.ts
 pgdata/
 package-lock.json
 
+tools/trivy/trivy.exe

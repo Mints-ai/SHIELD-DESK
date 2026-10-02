@@ -317,22 +317,23 @@ export default function SOCTaskBoardPage() {
         )}
 
         {/* 4-Column Board */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 items-start">
-          {columns.map((col) => (
-            <div
-              key={col.id}
-              className="rounded-2xl border border-[var(--sd-border)] bg-white flex flex-col min-h-[500px] overflow-hidden shadow-xs"
-            >
-              {/* Column Header */}
-              <div className="p-3.5 border-b border-[var(--sd-border)] flex items-center justify-between bg-[var(--sd-bg-alt)]/50">
-                <span className="text-xs font-bold text-[var(--sd-pine)]">{col.label}</span>
-                <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border", col.headerBadge)}>
-                  {col.items.length}
-                </span>
-              </div>
+        <div className="w-full overflow-x-auto pb-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 min-w-[720px] lg:min-w-0">
+            {columns.map((col) => (
+              <div
+                key={col.id}
+                className="rounded-2xl border border-[var(--sd-border)] bg-white flex flex-col h-[600px] lg:h-[calc(100vh-230px)] min-h-[480px] max-h-[850px] overflow-hidden shadow-xs"
+              >
+                {/* Column Header */}
+                <div className="p-3.5 border-b border-[var(--sd-border)] flex items-center justify-between bg-[var(--sd-bg-alt)]/50 shrink-0">
+                  <span className="text-xs font-bold text-[var(--sd-pine)]">{col.label}</span>
+                  <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border", col.headerBadge)}>
+                    {col.items.length}
+                  </span>
+                </div>
 
-              {/* Tasks List */}
-              <div className="p-3 space-y-3 flex-1 overflow-y-auto bg-white">
+                {/* Tasks List */}
+                <div className="p-3 space-y-3 flex-1 min-h-0 overflow-y-auto bg-white">
                 {col.items.length === 0 ? (
                   <div className="py-12 text-center text-xs text-[var(--sd-text-muted)] border border-dashed border-[var(--sd-border)] rounded-xl my-2 bg-[var(--sd-panel-raised)]">
                     No tasks in this lane
@@ -393,6 +394,7 @@ export default function SOCTaskBoardPage() {
               </div>
             </div>
           ))}
+          </div>
         </div>
       </main>
 
