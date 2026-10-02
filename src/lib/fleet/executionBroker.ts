@@ -5,6 +5,7 @@ import { signCommand, verifyCommandSignature } from "./commandSigning";
 import { getApprovalToken } from "@/lib/governance/approvalTokens";
 import { AgentResultVerifier, SignedAgentResultPayload } from "./agentResultVerifier";
 import { MTLSGuard } from "./mtlsGuard";
+import { MetricsRegistry } from "@/lib/observability/metrics";
 
 export type CommandLifecycleState =
   | "REQUESTED"
@@ -267,6 +268,8 @@ export class ExecutionBroker {
       },
     });
 
+    MetricsRegistry.increment("shielddesk_commands_dispatched_total", 1, { tier: req.tier });
+
     return {
       success: true,
       commandId,
@@ -331,6 +334,7 @@ export class ExecutionBroker {
     });
 
     if (!mtlsCheck.allowed) {
+      MetricsRegistry.increment("shielddesk_agent_result_rejections_total", 1, { reason: "mtls" });
       return {
         success: false,
         state: "FAILED",
@@ -341,6 +345,7 @@ export class ExecutionBroker {
     // 2. Verify Cryptographic Result Signature
     const verification = await AgentResultVerifier.verifyResult(resultPayload, options);
     if (!verification.verified) {
+      MetricsRegistry.increment("shielddesk_agent_result_rejections_total", 1, { reason: "signature_or_freshness" });
       return {
         success: false,
         state: "FAILED",
@@ -350,6 +355,7 @@ export class ExecutionBroker {
 
     // 3. Mark Command EXECUTED
     const finalState: CommandLifecycleState = resultPayload.exitCode === 0 ? "EXECUTED" : "FAILED";
+    MetricsRegistry.increment(resultPayload.exitCode === 0 ? "shielddesk_commands_executed_total" : "shielddesk_command_execution_failures_total");
     this.inMemoryCommandStates.set(resultPayload.commandId, finalState);
 
     // 4. Update Database

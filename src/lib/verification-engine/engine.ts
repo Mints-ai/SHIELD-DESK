@@ -12,6 +12,7 @@ import { RollbackType } from "../rollback-engine/types";
 import { recordHashChainEvent } from "../fleet/fleet";
 import actionSpecs from "./action-specs.json";
 import { getCapability } from "../fleet/capabilities";
+import { MetricsRegistry } from "@/lib/observability/metrics";
 
 export class VerificationEngine {
   /**
@@ -109,6 +110,7 @@ export class VerificationEngine {
     }
 
     const allPassed = checkResults.every((c) => c.success);
+    MetricsRegistry.increment(allPassed ? "shielddesk_verifications_passed_total" : "shielddesk_verification_failures_total");
     const status: RemediationVerificationStatus = allPassed ? "VERIFIED" : "FAILED";
     const failureReason = allPassed
       ? undefined
@@ -143,6 +145,7 @@ export class VerificationEngine {
           actorId: "engine:verification",
         });
         rollbackExecuted = rbRes.success;
+        MetricsRegistry.increment(rollbackExecuted ? "shielddesk_rollback_outcomes_total" : "shielddesk_rollback_failures_total", 1, { outcome: rollbackExecuted ? "reported_success" : "reported_failure" });
         rollbackResultRecord = rbRes as unknown as Record<string, unknown>;
       } catch {
         rollbackExecuted = false;

@@ -104,6 +104,8 @@ test("Phase 22, 30: Universal Connectors and Observability Metrics Suite", async
   await t.test("MetricsRegistry: Tracks operational counters and emits valid Prometheus exposition", () => {
     MetricsRegistry.increment("shielddesk_ingested_events_total", 5, { tenant: tenantId, source: "wazuh" });
     MetricsRegistry.increment("shielddesk_remediations_executed_total", 1, { action: "isolate_host", status: "success" });
+    MetricsRegistry.observe("shielddesk_db_query_duration_ms", 35, { operation: "select" });
+    MetricsRegistry.observe("shielddesk_db_query_duration_ms", 120, { operation: "select" });
 
     const val = MetricsRegistry.getCounter("shielddesk_ingested_events_total", { tenant: tenantId, source: "wazuh" });
     assert.equal(val, 5);
@@ -111,5 +113,7 @@ test("Phase 22, 30: Universal Connectors and Observability Metrics Suite", async
     const promOutput = MetricsRegistry.toPrometheus();
     assert.ok(promOutput.includes("shielddesk_build_info"));
     assert.ok(promOutput.includes("shielddesk_ingested_events_total{tenant=\"tenant-siem-conn\",source=\"wazuh\"} 5"));
+    assert.ok(promOutput.includes('shielddesk_db_query_duration_ms_bucket{operation="select",le="50"} 1'));
+    assert.ok(promOutput.includes('shielddesk_db_query_duration_ms_count 2'));
   });
 });
