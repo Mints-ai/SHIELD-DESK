@@ -1,4 +1,6 @@
-# ShieldDesk — Enterprise Architecture Specification (Production Ready)
+# ShieldDesk — Current Implementation and Target Architecture
+
+> This document contains architectural targets alongside implemented components. A described target is not evidence of a production deployment, certification, or real-host validation. See [the evidence-based readiness review](PRODUCTION_READINESS_AUDIT.md) for current status.
 
 **Document Version:** 2.0.0  
 **Target:** [https://github.com/Mints-ai/SHIELD-DESK](https://github.com/Mints-ai/SHIELD-DESK)  

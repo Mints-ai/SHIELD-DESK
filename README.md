@@ -6,18 +6,17 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql)](https://www.postgresql.org/)
 [![Sentry](https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry)](https://sentry.io/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
-[![Tests](https://img.shields.io/badge/Tests-205%2F205_Passing-brightgreen?style=flat)]()
 [![Trivy](https://img.shields.io/badge/Trivy-v0.74.0_Integrated-007acc?style=flat&logo=aqua)]()
-[![Status](https://img.shields.io/badge/Launch_Readiness-Commercial_Production_Ready-success?style=flat)]()
+[![Status](https://img.shields.io/badge/Launch_Readiness-Validation_In_Progress-orange?style=flat)]()
 [![License](https://img.shields.io/badge/License-Proprietary-red?style=flat)]()
 
-**ShieldDesk™** is an enterprise-grade, evidence-driven cybersecurity SaaS platform designed around the core principle: **PROVE BEFORE YOU ACT**. It ingests telemetry from Wazuh, Microsoft Defender, CrowdStrike, and custom webhooks, correlates asset dependencies in a **Security Digital Twin**, models kill chains with the **Attack Path Engine**, calculates real **Blast Radius**, governs actions via **Decision & Policy Engines**, enforces human-in-the-loop approvals, dispatches cryptographically signed commands (RSA-2048) to cross-platform endpoint agents, **verifies post-remediation state** before declaring success, automatically rolls back on failure, and anchors all actions to an immutable **SHA-256 Merkle Evidence Vault**.
+**ShieldDesk™** is an **Evidence-Driven Security Operations & Remediation** platform built around **Prove Before You Act**. It ingests security telemetry, models assets and prioritizes attack paths from available evidence, evaluates decisions and policy, supports approval workflows, and includes signed command, verification, and audit-evidence components. Deployment readiness and endpoint rollback behavior still require validation in representative production infrastructure.
 
 ---
 
 ## 1. What ShieldDesk Actually Does
 
-Security Operations teams are overwhelmed by thousands of fragmented alerts across cloud hosts, firewalls, and endpoints. ShieldDesk unifies this workflow into a single, cohesive, production-hardened control plane:
+Security Operations teams are overwhelmed by thousands of fragmented alerts across cloud hosts, firewalls, and endpoints. ShieldDesk unifies this workflow in a single security operations and remediation control plane:
 
 1. **Alert Normalization & Secret Scrubbing**: Ingests high-throughput telemetry from CrowdStrike, Microsoft Defender, Wazuh, and custom webhooks. All payloads pass through a centralized regex redactor (`src/lib/security/redactor.ts`) to scrub credentials, private keys, and PII before database storage.
 2. **AI & Blast Radius Investigation**: Uses a local or private LLM co-pilot paired with a Python Vulnerability ML Engine to correlate CVEs, calculate EPSS exploitation probability, compute downstream asset dependencies, and simulate security posture degradation (`simulateBlastRadius`).
@@ -28,7 +27,18 @@ Security Operations teams are overwhelmed by thousands of fragmented alerts acro
 4. **4-Tier Human Governance**: Enforces Separation of Duties. Non-destructive actions run autonomously, while host isolation and destructive remediation require single or dual cryptographic SuperAdmin approvals (`check_separation_of_duties` at the DB level) with mandatory RFC 6238 TOTP MFA.
 5. **Signed Fleet Dispatch & mTLS X.509 PKI**: Authorized containment commands are cryptographically signed with RSA-2048 keys (`RSA-SHA256`), verified against an emergency admin kill-switch and a Tier 1 blast-radius throttle (max 5 hosts / 5 min), and queued for remote endpoint daemons with a tamper-proof hash-chain audit ledger.
 6. **Self-Service Public Onboarding & SaaS Quotas**: Features a 4-step onboarding wizard (`/onboarding`) with universal PowerShell/Bash agent installation commands, and a multi-tier SaaS billing engine (`/api/billing`) enforcing Community (5 endpoints), Professional (100 endpoints), and Enterprise (Unlimited) quotas.
-7. **Real-Time Aqua Trivy Vulnerability Scanner**: Executes live Aqua Trivy vulnerability scans directly against container images, package manifests, and repository filesystems (`src/lib/trivy.ts`), delivering live CVE disclosures, CVSS threat intelligence, version upgrade advice, and real-time critical/high/medium/low metrics with zero mock data.
+7. **Vulnerability Scanning Integration**: Includes a Trivy integration for scanning supported targets. Scanner-dependent tests require the Trivy binary installed by CI; local results depend on scanner availability and configured data sources.
+
+## Capability status
+
+| Capability | Status | Evidence and limit |
+|---|---|---|
+| Decision, policy, approval, signed dispatch, and tenant authorization modules | IMPLEMENTED | Present in the application and protected by automated tests. |
+| Action verification and simulated failure handling | TESTED | Automated unit/integration tests use simulated evidence; they do not validate real host restoration. |
+| Certificate and command security checks | TESTED | Automated tests cover signatures, replay controls, tenant binding, freshness, and kill-switch behavior. |
+| Customer production rollout, external security testing, and endpoint rollback | PRODUCTION-VALIDATED: not yet | Requires real infrastructure and independent or customer validation. |
+
+No feature is represented here as production-validated. Automated tests establish behavior in their test environment only.
 
 ---
 
@@ -153,7 +163,7 @@ Every command execution, approval decision, and containment event is recorded in
 ```text
 current_hash = SHA-256(prev_hash + tenant_id + event_type + actor_id + payload_json + created_at)
 ```
-Any tampering or record deletion invalidates the chain, providing mathematically provable non-repudiation for SOC 2 and ISO 27001 compliance auditors.
+This provides a cryptographically tamper-evident audit trail. It does not, by itself, establish non-repudiation or SOC 2 or ISO 27001 compliance.
 
 ---
 

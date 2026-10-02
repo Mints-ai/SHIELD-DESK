@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { ConnectorNormalizer } from "./normalizer";
 import { ConnectorType, IngestConnectorResult, UniversalSecurityEvent } from "./types";
+import { MetricsRegistry } from "@/lib/observability/metrics";
 
 export class ConnectorRegistry {
   private static events: Map<string, UniversalSecurityEvent[]> = new Map();
@@ -18,6 +19,7 @@ export class ConnectorRegistry {
     } = {}
   ): Promise<IngestConnectorResult> {
     if (!tenantId) {
+      MetricsRegistry.increment("shielddesk_connector_errors_total", 1, { source, reason: "missing_tenant" });
       return { success: false, error: "Missing required tenant context" };
     }
 
@@ -30,6 +32,7 @@ export class ConnectorRegistry {
 
       const expected = options.signatureHeader.replace(/^sha256=/, "");
       if (computed !== expected) {
+        MetricsRegistry.increment("shielddesk_connector_errors_total", 1, { source, reason: "signature" });
         return { success: false, error: "Cryptographic HMAC webhook signature mismatch" };
       }
     }
@@ -53,6 +56,7 @@ export class ConnectorRegistry {
           break;
       }
     } catch (err: unknown) {
+      MetricsRegistry.increment("shielddesk_connector_errors_total", 1, { source, reason: "normalization" });
       return {
         success: false,
         error: `Connector normalization failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -65,6 +69,7 @@ export class ConnectorRegistry {
     }
     const tenantList = this.events.get(tenantId)!;
     tenantList.push(event);
+    MetricsRegistry.increment("shielddesk_connector_events_ingested_total", 1, { source });
 
     // Bounded buffer
     if (tenantList.length > 500) {

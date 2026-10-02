@@ -234,7 +234,11 @@ test("Phase G: AI Layer & Governance Suite", async (t) => {
 
     assert.ok(evalResult.runId.startsWith("eval-run-"));
     assert.equal(evalResult.totalCases, PERMANENT_BENCHMARK_CASES.length);
-    assert.ok(evalResult.passedCases > 0);
+    assert.equal(evalResult.passedCases, evalResult.totalCases, "release-gate benchmark must pass every active case");
+    assert.equal(evalResult.hallucinationRate, 0, "release-gate benchmark must not accept fabricated evidence");
+    assert.equal(evalResult.remediationAccuracy, 1, "release-gate benchmark must match all expected actions");
+    assert.equal(evalResult.toolCallErrorRate, 0, "release-gate benchmark must reject unauthorized tools without tool failures");
+    assert.ok(evalResult.avgLatencyMs < 5000, "mock-provider benchmark must complete within the deterministic local latency budget");
     assert.ok(typeof evalResult.hallucinationRate === "number");
     assert.ok(typeof evalResult.remediationAccuracy === "number");
     assert.ok(typeof evalResult.toolCallErrorRate === "number");

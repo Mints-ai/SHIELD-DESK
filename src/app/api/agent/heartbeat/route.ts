@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
+import { MetricsRegistry } from "@/lib/observability/metrics";
 
 /**
  * POST /api/agent/heartbeat
@@ -9,11 +10,13 @@ import { trackError } from "@/lib/observability/errorTracker";
  * Updates agent telemetry stats, last_heartbeat timestamp, and enforces kill switch state.
  */
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   try {
     const body = await req.json().catch(() => ({}));
     const agentId = body.agentId || req.headers.get("x-shielddesk-agent-id");
 
     if (!agentId || typeof agentId !== "string") {
+      MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "missing_agent" });
       return NextResponse.json({ error: "Missing agentId" }, { status: 400 });
     }
 
@@ -40,17 +43,21 @@ export async function POST(req: NextRequest) {
       );
 
       if (rows.length === 0) {
+        MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "unknown_agent" });
         return NextResponse.json({ error: "Agent not found" }, { status: 404 });
       }
 
       const agent = rows[0];
       if (agent.kill_switch_active) {
+        MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "kill_switch" });
         return NextResponse.json(
           { error: "KILL_SWITCH_ACTIVE", killSwitchActive: true },
           { status: 423 }
         );
       }
 
+      MetricsRegistry.increment("shielddesk_agent_heartbeats_total");
+      MetricsRegistry.observe("shielddesk_agent_heartbeat_processing_ms", Date.now() - startedAt);
       return NextResponse.json({
         success: true,
         agentId: agent.id,
@@ -62,10 +69,12 @@ export async function POST(req: NextRequest) {
       // In-memory fallback
       const agent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId);
       if (!agent) {
+        MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "unknown_agent" });
         return NextResponse.json({ error: "Agent not found" }, { status: 404 });
       }
 
       if (agent.kill_switch_active) {
+        MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "kill_switch" });
         return NextResponse.json(
           { error: "KILL_SWITCH_ACTIVE", killSwitchActive: true },
           { status: 423 }
@@ -77,6 +86,8 @@ export async function POST(req: NextRequest) {
       if (memoryUsage !== null) agent.memory_usage = memoryUsage;
       if (eps !== null) agent.eps = eps;
 
+      MetricsRegistry.increment("shielddesk_agent_heartbeats_total");
+      MetricsRegistry.observe("shielddesk_agent_heartbeat_processing_ms", Date.now() - startedAt);
       return NextResponse.json({
         success: true,
         agentId: agent.id,
@@ -86,6 +97,7 @@ export async function POST(req: NextRequest) {
       });
     }
   } catch (err: unknown) {
+    MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "server_error" });
     trackError(err, { endpoint: "/api/agent/heartbeat" });
     const msg = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: msg }, { status: 500 });

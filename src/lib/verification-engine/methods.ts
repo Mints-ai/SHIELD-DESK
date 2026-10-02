@@ -1,6 +1,24 @@
 import { VerificationCheckSpec, VerificationMethodResult } from "./types";
 
 export class VerificationMethods {
+  /** Proves snapshot creation or restoration from explicit agent evidence. */
+  public static async checkSnapshotState(spec: VerificationCheckSpec, evidence?: Record<string, unknown>): Promise<VerificationMethodResult> {
+    const snapshots = Array.isArray(evidence?.snapshots) ? evidence.snapshots as Array<Record<string, unknown> | string> : [];
+    const target = spec.target;
+    const restored = spec.expectedState.restored === true;
+    const matched = snapshots.some((item) => typeof item === "string" ? item === target : item && item.id === target && (!restored || item.restored === true));
+    const success = spec.expectedState.exists === true ? matched : matched;
+    return { method: "snapshot_state_check", target, success, expectedState: spec.expectedState, actualState: { exists: matched, restored: snapshots.some((item) => typeof item === "object" && item?.id === target && item.restored === true) }, details: success ? `Snapshot '${target}' state verified.` : `Verification failed: snapshot '${target}' state is not proven.`, timestamp: new Date().toISOString() };
+  }
+
+  /** Proves a file was moved out of its original path into restricted quarantine. */
+  public static async checkFileQuarantine(spec: VerificationCheckSpec, evidence?: Record<string, unknown>): Promise<VerificationMethodResult> {
+    const records = Array.isArray(evidence?.quarantinedFiles) ? evidence.quarantinedFiles as Array<Record<string, unknown>> : [];
+    const record = records.find((item) => item.originalPath === spec.target);
+    const success = spec.expectedState.quarantined === true && record?.quarantined === true && record.restricted === true && record.originalPathPresent === false;
+    return { method: "file_quarantine_check", target: spec.target, success, expectedState: spec.expectedState, actualState: record ? { quarantined: record.quarantined === true, restricted: record.restricted === true, originalPathPresent: record.originalPathPresent } : { quarantined: false, restricted: false, originalPathPresent: undefined }, details: success ? `File '${spec.target}' is confirmed in restricted quarantine.` : `Verification failed: restricted quarantine and original-path removal are not both proven for '${spec.target}'.`, timestamp: new Date().toISOString() };
+  }
+
   /**
    * Verifies whether a process is absent from the host process table.
    */
@@ -11,7 +29,8 @@ export class VerificationMethods {
     const targetPidOrName = spec.target;
     const timestamp = new Date().toISOString();
 
-    const liveProcesses = (agentEvidence?.runningProcesses as Array<{ pid?: number; name?: string } | string>) || [];
+    const hasProcessEvidence = Array.isArray(agentEvidence?.runningProcesses);
+    const liveProcesses = hasProcessEvidence ? agentEvidence!.runningProcesses as Array<{ pid?: number; name?: string } | string> : [];
     const isStillRunning = liveProcesses.some((p) => {
       if (typeof p === "string") return p.toLowerCase().includes(targetPidOrName.toLowerCase());
       if (typeof p === "object" && p !== null) {
@@ -22,7 +41,7 @@ export class VerificationMethods {
     });
 
     const expectedRunning = spec.expectedState.running === true;
-    const success = isStillRunning === expectedRunning;
+    const success = hasProcessEvidence && isStillRunning === expectedRunning;
 
     return {
       method: "process_table_check",
@@ -52,6 +71,7 @@ export class VerificationMethods {
     const timestamp = new Date().toISOString();
 
     const blockedIps = Array.isArray(agentEvidence?.blockedIps) ? (agentEvidence.blockedIps as unknown[]) : [];
+    const hasFirewallEvidence = typeof agentEvidence?.networkIsolated === "boolean" || typeof agentEvidence?.firewallDropActive === "boolean" || Array.isArray(agentEvidence?.blockedIps) || agentEvidence?.status === "isolated" || agentEvidence?.status === "connected";
     const firewallActive =
       agentEvidence?.networkIsolated === true ||
       agentEvidence?.firewallDropActive === true ||
@@ -59,7 +79,7 @@ export class VerificationMethods {
       agentEvidence?.status === "isolated";
 
     const expectedActive = spec.expectedState.active !== false;
-    const success = Boolean(firewallActive) === expectedActive;
+    const success = hasFirewallEvidence && Boolean(firewallActive) === expectedActive;
 
     return {
       method: "firewall_rule_check",
@@ -135,7 +155,7 @@ export class VerificationMethods {
     } else if (typeof serviceEntry === "object" && serviceEntry !== null) {
       observedStatus = (serviceEntry.status || (serviceEntry.active ? "active" : "inactive")).toLowerCase();
       isHealthy = observedStatus === "active" || observedStatus === "running" || observedStatus === "healthy" || serviceEntry.active === true;
-    } else if (agentEvidence?.serviceHealth === "healthy" || agentEvidence?.status === "healthy" || agentEvidence?.serviceActive === true) {
+    } else if (serviceName === "agent-control-plane" && agentEvidence?.controlPlaneHealth === "healthy") {
       isHealthy = true;
       observedStatus = "healthy";
     }
@@ -200,7 +220,7 @@ export class VerificationMethods {
 
     const isListening = Array.isArray(listeningPorts) && listeningPorts.some((p) => Number(p) === portNum);
     const expectedOpen = spec.expectedState.open === true || spec.expectedState.reachable === true;
-    const success = isListening === expectedOpen;
+    const success = Array.isArray(listeningPorts) && isListening === expectedOpen;
 
     return {
       method: "port_reachability_check",

@@ -564,7 +564,7 @@ export async function validateEndpointCertificate({
 
     // 3. Extract Subject attributes (CN=agent-{id}, OU={tenantId})
     const subject = x509.subject;
-    const cnMatch = subject.match(/CN=agent-([a-f0-9\-]+)/i);
+    const cnMatch = subject.match(/CN=agent-([A-Za-z0-9._-]+)/i);
     const ouMatch = subject.match(/OU=([^,\n]+)/i);
 
     const agentId = cnMatch ? cnMatch[1] : undefined;

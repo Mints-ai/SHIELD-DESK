@@ -10,7 +10,7 @@ import { trackError } from "@/lib/observability/errorTracker";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { token, hostname, ipAddress, osType, agentVersion, publicKey } = body;
+    const { token, hostname, ipAddress, osType, agentVersion, publicKey, installationId, licenseKey } = body;
 
     if (!token || typeof token !== "string") {
       return NextResponse.json({ error: "Missing or invalid enrollment token" }, { status: 400 });
@@ -34,6 +34,8 @@ export async function POST(req: NextRequest) {
       osType: resolvedOsType,
       agentVersion: typeof agentVersion === "string" ? agentVersion : "0.4.2",
       clientPublicKeyPem: typeof publicKey === "string" ? publicKey.trim() : undefined,
+      installationId: typeof installationId === "string" ? installationId.trim() : undefined,
+      licenseKey: typeof licenseKey === "string" ? licenseKey.trim() : undefined,
     });
 
     if (!result.success) {

@@ -1,5 +1,6 @@
 import "server-only";
 import { Pool, type QueryResultRow } from "pg";
+import { MetricsRegistry } from "@/lib/observability/metrics";
 
 /**
  * ShieldDesk PostgreSQL connection.
@@ -44,7 +45,16 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: unknown[]
 ) {
-  return getPool().query<T>(text, params);
+  const startedAt = Date.now();
+  const operation = /^\s*(SELECT|INSERT|UPDATE|DELETE|WITH)/i.exec(text)?.[1]?.toLowerCase() || "other";
+  try {
+    return await getPool().query<T>(text, params);
+  } catch (error) {
+    MetricsRegistry.increment("shielddesk_db_query_errors_total", 1, { operation });
+    throw error;
+  } finally {
+    MetricsRegistry.observe("shielddesk_db_query_duration_ms", Date.now() - startedAt, { operation });
+  }
 }
 
 /**

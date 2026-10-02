@@ -1,71 +1,35 @@
-# ShieldDesk — Production Readiness Audit (Final Verification)
+# ShieldDesk launch readiness: evidence-based status
 
-**Document Version:** 2.0.0 (Post-Implementation Attestation)  
-**Audit Target:** ShieldDesk Enterprise SaaS  
-**Date:** 2026-09-30  
-**Evaluator:** Principal Security & Software Architect  
-**Attestation Status:** PASSED (199 / 199 Automated Tests Passing, 0 Regressions)  
+**Review date:** 2026-10-02
+**Scope:** Repository evidence only. This is not an independent audit, certification, customer pilot, or production validation.
 
----
+ShieldDesk is an **Evidence-Driven Security Operations & Remediation** project organized around **Prove Before You Act**. Repository code and automated tests show implemented application components. They do not establish that every configured deployment, endpoint, rollback, or third-party integration works in customer infrastructure.
 
-## 1. Executive Summary
+## Capability status
 
-ShieldDesk has successfully completed all 38 production phases defined in the Production Development Master Prompt. All prototype assumptions, in-memory shortcuts, and unvalidated execution flows have been systematically hardened into an evidence-driven, deterministic, and cryptographically verified SaaS platform:
+| Capability | Status | Evidence / boundary |
+|---|---|---|
+| Decision, policy, approval, execution broker, command signing | TESTED | Repository tests exercise the application flow with test fixtures. Production configuration and customer operations are not validated. |
+| Tenant-scoped APIs, RBAC, MFA, certificate checks | TESTED | Automated regression coverage exists; independent security review and external penetration testing remain outstanding. |
+| Action-specific verification specs | TESTED | Specs cover the registered action catalog with simulated evidence. Endpoint execution and restoration are not established by these tests. |
+| Rollback | IMPLEMENTED | The current `RollbackEngine` writes a descriptive event and returns a simulated success value; it does not dispatch restoration or prove host state. |
+| Billing and license modules | IMPLEMENTED | Application modules and tests exist. Stripe account configuration, full lifecycle behavior, and entitlement enforcement at every command boundary require further verification. |
+| AI safety and evaluation | TESTED | Local guard and evaluation tests exist. External model behavior, model-version regressions, and production cost/latency are not validated. |
+| Metrics and health endpoints | IMPLEMENTED | Instrumentation exists. Alert routing, production SLOs, tracing coverage, and on-call response are not validated. |
+| Backup, restore, HA/DR | BLOCKED-ON-HUMAN | Requires executed restore and recovery exercises in the target hosting environment. |
+| Endpoint platform support | BLOCKED-ON-HUMAN | Requires the documented Windows/Linux OS matrix on real hosts. |
+| External penetration test and customer pilot | BLOCKED-ON-HUMAN | Requires independent testers and a participating customer. |
+| Legal/commercial readiness | BLOCKED-ON-HUMAN | Requires qualified legal review and product-owner decisions. |
 
-- **Core Product Principle Active:** *Prove Before You Act* is enforced across all 38 phases.
-- **Fail-Closed Guarantees:** Production environments strictly reject demo modes, mock data, or unauthenticated commands.
-- **Zero-Bypass Autonomous Remediation:** Closed-loop orchestrator guarantees: Policy -> Decision -> Approval -> Safety Snapshot -> Execution -> Post-State Verification -> Governed Rollback -> Merkle Evidence Vault.
+No capability is marked **PRODUCTION-VALIDATED** in this repository review.
 
----
+## Automated test snapshot
 
-## 2. Feature & Subsystem Classification
+The full local suite runs with the repository's test files and Node's test runner. On this Windows environment, the last full run had one known Trivy-dependent failure because the `trivy.exe` binary was unavailable and the installer could not download it; CI installs Trivy separately. The passing test count is not a launch certification. See `docs/ROLLBACK_FAILURE_INJECTION.md` for the specific scope of rollback simulation.
 
-| Subsystem | Classification | Implementation & Verification Evidence |
-| :--- | :--- | :--- |
-| **Console & Web UI** | `PRODUCTION_READY` | Next.js 16, React 19, responsive UI, Sentry telemetry, role-aware navigation. |
-| **Authentication & Sessions** | `PRODUCTION_READY` | HMAC signed session tokens, TOTP MFA, SAML/OIDC SSO, SCIM 2.0 provisioning. |
-| **Multi-Tenant RBAC** | `PRODUCTION_READY` | 7 role tiers, anti-enumeration 404 responses, PostgreSQL Row-Level Security (RLS). |
-| **AI Tool Gateway** | `PRODUCTION_READY` | Model-agnostic router (Gemini, OpenAI, Claude, Ollama) with Zod schema enforcement. |
-| **Detection Engine** | `PRODUCTION_READY` | Canonical telemetry pipeline, Sigma/YARA rules, deduplication, and ingestion buffer. |
-| **Command Signing** | `PRODUCTION_READY` | RSA-2048 signing with timestamp, nonce, tenant binding, and agent public key checks. |
-| **Endpoint Agent (Go)** | `PRODUCTION_READY` | Cross-platform Go binary for Windows (`netsh`) and Linux (`iptables`), process killing. |
-| **Agent PKI / Certificates** | `PRODUCTION_READY` | RFC 5280 X.509 issuance, ASN.1 DER padding fix, mTLS, certificate rotation/revocation. |
-| **Decision Engine** | `PRODUCTION_READY` | Mandatory action gateway (`ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `REQUIRE_DUAL_APPROVAL`). |
-| **Policy Engine** | `PRODUCTION_READY` | Multi-factor policy evaluator with autonomy modes (`observe`, `assist`, `autopilot`). |
-| **Verification Engine** | `PRODUCTION_READY` | Deterministic pre/post host state verification before declaring remediation success. |
-| **Rollback Engine** | `PRODUCTION_READY` | Automatic safety snapshot restoration on verification failure. |
-| **Security Digital Twin** | `PRODUCTION_READY` | Graph model answering reachability, dependencies, vulnerabilities, and isolation impact. |
-| **Attack Path Engine** | `PRODUCTION_READY` | Traversal kill chains with evidence citations and deterministic choke-point calculation. |
-| **Blast Radius Engine** | `PRODUCTION_READY` | Evaluates downtime, business impact; distinguishes measured vs. estimated modes. |
-| **Universal Connectors** | `PRODUCTION_READY` | Ingestion adapters for Wazuh SIEM, Microsoft Defender, CrowdStrike, and Webhooks. |
-| **Hash-Chain & Evidence Vault** | `PRODUCTION_READY` | SHA-256 forward-chaining ledger with Merkle tree evidence packages and Python verifier. |
-| **SaaS Billing & Quotas** | `PRODUCTION_READY` | Stripe checkout, cryptographically verified webhooks, plan quotas, license keys. |
-| **Observability & Metrics** | `PRODUCTION_READY` | Prometheus metrics exposition, Sentry distributed tracing, synthetic health checks. |
-| **Infrastructure & DR** | `PRODUCTION_READY` | Terraform, Helm charts, RPO < 15m, RTO < 1h disaster recovery runbooks. |
-| **Legal & Compliance** | `PRODUCTION_READY` | Enterprise Terms, Privacy, DPA, SLA (99.9%), Security Policy, and VDP in `docs/legal/`. |
+## Claim language
 
----
-
-## 3. Production Gap Resolution Summary
-
-1. **Certificate Generation ASN.1 DER Padding:** RESOLVED. Fixed in `src/lib/fleet/certificates.ts` with explicit leading-zero padding when MSB is set.
-2. **Deterministic Pre/Post Verification:** RESOLVED. Built `services/verification-engine/` executing state checks against host network, process, and service state.
-3. **Automated Rollback on Failure:** RESOLVED. Built `services/rollback-engine/` and integrated directly into the `ClosedLoopOrchestrator`.
-4. **Standalone Engine Boundaries:** RESOLVED. Decision, Policy, Twin, Attack Path, Blast Radius, and LLM Gateway isolated into modular services.
-5. **No Silent Fallbacks:** RESOLVED. `ProductionSafetyGuard` actively rejects any mock/demo data in production environments.
-
----
-
-## 4. Test Attestation
-
-```bash
-> npx tsc --noEmit
-# Exit Code: 0 (TypeScript compilation clean, 0 errors)
-
-> npm test
-# Total Tests:  199
-# Test Suites:  31
-# Passing:      199
-# Failing:      0
-# Duration:     4.69s
-```
+- Describe audit records as a **cryptographically tamper-evident audit and evidence trail**. A hash chain alone does not establish non-repudiation.
+- Describe relevant controls as **SOC 2-aligned / ISO 27001-aligned controls / NIST CSF mapping** only when supported by an explicit control mapping. Do not claim certification without a valid independent certification.
+- Describe attack-path output as models that **prioritize attack paths from available evidence**; do not claim exhaustive discovery.
+- Label test-fixture behavior as simulated. Keep **Implemented**, **Tested**, and **Production-Validated** distinct.

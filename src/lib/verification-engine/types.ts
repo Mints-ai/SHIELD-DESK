@@ -6,6 +6,8 @@ export type VerificationMethodType =
   | "service_health_check"
   | "firewall_rule_check"
   | "config_state_check"
+  | "snapshot_state_check"
+  | "file_quarantine_check"
   | "custom_script_check";
 
 export type RemediationVerificationStatus =
