@@ -51,6 +51,7 @@ export function TopNavBar() {
 
   const [pendingTokens, setPendingTokens] = useState<ApprovalTokenRecord[]>([]);
   const [activeModalToken, setActiveModalToken] = useState<ApprovalTokenRecord | null>(null);
+  const [activeModalIndex, setActiveModalIndex] = useState(0);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState(false);
 
   useEffect(() => {
@@ -130,6 +131,7 @@ export function TopNavBar() {
           <button
             onClick={() => {
               if (pendingTokens.length === 0) return;
+              setActiveModalIndex(0);
               setActiveModalToken(pendingTokens[0]);
               setIsApprovalModalOpen(true);
             }}
@@ -302,6 +304,12 @@ export function TopNavBar() {
         isOpen={isApprovalModalOpen}
         onClose={() => setIsApprovalModalOpen(false)}
         token={activeModalToken}
+        totalCount={pendingTokens.length}
+        currentIndex={activeModalIndex}
+        onNavigate={(index) => {
+          setActiveModalIndex(index);
+          setActiveModalToken(pendingTokens[index]);
+        }}
         onDecisionSuccess={() => {
           fetchApprovals();
         }}
