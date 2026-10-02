@@ -441,7 +441,7 @@ shielddesk/
 │   └── iam/                       # [DEPRECATED] Retired in favor of native App Router auth
 ├── db/
 │   ├── schema.sql                 # Complete DDL: 15 tables, constraints, RLS policies
-│   └── seed.sql                   # Realistic multi-tenant incident and agent fixtures
+│   └── seed.sql                   # Endpoint agent and audit fixtures
 ├── tests/                         # Node.js native test harness (204 automated tests across 32 suites)
 ├── sentry.client.config.ts        # Client Sentry error and performance monitoring
 ├── sentry.server.config.ts        # Server Sentry error tracking

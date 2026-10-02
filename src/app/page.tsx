@@ -56,6 +56,7 @@ export default function SOCDashboardPage() {
   const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<IncidentDetail | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(false);
+  const [incidentListError, setIncidentListError] = useState<string | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
 
@@ -78,6 +79,7 @@ export default function SOCDashboardPage() {
       })
       .then((data) => {
         if (!isMounted) return;
+        setIncidentListError(null);
         const list = data?.incidents || [];
         setIncidents(list);
         if (list.length > 0) {
@@ -97,7 +99,10 @@ export default function SOCDashboardPage() {
       })
       .catch((err) => {
         console.error("Incidents fetch error:", err);
-        if (isMounted) setIncidents([]);
+        if (isMounted) {
+          setIncidents([]);
+          setIncidentListError("Incident data is currently unavailable. Please try again.");
+        }
       })
       .finally(() => {
         if (isMounted) setIsLoadingList(false);
@@ -204,16 +209,6 @@ export default function SOCDashboardPage() {
 
                   {/* AI & Governance Action Trigger Buttons */}
                   <div className="flex items-center gap-2 flex-wrap">
-                    {selectedIncident.incident.incidentCode === "INC-1042" && (
-                      <Link
-                        href="/dashboard/plans/p1111111-1111-1111-1111-111111111111"
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg-alt)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-pine)] transition-all cursor-pointer shadow-xs"
-                      >
-                        <Layers className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
-                        <span>Inspect Mitigation Plan</span>
-                      </Link>
-                    )}
-
                     <button
                       onClick={() =>
                         openChatWithPrompt(
@@ -424,6 +419,13 @@ export default function SOCDashboardPage() {
               <div className="flex flex-col items-center gap-2 py-12 text-xs text-[var(--sd-text-muted)]">
                 <RefreshCw className="h-4 w-4 animate-spin text-[var(--sd-pine)]" />
                 <span>Loading tenant telemetry...</span>
+              </div>
+            ) : incidentListError ? (
+              <div className="mx-1 mt-4 p-4 rounded-2xl border border-dashed border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-center">
+                <h4 className="text-xs font-semibold text-[var(--sd-pine)]">Incident Queue Unavailable</h4>
+                <p className="text-[11px] text-[var(--sd-text-muted)] mt-1 leading-relaxed">
+                  {incidentListError}
+                </p>
               </div>
             ) : incidents.length === 0 ? (
               <div className="mx-1 mt-4 p-4 rounded-2xl border border-dashed border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-center">
