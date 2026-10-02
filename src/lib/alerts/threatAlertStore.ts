@@ -404,6 +404,25 @@ export function acknowledgeThreatAlert(alertId: string, userId?: string | null):
 }
 
 /**
+ * Reset all live sliding-window anomaly telemetry buffers back to nominal baseline.
+ * Also removes synthetic simulated burst alerts.
+ */
+export function resetAnomalyBaselines(): void {
+  failureTimestamps.length = 0;
+  sudoTimestamps.length = 0;
+  egressBursts.length = 0;
+
+  // Remove synthetic anomaly alerts from active alerts store
+  const filtered = alertsStore.filter(
+    (a) =>
+      !a.failureReason.toLowerCase().includes("synthetic anomaly") &&
+      !a.title.toLowerCase().includes("synthetic")
+  );
+  alertsStore.length = 0;
+  alertsStore.push(...filtered);
+}
+
+/**
  * Clear or reset all threat alerts, failures, and unblock IPs (for testing/demo)
  */
 export function resetThreatAlerts(): void {

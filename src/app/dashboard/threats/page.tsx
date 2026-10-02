@@ -115,8 +115,11 @@ export default function ThreatsDashboardPage() {
   const fetchThreatData = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const res = await fetch("/api/threats", {
-        headers: { "X-ShieldDesk-User": activeUserId },
+      const res = await fetch(`/api/threats?t=${Date.now()}`, {
+        headers: {
+          "X-ShieldDesk-User": activeUserId,
+          "Cache-Control": "no-cache",
+        },
       });
       const data = await res.json();
       if (data.yara_rules) setYaraRules(data.yara_rules);
@@ -161,17 +164,8 @@ export default function ThreatsDashboardPage() {
       setSimFeedback(
         `Anomaly Spike Triggered: ${data.simulated_value} attempts/min (${data.sigma_deviation})! Dispatched alert to ${data.alert_subject}`
       );
-      // Temporarily mark anomaly
-      setAnomalies((prev) =>
-        prev.map((a) =>
-          a.metric.includes("Failed Auth")
-            ? { ...a, current_value: data.simulated_value, is_anomaly: true }
-            : a
-        )
-      );
-      if (data.alert) {
-        setSecurityAlerts((prev) => [data.alert, ...prev.filter((a) => a.id !== data.alert.id)]);
-      }
+      // Fetch fresh live computed telemetry immediately
+      await fetchThreatData(true);
     } catch {
       setSimFeedback("Anomaly simulation complete.");
     } finally {
@@ -243,15 +237,44 @@ export default function ThreatsDashboardPage() {
     );
   };
 
-  const resetAnomaly = () => {
-    setAnomalies((prev) =>
-      prev.map((a) =>
-        a.metric.includes("Failed Auth")
-          ? { ...a, current_value: 3.8, is_anomaly: false }
-          : a
-      )
-    );
-    setSimFeedback(null);
+  const resetAnomaly = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/threats", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({ action: "reset_anomalies" }),
+      });
+      const data = await res.json();
+      if (data.anomaly_baselines) {
+        setAnomalies(data.anomaly_baselines);
+      } else {
+        setAnomalies((prev) =>
+          prev.map((a) => ({
+            ...a,
+            current_value: 0.0,
+            is_anomaly: false,
+          }))
+        );
+      }
+      setSimFeedback(null);
+      await fetchThreatData(true);
+    } catch (err) {
+      console.error("Failed to reset anomaly baselines:", err);
+      setAnomalies((prev) =>
+        prev.map((a) => ({
+          ...a,
+          current_value: 0.0,
+          is_anomaly: false,
+        }))
+      );
+      setSimFeedback(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const dispatchTestWebhook = async () => {
@@ -312,28 +335,38 @@ export default function ThreatsDashboardPage() {
             </button>
 
             {activeUserId !== "dev-analyst" && (
-              <button
-                onClick={triggerAnomalySimulation}
-                disabled={loading}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                <span>Simulate Anomaly Burst</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={triggerAnomalySimulation}
+                  disabled={loading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+                  title="Simulate 3-sigma anomaly burst across telemetry streams"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Simulate Anomaly Burst</span>
+                </button>
+
+                {anomalies.some((a) => a.is_anomaly) && (
+                  <button
+                    onClick={resetAnomaly}
+                    disabled={loading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+                    title="Stop anomaly simulation and restore nominal 3-sigma baseline"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Reset Baseline</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
 
         {/* Simulation Feedback Alert */}
         {simFeedback && (
-          <div className="p-3 rounded-lg border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-xs text-[var(--sd-danger)] flex items-center justify-between shadow-xs">
-            <span className="font-semibold">{simFeedback}</span>
-            <button
-              onClick={resetAnomaly}
-              className="px-2 py-0.5 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs hover:bg-[var(--sd-panel-hover)] font-medium cursor-pointer"
-            >
-              Reset Baseline
-            </button>
+          <div className="p-3 rounded-lg border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-xs text-[var(--sd-danger)] flex items-center gap-2 shadow-xs">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--sd-danger)] animate-pulse" />
+            <span className="font-semibold truncate">{simFeedback}</span>
           </div>
         )}
 
@@ -356,11 +389,16 @@ export default function ThreatsDashboardPage() {
               <Activity className="h-4 w-4 text-[var(--sd-warning)]" />
             </div>
             <div className="text-2xl font-bold text-[var(--sd-text)] font-mono">
-              {anomalies.filter((a) => a.is_anomaly).length > 0 ? (
-                <span className="text-[var(--sd-danger)]">1 ANOMALY ACTIVE</span>
-              ) : (
-                <span className="text-[var(--sd-pine-bright)]">NOMINAL</span>
-              )}
+              {(() => {
+                const count = anomalies.filter((a) => a.is_anomaly).length;
+                return count > 0 ? (
+                  <span className="text-[var(--sd-danger)]">
+                    {count} ANOMAL{count > 1 ? "IES" : "Y"} ACTIVE
+                  </span>
+                ) : (
+                  <span className="text-[var(--sd-pine-bright)]">NOMINAL</span>
+                );
+              })()}
             </div>
             <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">Rolling statistical bounds</p>
           </div>

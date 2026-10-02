@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { shouldFailClosed, isDemoMode } from "@/lib/config/environment";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
 import { getActiveDetectionRules, toggleDetectionRule } from "@/lib/detection/engine";
@@ -18,6 +21,7 @@ import {
   recordSudoExecution,
   getLiveEgressRateMBPerMin,
   recordNetworkEgress,
+  resetAnomalyBaselines,
 } from "@/lib/alerts/threatAlertStore";
 import { resolveClientIp } from "@/lib/network/clientIp";
 
@@ -90,7 +94,7 @@ const ANOMALY_BASELINES = [
     mean: 4.2,
     stdDev: 2.1,
     threshold_3sigma: 10.5,
-    current_value: 3.8,
+    current_value: 0.0,
     is_anomaly: false,
     unit: "attempts/min",
   },
@@ -99,7 +103,7 @@ const ANOMALY_BASELINES = [
     mean: 145.0,
     stdDev: 35.0,
     threshold_2sigma: 215.0,
-    current_value: 122.4,
+    current_value: 0.0,
     is_anomaly: false,
     unit: "MB/min",
   },
@@ -108,7 +112,7 @@ const ANOMALY_BASELINES = [
     mean: 1.1,
     stdDev: 0.8,
     threshold_3sigma: 3.5,
-    current_value: 0.9,
+    current_value: 0.0,
     is_anomaly: false,
     unit: "cmds/min",
   },
@@ -201,50 +205,69 @@ export async function GET(req: NextRequest) {
     // DB offline fallback
   }
 
-  // Determine if this user can view authentication security alerts.
-  // Strictly restricted: Only System Admin and Globex Analyst can view alerts
-  const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
-  const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
-  const canViewAuthAlerts = Boolean(session && (isSystemAdmin || isGlobexAnalyst));
-
-  // Use dynamic threat alert store for authorized users.
-  // Defaults to empty array if no active alerts or user is unauthorized
-  const securityAlerts = canViewAuthAlerts
-    ? getThreatAlertsForUser(session.uid)
-    : [];
-
-  // Dynamically compute all 3 anomaly metrics from live event stores
-  const liveFailureRate = getLiveFailureRatePerMin();
-  const liveSudoRate = Math.max(getLiveSudoRatePerMin(), liveSudoDbCount);
-  const liveEgress = getLiveEgressRateMBPerMin();
-
-  const anomalyBaselines = ANOMALY_BASELINES.map((b) => {
-    if (b.metric === "Failed Authentications / Min") {
-      const threshold = b.threshold_3sigma ?? 10.5;
-      return {
-        ...b,
-        current_value: liveFailureRate,
-        is_anomaly: liveFailureRate > threshold,
-      };
+  let liveAuthDbCount = 0;
+  try {
+      const authRes = await query<{ count: string }>(
+        `SELECT count(*) FROM endpoint_telemetry 
+         WHERE tenant_id = $1 
+           AND timestamp >= now() - interval '1 minute'
+           AND (event_type = 'auth_failure' OR payload::text ILIKE '%auth_fail%' OR payload::text ILIKE '%login_failed%')`,
+        [session.tenantId]
+      );
+      if (authRes.rows.length > 0) {
+        const parsed = parseInt(authRes.rows[0].count, 10);
+        if (!isNaN(parsed)) {
+          liveAuthDbCount = parsed;
+        }
+      }
+    } catch {
+      // Telemetry table optional
     }
-    if (b.metric === "Outbound Network Egress Rate") {
-      const threshold = b.threshold_2sigma ?? 215.0;
-      return {
-        ...b,
-        current_value: liveEgress.current_value,
-        is_anomaly: liveEgress.is_anomaly,
-      };
-    }
-    if (b.metric === "Sudo Execution Frequency") {
-      const threshold = b.threshold_3sigma ?? 3.5;
-      return {
-        ...b,
-        current_value: liveSudoRate,
-        is_anomaly: liveSudoRate > threshold,
-      };
-    }
-    return b;
-  });
+
+    // Determine if this user can view authentication security alerts.
+    // Strictly restricted: Only System Admin and Globex Analyst can view alerts
+    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
+    const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
+    const canViewAuthAlerts = Boolean(session && (isSystemAdmin || isGlobexAnalyst));
+
+    // Use dynamic threat alert store for authorized users.
+    // Defaults to empty array if no active alerts or user is unauthorized
+    const securityAlerts = canViewAuthAlerts
+      ? getThreatAlertsForUser(session.uid)
+      : [];
+
+    // Dynamically compute all 3 anomaly metrics from real live telemetry stores
+    const liveFailureRate = Math.max(getLiveFailureRatePerMin(), liveAuthDbCount);
+    const liveSudoRate = Math.max(getLiveSudoRatePerMin(), liveSudoDbCount);
+    const liveEgress = getLiveEgressRateMBPerMin();
+
+    const anomalyBaselines = ANOMALY_BASELINES.map((b) => {
+      if (b.metric === "Failed Authentications / Min") {
+        const threshold = b.threshold_3sigma ?? 10.5;
+        return {
+          ...b,
+          current_value: Number(liveFailureRate.toFixed(1)),
+          is_anomaly: liveFailureRate > threshold,
+        };
+      }
+      if (b.metric === "Outbound Network Egress Rate") {
+        const threshold = b.threshold_2sigma ?? 215.0;
+        return {
+          ...b,
+          current_value: Number(liveEgress.current_value.toFixed(1)),
+          is_anomaly: liveEgress.is_anomaly,
+        };
+      }
+      if (b.metric === "Sudo Execution Frequency") {
+        const threshold = b.threshold_3sigma ?? 3.5;
+        return {
+          ...b,
+          current_value: Number(liveSudoRate.toFixed(1)),
+          is_anomaly: liveSudoRate > threshold,
+        };
+      }
+      return b;
+    });
 
   return NextResponse.json({
     status: "ok",
@@ -366,6 +389,43 @@ export async function POST(req: NextRequest) {
         alert_dispatched: true,
         alert_subject: "alerts.tenant_acme.auth_anomaly_burst",
         alert: simulatedAlert,
+      });
+    }
+
+    if (action === "reset_anomalies" || action === "reset_baseline") {
+      resetAnomalyBaselines();
+
+      const nominalBaselines = ANOMALY_BASELINES.map((b) => ({
+        ...b,
+        current_value: 0.0,
+        is_anomaly: false,
+      }));
+
+      return NextResponse.json({
+        success: true,
+        message: "Anomaly telemetry reset to nominal baselines.",
+        anomaly_baselines: nominalBaselines,
+        security_alerts: (isSystemAdmin || isGlobexAnalyst) ? getThreatAlertsForUser(session.uid) : [],
+      });
+    }
+
+    if (action === "record_sudo") {
+      const count = Number(body.count || 1);
+      recordSudoExecution(count);
+      return NextResponse.json({
+        success: true,
+        message: `Recorded ${count} live sudo execution event(s).`,
+        current_value: getLiveSudoRatePerMin(),
+      });
+    }
+
+    if (action === "record_egress") {
+      const mb = Number(body.mb || 50);
+      recordNetworkEgress(mb);
+      return NextResponse.json({
+        success: true,
+        message: `Recorded ${mb} MB outbound network egress telemetry.`,
+        current_value: getLiveEgressRateMBPerMin().current_value,
       });
     }
 
