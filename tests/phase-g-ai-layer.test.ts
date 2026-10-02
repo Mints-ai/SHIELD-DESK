@@ -58,6 +58,7 @@ test("Phase G: AI Layer & Governance Suite", async (t) => {
       cveId: "CVE-2024-3400",
       targetAsset: "endpoint-wkst-01",
     });
+    assert.ok(evidence.id);
 
     const proposal = await LLMGateway.proposeRemediation(
       "inc-4001",
@@ -155,6 +156,7 @@ test("Phase G: AI Layer & Governance Suite", async (t) => {
 
   await t.test("Evidence Citations: Validates real vs fabricated evidence and calculates hallucination score", () => {
     const realEv = EvidenceEngine.createEvidence("cve_match", "nvd", { cveId: "CVE-2021-44228" });
+    assert.ok(realEv.id);
 
     // Valid citation
     const validCheck = EvidenceCitationValidator.validateCitations(
