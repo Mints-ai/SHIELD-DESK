@@ -1,12 +1,162 @@
 {
-  "network.isolate": { "expected_state": { "active": true }, "verification_methods": ["firewall_rule_check"], "success_condition": "Host evidence confirms network isolation is active.", "failure_condition": "Isolation is absent or cannot be proven from host evidence.", "rollback_procedure": { "available": true, "type": "network_rollback", "procedure": "Use the existing governed restore_host rollback path after authorization and execution-broker controls." } },
-  "network.restore": { "expected_state": { "active": false }, "verification_methods": ["firewall_rule_check"], "success_condition": "Host evidence confirms defensive isolation rules are cleared.", "failure_condition": "Isolation remains active or connectivity state cannot be proven.", "rollback_procedure": { "available": false, "type": null, "procedure": "Re-isolation is a separate governed action; no automatic inverse is declared." } },
-  "process.terminate": { "expected_state": { "running": false }, "verification_methods": ["process_table_check"], "success_condition": "Target process is absent from the host process table.", "failure_condition": "Target process remains present or process-table evidence is missing.", "rollback_procedure": { "available": true, "type": "snapshot_restore", "procedure": "Use the existing governed snapshot restore path; process resurrection is not guaranteed." } },
-  "process.inspect": { "expected_state": { "running": true }, "verification_methods": ["process_table_check"], "success_condition": "Target process is present in the host process table.", "failure_condition": "Target process is absent or process-table evidence is missing.", "rollback_procedure": { "available": false, "type": null, "procedure": "Read-only inspection has no rollback." } },
-  "snapshot.create": { "expected_state": { "exists": true }, "verification_methods": ["snapshot_state_check"], "success_condition": "Host evidence contains the newly created snapshot identifier.", "failure_condition": "Snapshot identifier is missing or absent from host evidence.", "rollback_procedure": { "available": false, "type": null, "procedure": "Snapshot creation is retained as evidence; cleanup is not declared." } },
-  "snapshot.restore": { "expected_state": { "restored": true }, "verification_methods": ["snapshot_state_check"], "success_condition": "Host evidence confirms the requested snapshot was restored.", "failure_condition": "Restore confirmation is absent or references a different snapshot.", "rollback_procedure": { "available": false, "type": null, "procedure": "A second restore requires a separately governed action." } },
-  "patch.apply": { "expected_state": { "cveStatus": "not_vulnerable" }, "verification_methods": ["package_version_check", "vulnerability_rescan"], "success_condition": "Package state and vulnerability evidence both confirm remediation.", "failure_condition": "Either the package state or vulnerability rescan fails to prove remediation.", "rollback_procedure": { "available": true, "type": "package_rollback", "procedure": "Use the existing governed package rollback path after authorization and execution-broker controls." } },
-  "service.restart": { "expected_state": { "status": "healthy" }, "verification_methods": ["service_health_check"], "success_condition": "Target service reports healthy after restart.", "failure_condition": "Target service is unhealthy or health evidence is missing.", "rollback_procedure": { "available": true, "type": "service_rollback", "procedure": "Use the existing governed service rollback path after authorization and execution-broker controls." } },
-  "file.quarantine": { "expected_state": { "quarantined": true }, "verification_methods": ["file_quarantine_check"], "success_condition": "Host evidence confirms the target is in restricted quarantine and absent from its original path.", "failure_condition": "Quarantine evidence is missing, target remains in place, or quarantine is not restricted.", "rollback_procedure": { "available": true, "type": "snapshot_restore", "procedure": "Use the existing governed restore path; restore must remain separately authorized." } },
-  "firewall.block": { "expected_state": { "active": true }, "verification_methods": ["firewall_rule_check"], "success_condition": "Host evidence confirms the target IP/CIDR is blocked.", "failure_condition": "The block rule is absent or cannot be proven from host evidence.", "rollback_procedure": { "available": true, "type": "network_rollback", "procedure": "Use the existing governed network rollback path after authorization and execution-broker controls." } }
+  "network.isolate": {
+    "expected_state": {
+      "active": true
+    },
+    "verification_methods": [
+      "firewall_rule_check",
+      "service_health_check"
+    ],
+    "success_condition": "Host evidence confirms network isolation is active.",
+    "failure_condition": "Isolation is absent or cannot be proven from host evidence.",
+    "rollback_procedure": {
+      "available": true,
+      "type": "network_rollback",
+      "procedure": "Use the existing governed restore_host rollback path after authorization and execution-broker controls."
+    }
+  },
+  "network.restore": {
+    "expected_state": {
+      "active": false
+    },
+    "verification_methods": [
+      "firewall_rule_check",
+      "service_health_check"
+    ],
+    "success_condition": "Host evidence confirms defensive isolation rules are cleared.",
+    "failure_condition": "Isolation remains active or connectivity state cannot be proven.",
+    "rollback_procedure": {
+      "available": false,
+      "type": null,
+      "procedure": "Re-isolation is a separate governed action; no automatic inverse is declared."
+    }
+  },
+  "process.terminate": {
+    "expected_state": {
+      "running": false
+    },
+    "verification_methods": [
+      "process_table_check",
+      "service_health_check"
+    ],
+    "success_condition": "Target process is absent from the host process table.",
+    "failure_condition": "Target process remains present or process-table evidence is missing.",
+    "rollback_procedure": {
+      "available": true,
+      "type": "snapshot_restore",
+      "procedure": "Use the existing governed snapshot restore path; process resurrection is not guaranteed."
+    }
+  },
+  "process.inspect": {
+    "expected_state": {
+      "running": true
+    },
+    "verification_methods": [
+      "process_table_check",
+      "service_health_check"
+    ],
+    "success_condition": "Target process is present in the host process table.",
+    "failure_condition": "Target process is absent or process-table evidence is missing.",
+    "rollback_procedure": {
+      "available": false,
+      "type": null,
+      "procedure": "Read-only inspection has no rollback."
+    }
+  },
+  "snapshot.create": {
+    "expected_state": {
+      "exists": true
+    },
+    "verification_methods": [
+      "snapshot_state_check",
+      "service_health_check"
+    ],
+    "success_condition": "Host evidence contains the newly created snapshot identifier.",
+    "failure_condition": "Snapshot identifier is missing or absent from host evidence.",
+    "rollback_procedure": {
+      "available": false,
+      "type": null,
+      "procedure": "Snapshot creation is retained as evidence; cleanup is not declared."
+    }
+  },
+  "snapshot.restore": {
+    "expected_state": {
+      "restored": true
+    },
+    "verification_methods": [
+      "snapshot_state_check",
+      "service_health_check"
+    ],
+    "success_condition": "Host evidence confirms the requested snapshot was restored.",
+    "failure_condition": "Restore confirmation is absent or references a different snapshot.",
+    "rollback_procedure": {
+      "available": false,
+      "type": null,
+      "procedure": "A second restore requires a separately governed action."
+    }
+  },
+  "patch.apply": {
+    "expected_state": {
+      "cveStatus": "not_vulnerable"
+    },
+    "verification_methods": [
+      "package_version_check",
+      "vulnerability_rescan",
+      "service_health_check"
+    ],
+    "success_condition": "Package state and vulnerability evidence both confirm remediation.",
+    "failure_condition": "Either the package state or vulnerability rescan fails to prove remediation.",
+    "rollback_procedure": {
+      "available": true,
+      "type": "package_rollback",
+      "procedure": "Use the existing governed package rollback path after authorization and execution-broker controls."
+    }
+  },
+  "service.restart": {
+    "expected_state": {
+      "status": "healthy"
+    },
+    "verification_methods": [
+      "service_health_check"
+    ],
+    "success_condition": "Target service reports healthy after restart.",
+    "failure_condition": "Target service is unhealthy or health evidence is missing.",
+    "rollback_procedure": {
+      "available": true,
+      "type": "service_rollback",
+      "procedure": "Use the existing governed service rollback path after authorization and execution-broker controls."
+    }
+  },
+  "file.quarantine": {
+    "expected_state": {
+      "quarantined": true
+    },
+    "verification_methods": [
+      "file_quarantine_check",
+      "service_health_check"
+    ],
+    "success_condition": "Host evidence confirms the target is in restricted quarantine and absent from its original path.",
+    "failure_condition": "Quarantine evidence is missing, target remains in place, or quarantine is not restricted.",
+    "rollback_procedure": {
+      "available": true,
+      "type": "snapshot_restore",
+      "procedure": "Use the existing governed restore path; restore must remain separately authorized."
+    }
+  },
+  "firewall.block": {
+    "expected_state": {
+      "active": true
+    },
+    "verification_methods": [
+      "firewall_rule_check",
+      "service_health_check"
+    ],
+    "success_condition": "Host evidence confirms the target IP/CIDR is blocked.",
+    "failure_condition": "The block rule is absent or cannot be proven from host evidence.",
+    "rollback_procedure": {
+      "available": true,
+      "type": "network_rollback",
+      "procedure": "Use the existing governed network rollback path after authorization and execution-broker controls."
+    }
+  }
 }

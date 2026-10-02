@@ -85,6 +85,7 @@ describe("Phase 12 & 13: Verification Engine & Rollback Engine Suite", () => {
 
       // Valid post-execution host state: PID 4812 is absent
       const verifiedEvidence = {
+        controlPlaneHealth: "healthy",
         runningProcesses: [
           { pid: 512, name: "services.exe" },
           { pid: 1204, name: "explorer.exe" },

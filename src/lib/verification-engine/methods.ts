@@ -29,7 +29,8 @@ export class VerificationMethods {
     const targetPidOrName = spec.target;
     const timestamp = new Date().toISOString();
 
-    const liveProcesses = (agentEvidence?.runningProcesses as Array<{ pid?: number; name?: string } | string>) || [];
+    const hasProcessEvidence = Array.isArray(agentEvidence?.runningProcesses);
+    const liveProcesses = hasProcessEvidence ? agentEvidence!.runningProcesses as Array<{ pid?: number; name?: string } | string> : [];
     const isStillRunning = liveProcesses.some((p) => {
       if (typeof p === "string") return p.toLowerCase().includes(targetPidOrName.toLowerCase());
       if (typeof p === "object" && p !== null) {
@@ -40,7 +41,7 @@ export class VerificationMethods {
     });
 
     const expectedRunning = spec.expectedState.running === true;
-    const success = isStillRunning === expectedRunning;
+    const success = hasProcessEvidence && isStillRunning === expectedRunning;
 
     return {
       method: "process_table_check",
@@ -70,6 +71,7 @@ export class VerificationMethods {
     const timestamp = new Date().toISOString();
 
     const blockedIps = Array.isArray(agentEvidence?.blockedIps) ? (agentEvidence.blockedIps as unknown[]) : [];
+    const hasFirewallEvidence = typeof agentEvidence?.networkIsolated === "boolean" || typeof agentEvidence?.firewallDropActive === "boolean" || Array.isArray(agentEvidence?.blockedIps) || agentEvidence?.status === "isolated" || agentEvidence?.status === "connected";
     const firewallActive =
       agentEvidence?.networkIsolated === true ||
       agentEvidence?.firewallDropActive === true ||
@@ -77,7 +79,7 @@ export class VerificationMethods {
       agentEvidence?.status === "isolated";
 
     const expectedActive = spec.expectedState.active !== false;
-    const success = Boolean(firewallActive) === expectedActive;
+    const success = hasFirewallEvidence && Boolean(firewallActive) === expectedActive;
 
     return {
       method: "firewall_rule_check",
@@ -153,7 +155,7 @@ export class VerificationMethods {
     } else if (typeof serviceEntry === "object" && serviceEntry !== null) {
       observedStatus = (serviceEntry.status || (serviceEntry.active ? "active" : "inactive")).toLowerCase();
       isHealthy = observedStatus === "active" || observedStatus === "running" || observedStatus === "healthy" || serviceEntry.active === true;
-    } else if (agentEvidence?.serviceHealth === "healthy" || agentEvidence?.status === "healthy" || agentEvidence?.serviceActive === true) {
+    } else if (serviceName === "agent-control-plane" && agentEvidence?.controlPlaneHealth === "healthy") {
       isHealthy = true;
       observedStatus = "healthy";
     }
@@ -218,7 +220,7 @@ export class VerificationMethods {
 
     const isListening = Array.isArray(listeningPorts) && listeningPorts.some((p) => Number(p) === portNum);
     const expectedOpen = spec.expectedState.open === true || spec.expectedState.reachable === true;
-    const success = isListening === expectedOpen;
+    const success = Array.isArray(listeningPorts) && isListening === expectedOpen;
 
     return {
       method: "port_reachability_check",

@@ -40,7 +40,7 @@ export class VerificationEngine {
       const resolvedTarget = target || cveId || snapshotId || serviceName || agentId;
       checks.push(...spec.verification_methods.map((method) => ({
         method,
-        target: method === "service_health_check" ? (serviceName || target || agentId) : resolvedTarget,
+        target: method === "service_health_check" ? (serviceName || (capability.name === "service.restart" ? target || agentId : "agent-control-plane")) : resolvedTarget,
         expectedState: method === "package_version_check" && expectedVersion
           ? { ...spec.expected_state, version: expectedVersion }
           : { ...spec.expected_state },

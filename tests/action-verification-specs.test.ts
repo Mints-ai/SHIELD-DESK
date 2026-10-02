@@ -23,6 +23,41 @@ describe("Declarative action verification specifications", () => {
     assert.throws(() => VerificationEngine.createPlan({ action: "mystery_action", agentId: "a", tenantId: "t", commandId: "c" }), /No registered verification specification/);
   });
 
+  it("tests success, failure, and partial failure for every registered action", async () => {
+    const goodEvidence = (action: string): Record<string, unknown> => {
+      switch (action) {
+        case "network.isolate": return { networkIsolated: true };
+        case "network.restore": return { networkIsolated: false };
+        case "process.terminate": return { runningProcesses: [] };
+        case "process.inspect": return { runningProcesses: ["target-1"] };
+        case "snapshot.create": return { snapshots: ["target-1"] };
+        case "snapshot.restore": return { snapshots: [{ id: "target-1", restored: true }] };
+        case "patch.apply": return { installedVersion: "9.0", cveStatus: "not_vulnerable" };
+        case "service.restart": return { services: { "target-1": "healthy" } };
+        case "file.quarantine": return { quarantinedFiles: [{ originalPath: "target-1", quarantined: true, restricted: true, originalPathPresent: false }] };
+        case "firewall.block": return { blockedIps: ["target-1"] };
+        default: return {};
+      }
+    };
+
+    for (const action of Object.keys(CAPABILITY_REGISTRY)) {
+      const plan = VerificationEngine.createPlan({ action, agentId: "agent-1", tenantId: "tenant-1", commandId: `cmd-${action}`, target: "target-1", cveId: action === "patch.apply" ? "target-1" : undefined });
+      assert.ok(plan.checks.length >= 1, `${action} needs at least one state-verification check`);
+      const success = await VerificationEngine.verify(plan, { ...goodEvidence(action), controlPlaneHealth: "healthy" });
+      assert.equal(success.verified, true, `${action} succeeds when every state is proven`);
+
+      const actionFailure = await VerificationEngine.verify(plan, { controlPlaneHealth: "healthy", ...(action === "network.restore" ? { networkIsolated: true } : {}) });
+      assert.equal(actionFailure.verified, false, `${action} fails when action state is not proven`);
+      if (plan.checks.length > 1) assert.ok(actionFailure.checks.some((check) => check.success) && actionFailure.checks.some((check) => !check.success), `${action} covers partial failure`);
+
+      if (plan.checks.length > 1) {
+        const healthFailure = await VerificationEngine.verify(plan, goodEvidence(action));
+        assert.equal(healthFailure.verified, false, `${action} fails if agent health is not proven`);
+        assert.ok(healthFailure.checks.some((check) => check.success) && healthFailure.checks.some((check) => !check.success), `${action} covers independent verifier failure`);
+      }
+    }
+  });
+
   it("fails closed for unsupported verification methods", async () => {
     const plan = VerificationEngine.createPlan({
       action: "process.inspect", agentId: "a", tenantId: "t", commandId: "c",
@@ -45,8 +80,8 @@ describe("Declarative action verification specifications", () => {
 
   it("reports partial patch proof as failed when the post-patch vulnerability rescan fails", async () => {
     const plan = VerificationEngine.createPlan({ action: "apply_patch", agentId: "a", tenantId: "t", commandId: "c", cveId: "CVE-1", expectedVersion: "2.0" });
-    const result = await VerificationEngine.verify(plan, { installedVersion: "2.1", cveStatus: "vulnerable" });
-    assert.equal(result.checks.length, 2);
+    const result = await VerificationEngine.verify(plan, { installedVersion: "2.1", cveStatus: "vulnerable", controlPlaneHealth: "healthy" });
+    assert.equal(result.checks.length, 3);
     assert.equal(result.checks[0].success, true);
     assert.equal(result.checks[1].success, false);
     assert.equal(result.verified, false);
