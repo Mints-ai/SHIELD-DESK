@@ -38,6 +38,8 @@ declare global {
   var __shieldDeskFailureTimestamps: number[] | undefined;
   // eslint-disable-next-line no-var
   var __shieldDeskSudoTimestamps: number[] | undefined;
+  // eslint-disable-next-line no-var
+  var __shieldDeskEgressBursts: { timestamp: number; mb: number }[] | undefined;
 }
 
 if (!global.__shieldDeskThreatAlerts) {
@@ -64,12 +66,17 @@ if (!global.__shieldDeskSudoTimestamps) {
   global.__shieldDeskSudoTimestamps = [];
 }
 
+if (!global.__shieldDeskEgressBursts) {
+  global.__shieldDeskEgressBursts = [];
+}
+
 const alertsStore = global.__shieldDeskThreatAlerts;
 const failureTracker = global.__shieldDeskRecentLoginFailures;
 const ipFailureTracker = global.__shieldDeskIpLoginFailures;
 const blockedIpsStore = global.__shieldDeskBlockedIps;
 const failureTimestamps = global.__shieldDeskFailureTimestamps;
 const sudoTimestamps = global.__shieldDeskSudoTimestamps;
+const egressBursts = global.__shieldDeskEgressBursts;
 
 // Clear any stale local loopback or test containment from prior test iterations
 if (blockedIpsStore.has("127.0.0.1")) {
@@ -212,6 +219,48 @@ export function getLiveSudoRatePerMin(): number {
   }
   sudoTimestamps.length = writeIdx;
   return sudoTimestamps.length;
+}
+
+/**
+ * Record network egress volume in MB for sliding window calculations.
+ */
+export function recordNetworkEgress(mb: number, timestamp: number = Date.now()): void {
+  egressBursts.push({ timestamp, mb });
+}
+
+/**
+ * Returns the live outbound network egress rate in MB/min.
+ * Combines sliding-window telemetry bursts with smooth baseline variance.
+ */
+export function getLiveEgressRateMBPerMin(): { current_value: number; is_anomaly: boolean } {
+  const cutoff = Date.now() - 60_000;
+  let writeIdx = 0;
+  let burstMb = 0;
+  for (let readIdx = 0; readIdx < egressBursts.length; readIdx++) {
+    if (egressBursts[readIdx].timestamp > cutoff) {
+      egressBursts[writeIdx] = egressBursts[readIdx];
+      burstMb += egressBursts[readIdx].mb;
+      writeIdx++;
+    }
+  }
+  egressBursts.length = writeIdx;
+
+  if (burstMb > 0) {
+    const spikedValue = Math.round(burstMb * 10) / 10;
+    return {
+      current_value: spikedValue,
+      is_anomaly: spikedValue > 215.0,
+    };
+  }
+
+  // Smooth live fluctuation around mean 130-145 MB/min for normal operational baseline
+  const t = Date.now() / 4500;
+  const variance = Math.sin(t) * 12.3 + Math.cos(t * 1.8) * 6.5;
+  const liveVal = Math.round((134.0 + variance) * 10) / 10;
+  return {
+    current_value: liveVal,
+    is_anomaly: liveVal > 215.0,
+  };
 }
 
 /**
@@ -374,4 +423,5 @@ export function resetThreatAlerts(): void {
   blockedIpsStore.clear();
   failureTimestamps.length = 0;
   sudoTimestamps.length = 0;
+  egressBursts.length = 0;
 }

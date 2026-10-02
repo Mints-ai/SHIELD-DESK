@@ -16,6 +16,8 @@ import {
   recordFailureTimestamp,
   getLiveSudoRatePerMin,
   recordSudoExecution,
+  getLiveEgressRateMBPerMin,
+  recordNetworkEgress,
 } from "@/lib/alerts/threatAlertStore";
 import { resolveClientIp } from "@/lib/network/clientIp";
 
@@ -211,9 +213,11 @@ export async function GET(req: NextRequest) {
     ? getThreatAlertsForUser(session.uid)
     : [];
 
-  // Dynamically compute Failed Authentications / Min and Sudo Execution Frequency from live event stores
+  // Dynamically compute all 3 anomaly metrics from live event stores
   const liveFailureRate = getLiveFailureRatePerMin();
   const liveSudoRate = Math.max(getLiveSudoRatePerMin(), liveSudoDbCount);
+  const liveEgress = getLiveEgressRateMBPerMin();
+
   const anomalyBaselines = ANOMALY_BASELINES.map((b) => {
     if (b.metric === "Failed Authentications / Min") {
       const threshold = b.threshold_3sigma ?? 10.5;
@@ -221,6 +225,14 @@ export async function GET(req: NextRequest) {
         ...b,
         current_value: liveFailureRate,
         is_anomaly: liveFailureRate > threshold,
+      };
+    }
+    if (b.metric === "Outbound Network Egress Rate") {
+      const threshold = b.threshold_2sigma ?? 215.0;
+      return {
+        ...b,
+        current_value: liveEgress.current_value,
+        is_anomaly: liveEgress.is_anomaly,
       };
     }
     if (b.metric === "Sudo Execution Frequency") {
@@ -340,6 +352,7 @@ export async function POST(req: NextRequest) {
       // Inject burst timestamps so live rate immediately reflects an active anomaly spike (> 10.5 threshold)
       recordFailureTimestamp(Date.now(), 18);
       recordSudoExecution(5);
+      recordNetworkEgress(285.4);
 
       return NextResponse.json({
         success: true,

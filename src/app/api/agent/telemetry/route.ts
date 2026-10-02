@@ -3,7 +3,7 @@ import { query } from "@/lib/db";
 import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
 import { evaluateTelemetryBatch } from "@/lib/detection/engine";
-import { recordSudoExecution } from "@/lib/alerts/threatAlertStore";
+import { recordSudoExecution, recordNetworkEgress } from "@/lib/alerts/threatAlertStore";
 
 interface TelemetryEventPayload {
   eventType: string;
@@ -65,6 +65,20 @@ export async function POST(req: NextRequest) {
           (typeof evt.eventType === "string" && evt.eventType.toLowerCase().includes("sudo"))
         ) {
           recordSudoExecution();
+        }
+
+        if (
+          payloadStr.toLowerCase().includes("egress") ||
+          (typeof evt.eventType === "string" && evt.eventType.toLowerCase().includes("network"))
+        ) {
+          const rawBytes = Number(
+            (evt.payload as Record<string, unknown>)?.bytes_sent ||
+            (evt.payload as Record<string, unknown>)?.bytes_out ||
+            0
+          );
+          if (rawBytes > 0) {
+            recordNetworkEgress(rawBytes / (1024 * 1024));
+          }
         }
 
         await query(
