@@ -223,7 +223,16 @@ async function runTool(
           userRole: session.role,
         };
       } catch (e: any) {
-        return { error: "engine_error", message: `Trivy scan execution failed: ${e.message || String(e)}` };
+        return {
+          success: false,
+          scannedTarget: ".",
+          scanDurationMs: 0,
+          total: 0,
+          summary: { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 },
+          findings: [],
+          userRole: session.role,
+          warning: `Trivy scan execution failed: ${e.message || String(e)}`,
+        };
       }
     }
   }
