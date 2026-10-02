@@ -128,31 +128,33 @@ export function TopNavBar() {
 
         {/* Right Section: Approvals + Micro Status + Persona Switcher */}
         <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-2.5">
-          <button
-            onClick={() => {
-              if (pendingTokens.length === 0) return;
-              setActiveModalIndex(0);
-              setActiveModalToken(pendingTokens[0]);
-              setIsApprovalModalOpen(true);
-            }}
-            disabled={pendingTokens.length === 0}
-            aria-label={`Approvals${pendingTokens.length > 0 ? `, ${pendingTokens.length} pending` : ""}`}
-            className={cn(
-              "relative flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold shadow-xs transition",
-              pendingTokens.length > 0
-                ? "border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)]/80 cursor-pointer"
-                : "border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] cursor-default"
-            )}
-            title={pendingTokens.length > 0 ? "Review pending approvals" : "No pending approvals"}
-          >
-            <Lock className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Approvals</span>
-            {pendingTokens.length > 0 && (
-              <span className="min-w-4 rounded-full bg-[var(--sd-danger)] px-1 text-center text-[10px] leading-4 text-white">
-                {pendingTokens.length}
-              </span>
-            )}
-          </button>
+          {activeUserId !== "dev-analyst" && (
+            <button
+              onClick={() => {
+                if (pendingTokens.length === 0) return;
+                setActiveModalIndex(0);
+                setActiveModalToken(pendingTokens[0]);
+                setIsApprovalModalOpen(true);
+              }}
+              disabled={pendingTokens.length === 0}
+              aria-label={`Approvals${pendingTokens.length > 0 ? `, ${pendingTokens.length} pending` : ""}`}
+              className={cn(
+                "relative flex h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold shadow-xs transition",
+                pendingTokens.length > 0
+                  ? "border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)]/80 cursor-pointer"
+                  : "border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] cursor-default"
+              )}
+              title={pendingTokens.length > 0 ? "Review pending approvals" : "No pending approvals"}
+            >
+              <Lock className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Approvals</span>
+              {pendingTokens.length > 0 && (
+                <span className="min-w-4 rounded-full bg-[var(--sd-danger)] px-1 text-center text-[10px] leading-4 text-white">
+                  {pendingTokens.length}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Micro Health Indicators */}
           <div className="hidden xl:flex items-center gap-3 px-2.5 py-1 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[10.5px]">
