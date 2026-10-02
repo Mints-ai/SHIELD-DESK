@@ -22,10 +22,14 @@ test("Dedicated agent license activation binds tenant, installation, device, X.5
   const activated = await LicenseActivationService.activate(params);
   assert.equal(activated.state, "ACTIVE");
   assert.equal(activated.deviceIdentity, deviceIdentity);
+  assert.equal(await LicenseActivationService.isDeviceActive(tenantId, deviceIdentity), true);
   await assert.rejects(() => LicenseActivationService.activate({ ...params, deviceIdentity: crypto.randomUUID() }), /certificate rejected|does not match/i);
 
   const states: AgentLicenseState[] = ["TRIAL", "ACTIVE", "PAST_DUE", "SUSPENDED", "EXPIRED", "REVOKED"];
-  for (const state of states) assert.equal((await LicenseActivationService.syncState(tenantId, installationId, state)).state, state);
+  for (const state of states) {
+    assert.equal((await LicenseActivationService.syncState(tenantId, installationId, state)).state, state);
+    assert.equal(await LicenseActivationService.isDeviceActive(tenantId, deviceIdentity), state === "ACTIVE" || state === "TRIAL");
+  }
   await assert.rejects(() => LicenseActivationService.heartbeat(params), /Heartbeat denied.*REVOKED/);
   await LicenseActivationService.syncState(tenantId, installationId, "ACTIVE");
   assert.ok((await LicenseActivationService.heartbeat(params)).lastHeartbeatAt);

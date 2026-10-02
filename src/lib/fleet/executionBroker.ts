@@ -6,6 +6,8 @@ import { getApprovalToken } from "@/lib/governance/approvalTokens";
 import { AgentResultVerifier, SignedAgentResultPayload } from "./agentResultVerifier";
 import { MTLSGuard } from "./mtlsGuard";
 import { MetricsRegistry } from "@/lib/observability/metrics";
+import { LicenseActivationService } from "@/lib/licensing/licenseActivation";
+import { isProduction } from "@/lib/config/environment";
 
 export type CommandLifecycleState =
   | "REQUESTED"
@@ -123,6 +125,10 @@ export class ExecutionBroker {
   public static async dispatchCommand(req: DispatchCommandRequest): Promise<DispatchResult> {
     const commandId = req.commandId || `cmd-${crypto.randomBytes(8).toString("hex")}`;
     const nonce = crypto.randomBytes(16).toString("hex");
+
+    if (isProduction() && !(await LicenseActivationService.isDeviceActive(req.tenantId, req.agentId))) {
+      return { success: false, commandId, dispatchToken: "", signature: "", nonce, state: "FAILED", error: "Active tenant-bound agent license activation is required before command dispatch.", expiresAt: "" };
+    }
 
     // 1. Pre-execution Snapshot Verification (Rule 2)
     if ((req.tier === "Tier 2" || req.tier === "Tier 3") && !req.snapshotId) {

@@ -85,6 +85,13 @@ export class LicenseActivationService {
     return record;
   }
 
+  public static async syncTenantState(tenantId: string, state: AgentLicenseState): Promise<void> {
+    for (const record of this.activations.values()) {
+      if (record.tenantId === tenantId) record.state = state;
+    }
+    try { await query(`UPDATE agent_license_activations SET state=$2 WHERE tenant_id=$1`, [tenantId, state]); } catch { /* in-memory fallback */ }
+  }
+
   public static async get(tenantId: string, installationId: string): Promise<AgentLicenseActivation | null> {
     const key = this.key(tenantId, installationId);
     const cached = this.activations.get(key);
@@ -95,5 +102,14 @@ export class LicenseActivationService {
       if (row) { const record = { tenantId: row.tenant_id, installationId: row.installation_id, deviceIdentity: row.device_identity, certificateFingerprint: row.certificate_fingerprint, licenseId: row.license_id, state: row.state as AgentLicenseState, activatedAt: new Date(row.activated_at).toISOString(), lastHeartbeatAt: row.last_heartbeat_at ? new Date(row.last_heartbeat_at).toISOString() : undefined }; this.activations.set(key, record); return record; }
     } catch { /* in-memory mode */ }
     return null;
+  }
+
+  public static async isDeviceActive(tenantId: string, deviceIdentity: string): Promise<boolean> {
+    const cached = [...this.activations.values()].find((item) => item.tenantId === tenantId && item.deviceIdentity === deviceIdentity);
+    if (cached) return cached.state === "ACTIVE" || cached.state === "TRIAL";
+    try {
+      const result = await query<{ state: AgentLicenseState }>(`SELECT state FROM agent_license_activations WHERE tenant_id=$1 AND device_identity=$2 LIMIT 1`, [tenantId, deviceIdentity]);
+      return result.rows[0]?.state === "ACTIVE" || result.rows[0]?.state === "TRIAL";
+    } catch { return false; }
   }
 }

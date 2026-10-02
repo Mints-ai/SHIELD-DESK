@@ -3,6 +3,7 @@ import { query } from "@/lib/db";
 import { updateTenantSubscription, setTenantSubscriptionStatus, getTenantSubscription, BillingTier } from "./plans";
 import { EntitlementService } from "./entitlements";
 import { recordHashChainEvent } from "@/lib/fleet/fleet";
+import { LicenseActivationService } from "@/lib/licensing/licenseActivation";
 
 export interface StripeEventRecord {
   id: string;
@@ -175,6 +176,8 @@ export class StripeWebhookManager {
           const tierStr = (payload.metadata as any)?.tier || (payload.tier as string) || "professional";
           const tier: BillingTier = tierStr === "enterprise" ? "enterprise" : "professional";
           await updateTenantSubscription(tenantId, tier, "stripe", String(payload.subscription || payload.id || `sub_${tenantId}`));
+          await EntitlementService.setLicenseStatus(tenantId, "active");
+          await LicenseActivationService.syncTenantState(tenantId, "ACTIVE");
           actionTaken = `activated_tier_${tier}`;
           break;
         }
@@ -182,6 +185,8 @@ export class StripeWebhookManager {
         case "invoice.paid": {
           const current = await getTenantSubscription(tenantId);
           const sub = await updateTenantSubscription(tenantId, current.tier, "stripe", current.subscriptionId);
+          await EntitlementService.setLicenseStatus(tenantId, "active");
+          await LicenseActivationService.syncTenantState(tenantId, "ACTIVE");
           actionTaken = `renewed_subscription_until_${sub.currentPeriodEnd}`;
           break;
         }
@@ -189,6 +194,7 @@ export class StripeWebhookManager {
         case "invoice.payment_failed": {
           await setTenantSubscriptionStatus(tenantId, "past_due");
           await EntitlementService.setLicenseStatus(tenantId, "grace_period");
+          await LicenseActivationService.syncTenantState(tenantId, "PAST_DUE");
           actionTaken = "transitioned_to_grace_period";
           break;
         }
@@ -200,9 +206,16 @@ export class StripeWebhookManager {
           const tierValue = String(metadata.tier || "");
           const tier: BillingTier | undefined = tierValue === "enterprise" || tierValue === "professional" || tierValue === "community" ? tierValue : undefined;
           await setTenantSubscriptionStatus(tenantId, mapped, { tier, subscriptionId: String(payload.id || "") || undefined });
-          if (mapped === "active" || mapped === "trialing") await EntitlementService.setLicenseStatus(tenantId, "active");
-          else if (mapped === "past_due") await EntitlementService.setLicenseStatus(tenantId, "grace_period");
-          else await EntitlementService.setLicenseStatus(tenantId, "suspended");
+          if (mapped === "active" || mapped === "trialing") {
+            await EntitlementService.setLicenseStatus(tenantId, "active");
+            await LicenseActivationService.syncTenantState(tenantId, mapped === "trialing" ? "TRIAL" : "ACTIVE");
+          } else if (mapped === "past_due") {
+            await EntitlementService.setLicenseStatus(tenantId, "grace_period");
+            await LicenseActivationService.syncTenantState(tenantId, "PAST_DUE");
+          } else {
+            await EntitlementService.setLicenseStatus(tenantId, "suspended");
+            await LicenseActivationService.syncTenantState(tenantId, "SUSPENDED");
+          }
           actionTaken = `subscription_status_${mapped}`;
           break;
         }
@@ -210,6 +223,7 @@ export class StripeWebhookManager {
         case "invoice.payment_action_required": {
           await setTenantSubscriptionStatus(tenantId, "past_due");
           await EntitlementService.setLicenseStatus(tenantId, "grace_period");
+          await LicenseActivationService.syncTenantState(tenantId, "PAST_DUE");
           actionTaken = "payment_action_required_grace_period";
           break;
         }
@@ -220,6 +234,7 @@ export class StripeWebhookManager {
           if (fullyRefunded) {
             await setTenantSubscriptionStatus(tenantId, "cancelled");
             await EntitlementService.setLicenseStatus(tenantId, "suspended");
+            await LicenseActivationService.syncTenantState(tenantId, "SUSPENDED");
             actionTaken = "full_refund_suspended_subscription";
           } else actionTaken = "partial_refund_recorded_no_entitlement_change";
           break;
@@ -228,6 +243,7 @@ export class StripeWebhookManager {
         case "customer.subscription.deleted": {
           await setTenantSubscriptionStatus(tenantId, "cancelled", { tier: "community", subscriptionId: String(payload.id || "") || undefined });
           await EntitlementService.setLicenseStatus(tenantId, "suspended");
+          await LicenseActivationService.syncTenantState(tenantId, "SUSPENDED");
           actionTaken = "subscription_cancelled_downgraded_to_community";
           break;
         }
