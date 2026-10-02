@@ -1,6 +1,6 @@
 import "server-only";
 import type OpenAI from "openai";
-import { query } from "@/lib/db";
+import { query, withTenantContext } from "@/lib/db";
 import { canAccess } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
 
@@ -505,65 +505,139 @@ export async function generateMitigationPlan(
 
   const allTasks = [...immediateTasks, ...patchTasks, ...longTermTasks];
 
-  // Persist plan to PostgreSQL
+  // Persist one active plan per incident. Locking the incident row keeps
+  // simultaneous generate requests from creating duplicate plans.
   let planId = crypto.randomUUID();
+  let storedTasks: Array<Record<string, unknown>> | undefined;
   try {
-    const planInsert = await query<{ id: string }>(
-      `INSERT INTO mitigation_plans (incident_id, tenant_id, version, status, summary, created_at, updated_at)
-       VALUES ((SELECT id FROM incidents WHERE incident_code = $1), $2, 1, 'active', $3, now(), now())
-       RETURNING id`,
-      [
-        args.incidentId,
-        session.tenantId,
-        `Automated mitigation plan for ${args.incidentId}: 3-horizon remediation sequence`,
-      ]
-    );
+    const incidentTenantScope = canAccess(session.role, "VIEW_CROSS_TENANT")
+      ? ""
+      : "AND tenant_id = $2";
+    const transactionResult = await withTenantContext(
+      session.tenantId,
+      session.role,
+      async (transactionQuery) => {
+        const incidentParams = canAccess(session.role, "VIEW_CROSS_TENANT")
+          ? [args.incidentId]
+          : [args.incidentId, session.tenantId];
+        const incidentResult = await transactionQuery<{
+          id: string;
+          tenant_id: string;
+        }>(
+          `SELECT id, tenant_id FROM incidents
+           WHERE incident_code = $1 ${incidentTenantScope}
+           LIMIT 1 FOR UPDATE`,
+          incidentParams
+        );
+        const incident = incidentResult.rows[0];
+        if (!incident) {
+          throw new Error(`Incident ${args.incidentId} was not found while saving its plan.`);
+        }
 
-    if (planInsert.rows[0]) {
-      planId = planInsert.rows[0].id;
-      for (const t of allTasks) {
-        await query(
-          `INSERT INTO mitigation_tasks (plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+        const existingPlan = await transactionQuery<{ id: string }>(
+          `SELECT id FROM mitigation_plans
+           WHERE incident_id = $1 AND tenant_id = $2 AND status IN ('draft', 'active')
+           ORDER BY version DESC, created_at DESC
+           LIMIT 1`,
+          [incident.id, incident.tenant_id]
+        );
+
+        if (existingPlan.rows[0]) {
+          const existingTasks = await transactionQuery<Record<string, unknown>>(
+            `SELECT id, plan_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at
+             FROM mitigation_tasks
+             WHERE plan_id = $1
+             ORDER BY created_at ASC`,
+            [existingPlan.rows[0].id]
+          );
+          return {
+            id: existingPlan.rows[0].id,
+            tasks: existingTasks.rows,
+          };
+        }
+
+        const planInsert = await transactionQuery<{ id: string }>(
+          `INSERT INTO mitigation_plans (incident_id, tenant_id, version, status, summary, created_at, updated_at)
+           VALUES (
+             $1,
+             $2,
+             (SELECT COALESCE(MAX(version), 0) + 1 FROM mitigation_plans WHERE incident_id = $1 AND tenant_id = $2),
+             'active',
+             $3,
+             now(),
+             now()
+           )
+           RETURNING id`,
           [
-            planId,
-            session.tenantId,
-            t.horizon,
-            t.title,
-            t.description,
-            t.tier,
-            t.status,
-            t.blastRadius,
-            "cveId" in t ? t.cveId : null,
+            incident.id,
+            incident.tenant_id,
+            `Automated mitigation plan for ${args.incidentId}: 3-horizon remediation sequence`,
           ]
         );
+        const createdPlan = planInsert.rows[0];
+        if (!createdPlan) {
+          throw new Error(`Failed to save mitigation plan for ${args.incidentId}.`);
+        }
+
+        for (const t of allTasks) {
+          await transactionQuery(
+            `INSERT INTO mitigation_tasks (plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+            [
+              createdPlan.id,
+              incident.tenant_id,
+              t.horizon,
+              t.title,
+              t.description,
+              t.tier,
+              t.status,
+              t.blastRadius,
+              "cveId" in t ? t.cveId : null,
+            ]
+          );
+        }
+
+        return { id: createdPlan.id };
       }
-    }
+    );
+    planId = transactionResult.id;
+    storedTasks = transactionResult.tasks;
   } catch {
     // Dev fallback if database is offline: save in mock store
-    MOCK_STORED_PLANS[planId] = {
-      id: planId,
-      incident_code: investigation.incident.incidentCode,
-      incident_title: investigation.incident.title,
-      incident_severity: investigation.incident.severity,
-      tenant_id: session.tenantId,
-      version: 1,
-      status: "active",
-      summary: `Automated mitigation plan for ${args.incidentId}`,
-      created_at: new Date().toISOString(),
-    };
-    MOCK_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
-      id: `task-${idx}-${Date.now()}`,
-      plan_id: planId,
-      horizon: t.horizon,
-      title: t.title,
-      description: t.description,
-      tier: t.tier,
-      status: t.status,
-      blast_radius: t.blastRadius,
-      cve_id: "cveId" in t ? t.cveId : null,
-      created_at: new Date().toISOString(),
-    }));
+    const existingMockPlan = Object.values(MOCK_STORED_PLANS).find(
+      (plan) =>
+        plan.tenant_id === session.tenantId &&
+        plan.incident_code === investigation.incident.incidentCode &&
+        (plan.status === "active" || plan.status === "draft")
+    );
+    if (existingMockPlan) {
+      planId = String(existingMockPlan.id);
+      storedTasks = MOCK_STORED_TASKS[planId] || [];
+    } else {
+      MOCK_STORED_PLANS[planId] = {
+        id: planId,
+        incident_code: investigation.incident.incidentCode,
+        incident_title: investigation.incident.title,
+        incident_severity: investigation.incident.severity,
+        tenant_id: session.tenantId,
+        version: 1,
+        status: "active",
+        summary: `Automated mitigation plan for ${args.incidentId}`,
+        created_at: new Date().toISOString(),
+      };
+      MOCK_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
+        id: `task-${idx}-${Date.now()}`,
+        plan_id: planId,
+        horizon: t.horizon,
+        title: t.title,
+        description: t.description,
+        tier: t.tier,
+        status: t.status,
+        blast_radius: t.blastRadius,
+        cve_id: "cveId" in t ? t.cveId : null,
+        created_at: new Date().toISOString(),
+      }));
+    }
   }
 
   return {
@@ -583,7 +657,7 @@ export async function generateMitigationPlan(
         ? `${unresolvedCves.length} linked CVE(s) could not be resolved against the knowledge base — generic tasks shown for those.`
         : undefined,
     },
-    tasks: allTasks,
+    tasks: storedTasks || allTasks,
     governanceNote:
       "This is a recommendation only. Stored as MitigationPlan " +
       planId +
