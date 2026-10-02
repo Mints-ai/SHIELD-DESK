@@ -311,14 +311,16 @@ export default function ThreatsDashboardPage() {
               <span>Refresh</span>
             </button>
 
-            <button
-              onClick={triggerAnomalySimulation}
-              disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              <span>Simulate Anomaly Burst</span>
-            </button>
+            {activeUserId !== "dev-analyst" && (
+              <button
+                onClick={triggerAnomalySimulation}
+                disabled={loading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span>Simulate Anomaly Burst</span>
+              </button>
+            )}
           </div>
         </div>
 
