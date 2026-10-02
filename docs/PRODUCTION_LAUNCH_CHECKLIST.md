@@ -11,7 +11,7 @@
 | Security | Independent penetration test across web, API, PKI, agent, AI, billing and infrastructure | blocked | Schedule and complete external assessment; see `docs/launch-gates/EXTERNAL_PENETRATION_TEST.md`. |
 | Endpoint | Windows/Linux install, enrollment, command, verification, rollback and update matrix | blocked | Execute on the real OS matrix in `docs/launch-gates/ENDPOINT_TEST_MATRIX.md`. |
 | Endpoint | Signed commands and simulated command lifecycle | done (TESTED) | Test keypairs and simulated agents; no customer endpoint certification. |
-| SaaS | Stripe webhook signature and idempotency coverage | done (TESTED, limited) | Existing webhook tests; full realistic lifecycle sequence and live Stripe validation remain outstanding. |
+| SaaS | Stripe webhook signature, idempotency and lifecycle coverage | not done (partial) | Added signature fail-closed checks and simulated create/failure/renewal/upgrade/refund/cancel sequences; customer portal, invoice lifecycle breadth, concurrency with a real DB, and live Stripe validation remain outstanding. |
 | SaaS | Dedicated license activation bound to tenant, installation, device identity, X.509 identity and entitlement | not done | A new activation service/API and migration are implemented and unit-tested; enrollment and command-time enforcement are not wired. Complete those gates before launch. |
 | SaaS | Customer pilot, support, status communications | blocked | Requires a customer, support owner and operational service. See `docs/launch-gates/CUSTOMER_PILOT.md`. |
 | Infrastructure | Backup integrity, restore test, load, chaos and HA/DR exercise | blocked | Use the runbook/scripts in `docs/RESILIENCE_AND_RECOVERY.md`; execute in target environment before asserting RPO/RTO. |

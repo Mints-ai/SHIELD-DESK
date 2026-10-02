@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { query } from "@/lib/db";
-import { updateTenantSubscription, BillingTier } from "./plans";
+import { updateTenantSubscription, setTenantSubscriptionStatus, getTenantSubscription, BillingTier } from "./plans";
 import { EntitlementService } from "./entitlements";
 import { recordHashChainEvent } from "@/lib/fleet/fleet";
 
@@ -27,12 +27,13 @@ export class StripeWebhookManager {
   public static verifyStripeSignature(
     rawBody: string,
     signatureHeader: string | null,
-    secret = process.env.STRIPE_WEBHOOK_SECRET || "whsec_test_secret",
+    secret = process.env.STRIPE_WEBHOOK_SECRET || "",
     toleranceSeconds = 300 // 5 minute replay window
   ): { valid: boolean; reason?: string; timestamp?: number } {
     if (!signatureHeader || typeof signatureHeader !== "string") {
       return { valid: false, reason: "Missing Stripe signature header." };
     }
+    if (!secret) return { valid: false, reason: "STRIPE_WEBHOOK_SECRET is not configured." };
 
     // Parse t=<timestamp>,v1=<hash>
     const items = signatureHeader.split(",");
@@ -99,32 +100,6 @@ export class StripeWebhookManager {
       return { isDuplicate: true, eventRecord: existing };
     }
 
-    // Check database for existing event
-    try {
-      const res = await query<any>(
-        `SELECT id, stripe_event_id, event_type, tenant_id, status, payload, created_at, processed_at
-         FROM stripe_events_processed WHERE stripe_event_id = $1 LIMIT 1`,
-        [stripeEventId]
-      );
-      if (res.rows.length > 0) {
-        const row = res.rows[0];
-        const existing: StripeEventRecord = {
-          id: row.id,
-          stripeEventId: row.stripe_event_id,
-          eventType: row.event_type,
-          tenantId: row.tenant_id,
-          status: row.status,
-          payload: row.payload,
-          createdAt: new Date(row.created_at).toISOString(),
-          processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : undefined,
-        };
-        this.inMemoryProcessedEvents.set(stripeEventId, existing);
-        return { isDuplicate: true, eventRecord: existing };
-      }
-    } catch {
-      // Fallback
-    }
-
     const eventId = `sev-${crypto.randomBytes(8).toString("hex")}`;
     const now = new Date().toISOString();
 
@@ -138,18 +113,27 @@ export class StripeWebhookManager {
       createdAt: now,
     };
 
-    this.inMemoryProcessedEvents.set(stripeEventId, record);
-
     try {
-      await query(
+      const inserted = await query<{ id: string }>(
         `INSERT INTO stripe_events_processed (
           id, stripe_event_id, event_type, tenant_id, status, payload, created_at
-        ) VALUES ($1, $2, $3, $4, 'pending', $5, NOW())`,
+        ) VALUES ($1, $2, $3, $4, 'pending', $5, NOW()) ON CONFLICT (stripe_event_id) DO NOTHING RETURNING id`,
         [eventId, stripeEventId, eventType, tenantId || null, payload]
       );
+      if (inserted.rows.length === 0) {
+        const existingResult = await query<any>(`SELECT id, stripe_event_id, event_type, tenant_id, status, payload, created_at, processed_at FROM stripe_events_processed WHERE stripe_event_id=$1 LIMIT 1`, [stripeEventId]);
+        const row = existingResult.rows[0];
+        if (row) {
+          const existing: StripeEventRecord = { id: row.id, stripeEventId: row.stripe_event_id, eventType: row.event_type, tenantId: row.tenant_id, status: row.status, payload: row.payload, createdAt: new Date(row.created_at).toISOString(), processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : undefined };
+          this.inMemoryProcessedEvents.set(stripeEventId, existing);
+          return { isDuplicate: true, eventRecord: existing };
+        }
+      }
     } catch {
       // Fallback
     }
+
+    this.inMemoryProcessedEvents.set(stripeEventId, record);
 
     return { isDuplicate: false, eventRecord: record };
   }
@@ -178,37 +162,71 @@ export class StripeWebhookManager {
       event.tenantId ||
       (payload.tenant_id as string) ||
       (payload.metadata as any)?.tenant_id ||
-      (payload.client_reference_id as string) ||
-      "acme-tenant";
+      (payload.metadata as any)?.tenantId ||
+      (payload.client_reference_id as string);
 
     let actionTaken = "noop";
 
     try {
+      if (!tenantId) throw new Error("Stripe event is missing an authenticated tenant binding.");
       switch (event.eventType) {
         case "checkout.session.completed":
         case "customer.subscription.created": {
           const tierStr = (payload.metadata as any)?.tier || (payload.tier as string) || "professional";
           const tier: BillingTier = tierStr === "enterprise" ? "enterprise" : "professional";
-          await updateTenantSubscription(tenantId, tier);
+          await updateTenantSubscription(tenantId, tier, "stripe", String(payload.subscription || payload.id || `sub_${tenantId}`));
           actionTaken = `activated_tier_${tier}`;
           break;
         }
 
         case "invoice.paid": {
-          const sub = await updateTenantSubscription(tenantId, "professional");
+          const current = await getTenantSubscription(tenantId);
+          const sub = await updateTenantSubscription(tenantId, current.tier, "stripe", current.subscriptionId);
           actionTaken = `renewed_subscription_until_${sub.currentPeriodEnd}`;
           break;
         }
 
         case "invoice.payment_failed": {
-          // Transition license to grace period under policy
+          await setTenantSubscriptionStatus(tenantId, "past_due");
           await EntitlementService.setLicenseStatus(tenantId, "grace_period");
           actionTaken = "transitioned_to_grace_period";
           break;
         }
 
+        case "customer.subscription.updated": {
+          const status = String(payload.status || "active");
+          const mapped = status === "trialing" ? "trialing" : status === "past_due" || status === "unpaid" ? "past_due" : status === "canceled" ? "cancelled" : "active";
+          const metadata = (payload.metadata || {}) as Record<string, unknown>;
+          const tierValue = String(metadata.tier || "");
+          const tier: BillingTier | undefined = tierValue === "enterprise" || tierValue === "professional" || tierValue === "community" ? tierValue : undefined;
+          await setTenantSubscriptionStatus(tenantId, mapped, { tier, subscriptionId: String(payload.id || "") || undefined });
+          if (mapped === "active" || mapped === "trialing") await EntitlementService.setLicenseStatus(tenantId, "active");
+          else if (mapped === "past_due") await EntitlementService.setLicenseStatus(tenantId, "grace_period");
+          else await EntitlementService.setLicenseStatus(tenantId, "suspended");
+          actionTaken = `subscription_status_${mapped}`;
+          break;
+        }
+
+        case "invoice.payment_action_required": {
+          await setTenantSubscriptionStatus(tenantId, "past_due");
+          await EntitlementService.setLicenseStatus(tenantId, "grace_period");
+          actionTaken = "payment_action_required_grace_period";
+          break;
+        }
+
+        case "charge.refunded":
+        case "refund.created": {
+          const fullyRefunded = payload.refunded === true || (typeof payload.amount === "number" && typeof payload.amount_refunded === "number" && payload.amount_refunded >= payload.amount);
+          if (fullyRefunded) {
+            await setTenantSubscriptionStatus(tenantId, "cancelled");
+            await EntitlementService.setLicenseStatus(tenantId, "suspended");
+            actionTaken = "full_refund_suspended_subscription";
+          } else actionTaken = "partial_refund_recorded_no_entitlement_change";
+          break;
+        }
+
         case "customer.subscription.deleted": {
-          await updateTenantSubscription(tenantId, "community");
+          await setTenantSubscriptionStatus(tenantId, "cancelled", { tier: "community", subscriptionId: String(payload.id || "") || undefined });
           await EntitlementService.setLicenseStatus(tenantId, "suspended");
           actionTaken = "subscription_cancelled_downgraded_to_community";
           break;

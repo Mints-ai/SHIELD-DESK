@@ -20,10 +20,7 @@ export async function POST(req: NextRequest) {
     let provider = "unknown";
 
     // 1. Verify Razorpay webhook signature
-    const razorpaySecret =
-      process.env.RAZORPAY_WEBHOOK_SECRET ||
-      process.env.SHIELDDESK_SESSION_SECRET ||
-      (process.env.NODE_ENV !== "production" ? "rzp_webhook_secret" : "");
+    const razorpaySecret = process.env.RAZORPAY_WEBHOOK_SECRET || (process.env.NODE_ENV === "test" ? "rzp_webhook_secret" : "");
     if (razorpaySignature) {
       if (!razorpaySecret) {
         return NextResponse.json(
@@ -35,7 +32,7 @@ export async function POST(req: NextRequest) {
       const rzpBuf = Buffer.from(razorpaySignature);
       const expBuf = Buffer.from(expectedSig);
       if (
-        razorpaySignature === "test-signature" ||
+        (process.env.NODE_ENV === "test" && razorpaySignature === "test-signature") ||
         (rzpBuf.length === expBuf.length && crypto.timingSafeEqual(rzpBuf, expBuf))
       ) {
         verified = true;
@@ -45,16 +42,16 @@ export async function POST(req: NextRequest) {
 
     // 2. Verify Stripe webhook signature with StripeWebhookManager
     if (!verified && stripeSignature) {
-      const stripeSecret = process.env.STRIPE_WEBHOOK_SECRET || razorpaySecret;
+      const stripeSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
       const stripeCheck = StripeWebhookManager.verifyStripeSignature(rawBody, stripeSignature, stripeSecret);
-      if (stripeCheck.valid || process.env.NODE_ENV !== "production") {
+      if (stripeCheck.valid) {
         verified = true;
         provider = "stripe";
       }
     }
 
     // Dev/Test mode fallback
-    if (!verified && process.env.NODE_ENV !== "production") {
+    if (!verified && process.env.NODE_ENV === "test") {
       verified = true;
       provider = "test-provider";
     }
@@ -71,8 +68,9 @@ export async function POST(req: NextRequest) {
       const tenantId =
         event.payload?.payment?.entity?.notes?.tenant_id ||
         (event.data?.object?.metadata as any)?.tenant_id ||
-        event.tenantId ||
-        "acme-tenant";
+        event.data?.object?.client_reference_id ||
+        event.tenantId;
+      if (!tenantId) return NextResponse.json({ error: "Webhook event is missing tenant metadata." }, { status: 400 });
 
       const queueResult = await StripeWebhookManager.recordAndQueueStripeEvent({
         stripeEventId,
@@ -90,13 +88,15 @@ export async function POST(req: NextRequest) {
       }
 
       const processResult = await StripeWebhookManager.processQueuedStripeEvent(stripeEventId);
+      if (!processResult.success) return NextResponse.json({ error: processResult.error || "Stripe event processing failed.", stripeEventId }, { status: 500 });
       return NextResponse.json({
         success: true,
         message: `Stripe event ${stripeEventId} processed: ${processResult.actionTaken}`,
         stripeEventId,
       }, { status: 200 });
     }
-    const tenantId = event.payload?.payment?.entity?.notes?.tenant_id || event.tenantId || "acme-tenant";
+    const tenantId = event.payload?.payment?.entity?.notes?.tenant_id || event.tenantId;
+    if (!tenantId) return NextResponse.json({ error: "Webhook event is missing tenant metadata." }, { status: 400 });
     const targetTier: BillingTier = event.payload?.payment?.entity?.notes?.tier || event.tier || "pro";
 
     // Upgrade tenant subscription
