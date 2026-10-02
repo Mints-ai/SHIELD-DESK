@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS agent_license_activations (
   device_identity VARCHAR(128) NOT NULL,
   certificate_fingerprint VARCHAR(64) NOT NULL,
   license_id VARCHAR(128) NOT NULL,
+  license_expires_at TIMESTAMPTZ NOT NULL,
   state VARCHAR(16) NOT NULL CHECK (state IN ('TRIAL','ACTIVE','PAST_DUE','SUSPENDED','EXPIRED','REVOKED')),
   activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_heartbeat_at TIMESTAMPTZ,

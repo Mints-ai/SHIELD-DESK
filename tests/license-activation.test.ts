@@ -23,6 +23,10 @@ test("Dedicated agent license activation binds tenant, installation, device, X.5
   assert.equal(activated.state, "ACTIVE");
   assert.equal(activated.deviceIdentity, deviceIdentity);
   assert.equal(await LicenseActivationService.isDeviceActive(tenantId, deviceIdentity), true);
+  const previousExpiry = activated.licenseExpiresAt;
+  activated.licenseExpiresAt = new Date(Date.now() - 1000).toISOString();
+  assert.equal(await LicenseActivationService.isDeviceActive(tenantId, deviceIdentity), false, "expired commercial license must stop command-time entitlement");
+  activated.licenseExpiresAt = previousExpiry;
   await assert.rejects(() => LicenseActivationService.activate({ ...params, deviceIdentity: crypto.randomUUID() }), /certificate rejected|does not match/i);
 
   const states: AgentLicenseState[] = ["TRIAL", "ACTIVE", "PAST_DUE", "SUSPENDED", "EXPIRED", "REVOKED"];

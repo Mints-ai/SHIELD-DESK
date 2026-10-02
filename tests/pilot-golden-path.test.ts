@@ -17,6 +17,7 @@ import { requestApprovalToken, approveActionToken } from "@/lib/governance/appro
 import { executeAgentCommand, MOCK_HASH_CHAINS, MOCK_AGENT_COMMANDS } from "@/lib/fleet/fleet";
 import { verifyCommandSignature } from "@/lib/fleet/commandSigning";
 import { getTenantSubscription } from "@/lib/billing/plans";
+import { issueCommercialLicense } from "@/lib/billing/licenses";
 
 describe("ShieldDesk Public Launch Golden Path Verification Suite", () => {
   after(async () => {
@@ -44,6 +45,15 @@ describe("ShieldDesk Public Launch Golden Path Verification Suite", () => {
   let testEnrollToken = "";
   let enrolledAgentId = "";
   let approvedTokenId = "";
+  const pilotInstallationId = "pilot-installation-win-01";
+  const pilotLicense = issueCommercialLicense({
+    tenantId: "acme-tenant",
+    tier: "enterprise",
+    maxEndpoints: 10000,
+    maxUsers: 1000,
+    features: ["endpointFleet"],
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  }).rawLicense;
 
   it("Step 1 & 2: Administrator generates dynamic enrollment token and agent enrolls with certificate", async () => {
     // 1. Generate token
@@ -65,6 +75,8 @@ describe("ShieldDesk Public Launch Golden Path Verification Suite", () => {
         ipAddress: "192.168.10.45",
         osType: "windows",
         agentVersion: "0.4.2",
+        installationId: pilotInstallationId,
+        licenseKey: pilotLicense,
       }),
     });
 

@@ -13,6 +13,7 @@ export interface AgentLicenseActivation {
   deviceIdentity: string;
   certificateFingerprint: string;
   licenseId: string;
+  licenseExpiresAt: string;
   state: AgentLicenseState;
   activatedAt: string;
   lastHeartbeatAt?: string;
@@ -33,7 +34,7 @@ export class LicenseActivationService {
     if (!license.valid || !license.payload) throw new Error(`License rejected: ${license.reason || "invalid license"}`);
     if (license.payload.tenantId !== params.tenantId && license.payload.tenantId !== "*") throw new Error("License tenant does not match device tenant.");
     if (!license.payload.features.includes("endpointFleet")) throw new Error("License does not include the endpointFleet entitlement.");
-    return { fingerprint, licenseId: license.payload.licenseId, state: license.payload.tier === "community" ? "TRIAL" as const : "ACTIVE" as const };
+    return { fingerprint, licenseId: license.payload.licenseId, licenseExpiresAt: license.payload.expiresAt, state: license.payload.tier === "community" ? "TRIAL" as const : "ACTIVE" as const };
   }
 
   public static async validate(params: { tenantId: string; installationId: string; deviceIdentity: string; certificatePem: string; licenseKey: string }) {
@@ -48,9 +49,9 @@ export class LicenseActivationService {
     const key = this.key(params.tenantId, params.installationId);
     const previous = await this.get(params.tenantId, params.installationId);
     if (previous && previous.deviceIdentity !== params.deviceIdentity) throw new Error("Installation is already bound to a different device identity.");
-    const record: AgentLicenseActivation = { tenantId: params.tenantId, installationId: params.installationId, deviceIdentity: params.deviceIdentity, certificateFingerprint: identity.fingerprint, licenseId: identity.licenseId, state: identity.state, activatedAt: previous?.activatedAt || new Date().toISOString() };
+    const record: AgentLicenseActivation = { tenantId: params.tenantId, installationId: params.installationId, deviceIdentity: params.deviceIdentity, certificateFingerprint: identity.fingerprint, licenseId: identity.licenseId, licenseExpiresAt: identity.licenseExpiresAt, state: identity.state, activatedAt: previous?.activatedAt || new Date().toISOString() };
     this.activations.set(key, record);
-    try { await query(`INSERT INTO agent_license_activations (tenant_id, installation_id, device_identity, certificate_fingerprint, license_id, state, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (tenant_id, installation_id) DO UPDATE SET certificate_fingerprint=EXCLUDED.certificate_fingerprint, license_id=EXCLUDED.license_id, state=EXCLUDED.state`, [record.tenantId, record.installationId, record.deviceIdentity, record.certificateFingerprint, record.licenseId, record.state, record.activatedAt]); } catch { /* in-memory fallback for tests/offline development */ }
+    try { await query(`INSERT INTO agent_license_activations (tenant_id, installation_id, device_identity, certificate_fingerprint, license_id, license_expires_at, state, activated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (tenant_id, installation_id) DO UPDATE SET certificate_fingerprint=EXCLUDED.certificate_fingerprint, license_id=EXCLUDED.license_id, license_expires_at=EXCLUDED.license_expires_at, state=EXCLUDED.state`, [record.tenantId, record.installationId, record.deviceIdentity, record.certificateFingerprint, record.licenseId, record.licenseExpiresAt, record.state, record.activatedAt]); } catch { /* in-memory fallback for tests/offline development */ }
     return record;
   }
 
@@ -97,18 +98,18 @@ export class LicenseActivationService {
     const cached = this.activations.get(key);
     if (cached) return cached;
     try {
-      const result = await query<any>(`SELECT tenant_id, installation_id, device_identity, certificate_fingerprint, license_id, state, activated_at, last_heartbeat_at FROM agent_license_activations WHERE tenant_id=$1 AND installation_id=$2`, [tenantId, installationId]);
+      const result = await query<any>(`SELECT tenant_id, installation_id, device_identity, certificate_fingerprint, license_id, license_expires_at, state, activated_at, last_heartbeat_at FROM agent_license_activations WHERE tenant_id=$1 AND installation_id=$2`, [tenantId, installationId]);
       const row = result.rows[0];
-      if (row) { const record = { tenantId: row.tenant_id, installationId: row.installation_id, deviceIdentity: row.device_identity, certificateFingerprint: row.certificate_fingerprint, licenseId: row.license_id, state: row.state as AgentLicenseState, activatedAt: new Date(row.activated_at).toISOString(), lastHeartbeatAt: row.last_heartbeat_at ? new Date(row.last_heartbeat_at).toISOString() : undefined }; this.activations.set(key, record); return record; }
+      if (row) { const record = { tenantId: row.tenant_id, installationId: row.installation_id, deviceIdentity: row.device_identity, certificateFingerprint: row.certificate_fingerprint, licenseId: row.license_id, licenseExpiresAt: new Date(row.license_expires_at).toISOString(), state: row.state as AgentLicenseState, activatedAt: new Date(row.activated_at).toISOString(), lastHeartbeatAt: row.last_heartbeat_at ? new Date(row.last_heartbeat_at).toISOString() : undefined }; this.activations.set(key, record); return record; }
     } catch { /* in-memory mode */ }
     return null;
   }
 
   public static async isDeviceActive(tenantId: string, deviceIdentity: string): Promise<boolean> {
     const cached = [...this.activations.values()].find((item) => item.tenantId === tenantId && item.deviceIdentity === deviceIdentity);
-    if (cached) return cached.state === "ACTIVE" || cached.state === "TRIAL";
+    if (cached) return (cached.state === "ACTIVE" || cached.state === "TRIAL") && Date.parse(cached.licenseExpiresAt) > Date.now();
     try {
-      const result = await query<{ state: AgentLicenseState }>(`SELECT state FROM agent_license_activations WHERE tenant_id=$1 AND device_identity=$2 LIMIT 1`, [tenantId, deviceIdentity]);
+      const result = await query<{ state: AgentLicenseState }>(`SELECT state FROM agent_license_activations WHERE tenant_id=$1 AND device_identity=$2 AND license_expires_at > NOW() LIMIT 1`, [tenantId, deviceIdentity]);
       return result.rows[0]?.state === "ACTIVE" || result.rows[0]?.state === "TRIAL";
     } catch { return false; }
   }
