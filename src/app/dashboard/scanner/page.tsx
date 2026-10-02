@@ -44,6 +44,15 @@ interface SecretFinding {
   secret_hash: string;
   risk_level: string;
   action_available: string;
+  // Real Gitleaks fields
+  rule_id?: string;
+  commit?: string;
+  author?: string;
+  date?: string;
+  line_number?: number;
+  fingerprint?: string;
+  tags?: string[];
+  message?: string;
 }
 
 import { useChat } from "@/lib/context/ChatContext";
@@ -52,6 +61,8 @@ export default function ScannerDashboardPage() {
   const { activeUserId } = useChat();
   const [activeTab, setActiveTab] = useState<"cve" | "secrets" | "patch" | "intel">("cve");
   const [loading, setLoading] = useState(false);
+  const [secretScanLoading, setSecretScanLoading] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [cves, setCves] = useState<CveFinding[]>([]);
   const [secrets, setSecrets] = useState<SecretFinding[]>([]);
@@ -159,40 +170,55 @@ export default function ScannerDashboardPage() {
   };
 
   const triggerSecretsScan = async () => {
-    setLoading(true);
+    setSecretScanLoading(true);
+    setScanProgress(0);
+    // Animate progress bar during scan
+    const progressTimer = setInterval(() => {
+      setScanProgress((p) => (p < 85 ? p + Math.random() * 12 : p));
+    }, 400);
     try {
-      const res = await fetch("/api/scans", {
+      const res = await fetch("/api/gitleaks/scan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "secrets_scan", source: "git_repo" }),
+        body: JSON.stringify({ target_path: ".", scan_type: "git" }),
       });
       const data = await res.json();
-      setScanResult(data.message || "Gitleaks scan complete. 2 credentials checked.");
+      if (data.secretFindings && Array.isArray(data.secretFindings)) {
+        setSecrets(data.secretFindings);
+      }
+      setScanResult(data.message || `Gitleaks scan complete. ${data.findings?.length ?? 0} finding(s) detected.`);
     } catch {
-      setScanResult("Gitleaks check finished.");
+      setScanResult("Gitleaks scan error: could not reach the scan API.");
     } finally {
-      setLoading(false);
+      clearInterval(progressTimer);
+      setScanProgress(100);
+      setTimeout(() => { setScanProgress(0); setSecretScanLoading(false); }, 800);
     }
   };
 
-  const rotateKey = async (keyType: string) => {
+  const rotateKey = async (finding: SecretFinding) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/scans", {
+      const res = await fetch("/api/gitleaks/mitigate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "rotate_key", key_id: "AKIA1234567890ABCDEF" }),
+        body: JSON.stringify({
+          action: finding.rule_id?.includes("github") ? "revoke_pat" : "rotate_key",
+          finding_id: finding.fingerprint || finding.secret_hash,
+          rule_id: finding.rule_id || "",
+          key_id: "AKIA1234567890ABCDEF",
+        }),
       });
       const data = await res.json();
-      setScanResult(`Key Revoked & Rotated: ${data.message}`);
+      setScanResult(data.message || "Credential rotation completed.");
     } catch {
-      setScanResult("Key rotation signal sent.");
+      setScanResult("Rotation request sent.");
     } finally {
       setLoading(false);
     }
@@ -413,8 +439,16 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               <span className="text-xs font-medium">Secrets Leaked</span>
               <Key className="h-4 w-4 text-[var(--sd-danger)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-text)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">AWS IAM key &amp; GitHub token</p>
+            <div className={cn("text-2xl font-bold font-mono", secrets.length > 0 ? "text-[var(--sd-danger)]" : "text-[var(--sd-text)]")}>
+              {secrets.length}
+            </div>
+            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">
+              {secrets.length === 0
+                ? "No secrets detected"
+                : secrets.some((s) => s.risk_level === "CRITICAL")
+                ? `${secrets.filter((s) => s.risk_level === "CRITICAL").length} critical credential${secrets.filter((s) => s.risk_level === "CRITICAL").length !== 1 ? "s" : ""} exposed`
+                : `${secrets.length} credential${secrets.length !== 1 ? "s" : ""} detected`}
+            </p>
           </div>
 
           <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
@@ -611,50 +645,130 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
         {activeTab === "secrets" && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-[var(--sd-text-muted)]">
-                Automated regex and high-entropy secret detection scanning git commits and environment variables.
-              </p>
+              <div>
+                <p className="text-xs text-[var(--sd-text-muted)]">
+                  Automated regex and high-entropy secret detection scanning git commits and environment variables.
+                </p>
+                {secrets.length > 0 && (
+                  <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-0.5">
+                    {secrets.filter((s) => s.source === "git_history").length} from git history ·{" "}
+                    {secrets.filter((s) => s.source !== "git_history").length} from filesystem/env
+                  </p>
+                )}
+              </div>
               <button
+                id="gitleaks-scan-btn"
                 onClick={triggerSecretsScan}
-                className="px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] text-[#f7f4ed] text-xs font-semibold hover:bg-[var(--sd-pine-hover)] transition cursor-pointer"
+                disabled={secretScanLoading}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] text-[#f7f4ed] text-xs font-semibold hover:bg-[var(--sd-pine-hover)] transition cursor-pointer disabled:opacity-60 shadow-xs"
               >
-                Scan Repository Now
+                <RefreshCw className={cn("h-3.5 w-3.5", secretScanLoading && "animate-spin")} />
+                {secretScanLoading ? "Scanning…" : "Scan Repository Now"}
               </button>
             </div>
+
+            {/* Real-time Progress Bar */}
+            {secretScanLoading && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[10.5px] text-[var(--sd-text-muted)]">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--sd-pine)] animate-pulse" />
+                    Gitleaks scanning git history and filesystem…
+                  </span>
+                  <span>{Math.round(scanProgress)}%</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-[var(--sd-border)] overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-[var(--sd-pine)] transition-all duration-300"
+                    style={{ width: `${scanProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] overflow-hidden shadow-xs">
               <table className="w-full text-left text-xs">
                 <thead className="bg-[var(--sd-bg)] border-b border-[var(--sd-border)] text-[var(--sd-text-muted)] font-medium">
                   <tr>
                     <th className="p-3">Secret Type</th>
-                    <th className="p-3">Source &amp; Location</th>
+                    <th className="p-3">File Path</th>
+                    <th className="p-3">Commit / Line</th>
                     <th className="p-3">Masked Value</th>
-                    <th className="p-3">Risk Level</th>
-                    <th className="p-3 text-right">Automated Mitigation</th>
+                    <th className="p-3">Risk</th>
+                    <th className="p-3 text-right">Mitigation</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--sd-border)]">
+                  {secrets.length === 0 && !secretScanLoading && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-[var(--sd-text-muted)]">
+                        <div className="flex flex-col items-center gap-2">
+                          <Key className="h-8 w-8 opacity-30" />
+                          <span className="font-medium text-[var(--sd-text)]">No secrets loaded yet</span>
+                          <span className="text-[10.5px]">
+                            Click &quot;Scan Repository Now&quot; to run Gitleaks against the codebase.
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {secrets.map((sec, i) => (
-                    <tr key={i} className="hover:bg-[var(--sd-panel-hover)] transition">
-                      <td className="p-3 font-semibold text-[var(--sd-text)] flex items-center gap-2">
-                        <Key className="h-3.5 w-3.5 text-[var(--sd-danger)]" />
-                        {sec.type}
+                    <tr key={sec.fingerprint || i} className="hover:bg-[var(--sd-panel-hover)] transition">
+                      <td className="p-3">
+                        <div className="flex items-center gap-2 font-semibold text-[var(--sd-text)]">
+                          <Key className="h-3.5 w-3.5 text-[var(--sd-danger)] shrink-0" />
+                          <span>{sec.type}</span>
+                        </div>
+                        {sec.author && (
+                          <div className="text-[10px] text-[var(--sd-text-muted)] mt-0.5 pl-5">
+                            by {sec.author}
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-3 font-mono text-[var(--sd-text-muted)] max-w-[180px]">
+                        <div className="truncate" title={sec.location}>{sec.location}</div>
+                        <div className="text-[10px] opacity-70 mt-0.5">{sec.source}</div>
                       </td>
                       <td className="p-3 font-mono text-[var(--sd-text-muted)]">
-                        {sec.source} / {sec.location}
+                        {sec.commit ? (
+                          <span
+                            className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-[var(--sd-panel-hover)] text-[var(--sd-pine-bright)] border border-[var(--sd-border)] font-mono"
+                            title={sec.commit}
+                          >
+                            {sec.commit.substring(0, 7)}
+                          </span>
+                        ) : (
+                          <span className="text-[10.5px] opacity-50">—</span>
+                        )}
+                        {sec.line_number !== undefined && (
+                          <span className="ml-1.5 text-[10px] opacity-60">L{sec.line_number}</span>
+                        )}
                       </td>
-                      <td className="p-3 font-mono text-[var(--sd-text)]">
-                        <code>{sec.snippet_masked}</code>
+                      <td className="p-3 font-mono text-[var(--sd-text)] max-w-[200px]">
+                        <code className="text-[10.5px] truncate block" title={sec.snippet_masked}>
+                          {sec.snippet_masked}
+                        </code>
                       </td>
                       <td className="p-3">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
+                        <span
+                          className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border",
+                            sec.risk_level === "CRITICAL"
+                              ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
+                              : sec.risk_level === "HIGH"
+                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                              : "bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
+                          )}
+                        >
                           {sec.risk_level}
                         </span>
                       </td>
                       <td className="p-3 text-right">
                         <button
-                          onClick={() => rotateKey(sec.type)}
-                          className="px-2.5 py-1 rounded bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white font-semibold text-xs transition cursor-pointer shadow-xs"
+                          id={`mitigate-${sec.fingerprint || i}`}
+                          onClick={() => rotateKey(sec)}
+                          disabled={loading}
+                          className="px-2.5 py-1 rounded bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white font-semibold text-xs transition cursor-pointer shadow-xs disabled:opacity-50"
                         >
                           {sec.action_available}
                         </button>
@@ -664,6 +778,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 </tbody>
               </table>
             </div>
+
           </div>
         )}
 

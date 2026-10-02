@@ -4,6 +4,7 @@ import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
 import { hasPermission } from "@/lib/permissions";
 import { runTrivyScan, isTrivyAvailable, getOrRunTrivyScan, getLastScanResult } from "@/lib/trivy";
+import { runGitleaksScan, isGitleaksAvailable, getLastGitleaksScanResult } from "@/lib/gitleaks";
 
 /**
  * DEMO/FALLBACK DATA — returned when running in DEMO_MODE and the live scan
@@ -167,7 +168,12 @@ export async function GET(req: NextRequest) {
     metrics,
     findings: cveFindings,
     cveFindings,
-    secretFindings: MOCK_SECRET_FINDINGS,
+    secretFindings: (() => {
+      const cached = getLastGitleaksScanResult();
+      if (cached) return cached.findings;
+      // No live scan run yet — return mock data with demo label
+      return MOCK_SECRET_FINDINGS;
+    })(),
     recentScans: [
       {
         id: "scan-trivy-9012",
@@ -324,13 +330,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "secrets_scan") {
+      // 1. Try remote scan service first
       try {
         const res = await fetch(`${scanServiceUrl}/internal/secrets/scan`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             source: body.source || "git_repo",
-            content: body.content || "export AWS_ACCESS_KEY_ID=[DEMO_KEY_PAYLOAD_REDACTED]",
             location: body.location || "repo/src",
           }),
           signal: AbortSignal.timeout(3000),
@@ -340,9 +346,45 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ success: true, ...liveData });
         }
       } catch {
-        // Fallback or fail closed
+        // Remote service offline — fall through to local Gitleaks binary
       }
 
+      // 2. Use local Gitleaks binary if available
+      if (isGitleaksAvailable()) {
+        try {
+          const targetPath = body.target_path || ".";
+          const noGit = body.scan_type === "filesystem" || body.no_git === true;
+          const result = await runGitleaksScan(targetPath, {
+            redact: true,
+            noGit,
+          });
+
+          return NextResponse.json({
+            success: true,
+            status: "success",
+            dataMode: "live",
+            _demo_mode: false,
+            engine: "gitleaks-local",
+            binaryPath: result.binaryPath,
+            scannedTarget: result.scannedTarget,
+            scanDurationMs: result.scanDurationMs,
+            scanMode: result.scanMode,
+            findings_count: result.findings.length,
+            findings: result.findings,
+            secretFindings: result.findings,
+            summary: result.summary,
+            message:
+              result.findings.length === 0
+                ? "No secrets detected. Repository appears clean."
+                : `Gitleaks scan complete: ${result.findings.length} finding${result.findings.length !== 1 ? "s" : ""} detected (${result.summary.critical} critical, ${result.summary.high} high).`,
+          });
+        } catch (gitleaksErr: any) {
+          console.error("[Gitleaks local scan error]", gitleaksErr.message);
+          // Fall through to mock/fail-closed
+        }
+      }
+
+      // 3. Fail closed if production policy requires it
       if (shouldFailClosed()) {
         return NextResponse.json(
           {
@@ -353,14 +395,17 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // 4. Demo fallback
       return NextResponse.json({
         success: true,
         status: "success",
         _demo_mode: true,
-        findings_count: 1,
-        message: "Gitleaks scan complete. 2 credentials checked.",
+        gitleaksAvailable: false,
+        findings_count: MOCK_SECRET_FINDINGS.length,
+        message: `Demo mode: Gitleaks binary not installed. Run 'npm run setup:gitleaks'. Showing ${MOCK_SECRET_FINDINGS.length} example findings.`,
         findings: MOCK_SECRET_FINDINGS,
         secretFindings: MOCK_SECRET_FINDINGS,
+        setupCommand: "npm run setup:gitleaks",
       });
     }
 
