@@ -1,46 +1,7 @@
-import os from "os";
 import { query } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth/session";
 import type { EndpointAgentRecord } from "./fleet";
-
-/**
- * Resolves the primary physical/non-loopback IPv4 address of the host machine.
- * Filters out virtual adapters (VirtualBox, Docker, Hyper-V, WSL).
- */
-export function getResolvedHostIp(): string {
-  try {
-    const interfaces = os.networkInterfaces();
-    const candidates: { address: string; name: string; priority: number }[] = [];
-
-    for (const name of Object.keys(interfaces)) {
-      for (const net of interfaces[name] || []) {
-        if (net.family === "IPv4" && !net.internal && net.address !== "127.0.0.1") {
-          const lowerName = name.toLowerCase();
-          const isVirtual =
-            /virtual|vbox|vmware|loopback|pseudo|docker|wsl|hyper-v|vethernet/i.test(lowerName) ||
-            net.address.startsWith("192.168.56.") ||
-            net.address.startsWith("169.254.");
-
-          if (isVirtual) continue;
-
-          let priority = 1;
-          if (/wi-fi|wifi|wireless|wlan/i.test(lowerName)) {
-            priority = 10;
-          } else if (/ethernet|eth|en/i.test(lowerName)) {
-            priority = 5;
-          }
-
-          candidates.push({ address: net.address, name, priority });
-        }
-      }
-    }
-
-    candidates.sort((a, b) => b.priority - a.priority);
-    return candidates[0]?.address || "192.168.220.2";
-  } catch {
-    return "192.168.220.2";
-  }
-}
+import { normalizeEndpointIp } from "./ipAddress";
 
 /**
  * Returns the live fleet agents for a caller, reading exclusively from the database.
@@ -86,13 +47,7 @@ export async function getLiveFleetAgents(
       ).catch(() => {});
     }
 
-    // Sanitize and resolve IP address if loopback/::1 was captured
-    let cleanIp = String(row.ip_address || "");
-    if (!cleanIp || cleanIp === "::1" || cleanIp === "127.0.0.1" || cleanIp.includes("::ffff:127.0.0.1") || cleanIp === "localhost") {
-      cleanIp = getResolvedHostIp();
-      // Auto-correct in database
-      query(`UPDATE endpoint_agents SET ip_address = $1 WHERE id = $2 AND (ip_address = '::1' OR ip_address = '127.0.0.1' OR ip_address LIKE '%::ffff:%')`, [cleanIp, row.id]).catch(() => {});
-    }
+    const cleanIp = normalizeEndpointIp(row.ip_address) || "Unknown";
 
     return {
       id: String(row.id),

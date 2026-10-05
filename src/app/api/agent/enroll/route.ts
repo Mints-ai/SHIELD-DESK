@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { enrollEndpointAgent } from "@/lib/fleet/enrollment";
+import { resolveEndpointIp } from "@/lib/fleet/ipAddress";
 import type { OsType } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
 
@@ -22,15 +23,7 @@ export async function POST(req: NextRequest) {
     const validOsTypes: OsType[] = ["linux", "windows", "darwin"];
     const resolvedOsType: OsType = validOsTypes.includes(osType) ? osType : "linux";
 
-    let clientIp =
-      (typeof ipAddress === "string" && ipAddress) ||
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      "";
-
-    if (!clientIp || clientIp === "::1" || clientIp === "127.0.0.1" || clientIp.includes("::ffff:") || clientIp === "localhost") {
-      const { getResolvedHostIp } = await import("@/lib/fleet/liveTelemetry");
-      clientIp = getResolvedHostIp();
-    }
+    const clientIp = resolveEndpointIp(req.headers, ipAddress) ?? "Unknown";
 
     const result = await enrollEndpointAgent({
       rawToken: token.trim(),

@@ -15,11 +15,12 @@
 const os = require('os');
 const http = require('http');
 const https = require('https');
+const net = require('net');
 
 // Parse CLI flags
 const args = process.argv.slice(2);
 let token = process.env.SHIELDDESK_ENROLL_TOKEN || '';
-let controlUrl = process.env.SHIELDDESK_CONTROL_URL || 'http://localhost:3000';
+let controlUrl = (process.env.SHIELDDESK_CONTROL_URL || 'http://localhost:3000').replace(/\/$/, '');
 let customHostname = process.env.SHIELDDESK_HOSTNAME || os.hostname();
 
 for (let i = 0; i < args.length; i++) {
@@ -80,7 +81,42 @@ function getLocalIpAddress() {
   }
 
   candidates.sort((a, b) => b.priority - a.priority);
-  return candidates[0] ? candidates[0].address : '127.0.0.1';
+  return candidates[0] ? candidates[0].address : null;
+}
+
+let cachedEndpointIp = null;
+let cachedEndpointIpAt = 0;
+
+async function getEndpointIpAddress() {
+  if (cachedEndpointIpAt && Date.now() - cachedEndpointIpAt < 5 * 60 * 1000) {
+    return cachedEndpointIp;
+  }
+
+  const discoveryUrls = [
+    `${controlUrl}/api/agent/my-ip`,
+    'https://api.ipify.org?format=json',
+    'https://api64.ipify.org?format=json',
+  ];
+
+  for (const url of discoveryUrls) {
+    try {
+      const result = await request(url, { timeoutMs: 2500 });
+      const ip = result.data && typeof result.data.ip === 'string'
+        ? result.data.ip.trim()
+        : '';
+      if (result.status >= 200 && result.status < 300 && net.isIP(ip)) {
+        cachedEndpointIp = ip;
+        cachedEndpointIpAt = Date.now();
+        return ip;
+      }
+    } catch {
+      // Continue to the next public-IP discovery source.
+    }
+  }
+
+  cachedEndpointIp = getLocalIpAddress();
+  cachedEndpointIpAt = Date.now();
+  return cachedEndpointIp;
 }
 
 // Calculate real CPU usage percentage between intervals
@@ -149,6 +185,9 @@ async function request(urlStr, options = {}, data = null) {
     );
 
     req.on('error', reject);
+    if (options.timeoutMs) {
+      req.setTimeout(options.timeoutMs, () => req.destroy(new Error('Request timed out')));
+    }
     if (data) req.write(typeof data === 'string' ? data : JSON.stringify(data));
     req.end();
   });
@@ -168,8 +207,8 @@ async function start() {
   let tenantId = '';
 
   try {
-    const localIp = getLocalIpAddress();
-    console.log(`[*] Detected Local IP:    \x1b[33m${localIp}\x1b[0m`);
+    const endpointIp = await getEndpointIpAddress();
+    console.log(`[*] Detected Endpoint IP: \x1b[33m${endpointIp || 'Unavailable'}\x1b[0m`);
 
     const enrollRes = await request(`${controlUrl}/api/agent/enroll`, {
       method: 'POST',
@@ -177,7 +216,7 @@ async function start() {
     }, {
       token: token.trim(),
       hostname: customHostname,
-      ipAddress: localIp,
+      ipAddress: endpointIp,
       osType: getOsType(),
       agentVersion: '0.4.2',
     });
@@ -193,7 +232,7 @@ async function start() {
     console.log(`\x1b[32m[+] ENROLLMENT SUCCESSFUL!\x1b[0m`);
     console.log(`    Agent ID:   \x1b[35m${agentId}\x1b[0m`);
     console.log(`    Tenant ID:  \x1b[35m${tenantId}\x1b[0m`);
-    console.log(`    Host IP:    \x1b[35m${localIp}\x1b[0m`);
+    console.log(`    Host IP:    \x1b[35m${endpointIp || 'Unavailable'}\x1b[0m`);
     console.log(`    Status:     \x1b[32mCONNECTED\x1b[0m`);
   } catch (err) {
     console.error(`\x1b[31m[Network Error]\x1b[0m Could not connect to ${controlUrl}:`, err.message);
@@ -234,7 +273,7 @@ async function start() {
     tickCount++;
     const cpu = getCpuUsage();
     const mem = getMemoryUsage();
-    const localIp = getLocalIpAddress();
+    const endpointIp = await getEndpointIpAddress();
     // Real events: baseline background security monitor checks
     const eps = Math.floor(Math.random() * 20) + 10; 
 
@@ -247,7 +286,7 @@ async function start() {
         },
       }, {
         agentId,
-        ipAddress: localIp,
+        ipAddress: endpointIp,
         cpuUsage: cpu,
         memoryUsage: mem,
         eps,

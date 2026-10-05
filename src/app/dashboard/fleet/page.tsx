@@ -52,7 +52,11 @@ interface EnrollResult {
 }
 
 export default function FleetPage() {
-  const { activeUserId } = useChat();
+  const { activeUserId, activeUser } = useChat();
+  const canManageFleetAgents =
+    activeUser.role === "system_admin" ||
+    activeUser.role === "super_admin" ||
+    activeUser.tenantId === "globex-tenant";
 
   const [agents, setAgents] = useState<EndpointAgentRecord[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<EndpointAgentRecord | null>(null);
@@ -469,7 +473,7 @@ export default function FleetPage() {
                   {killSwitchEngaged
                     ? "TELEMETRY SEVERED"
                     : isStreaming
-                    ? "LIVE (3s)"
+                    ? "LIVE"
                     : "STREAM PAUSED"}
                 </span>
               </div>
@@ -855,14 +859,10 @@ export default function FleetPage() {
               const effectiveStatus = isDisconnected ? "disconnected" : agent.status;
               const isStale = !isDisconnected && secondsAgo > 8;
 
-              // Ensure IPv6 loopback / localhost is cleaned up
               const cleanIp =
-                !agent.ip_address ||
-                agent.ip_address === "::1" ||
-                agent.ip_address === "127.0.0.1" ||
-                agent.ip_address.includes("::ffff:")
-                  ? "192.168.220.2"
-                  : agent.ip_address;
+                agent.ip_address && agent.ip_address !== "Unknown"
+                  ? agent.ip_address
+                  : "Unavailable";
 
               const cpuVal = isDisconnected ? 0 : agent.cpu_usage;
               const memVal = isDisconnected ? 0 : agent.memory_usage;
@@ -1023,39 +1023,40 @@ export default function FleetPage() {
                     </div>
                   </div>
 
-                  {/* Action Buttons: Disconnect & Remove Endpoint */}
-                  <div className="flex items-center gap-2 pt-2 border-t border-[var(--sd-border)]/40">
-                    {!isDisconnected ? (
+                  {canManageFleetAgents && (
+                    <div className="flex items-center gap-2 pt-2 border-t border-[var(--sd-border)]/40">
+                      {!isDisconnected ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDisconnectAgent(agent.id);
+                          }}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/60 transition cursor-pointer"
+                          title="Disconnect this endpoint"
+                        >
+                          <Unplug className="h-3.5 w-3.5" />
+                          <span>Disconnect</span>
+                        </button>
+                      ) : (
+                        <div className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono text-[var(--sd-text-dim)] border border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/50">
+                          <WifiOff className="h-3 w-3 text-red-400/80" />
+                          <span>Disconnected</span>
+                        </div>
+                      )}
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDisconnectAgent(agent.id);
+                          handleRemoveAgent(agent.id, agent.hostname);
                         }}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/60 transition cursor-pointer"
-                        title="Disconnect this endpoint"
+                        className="flex items-center justify-center p-1.5 rounded-xl text-[11px] font-mono border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:border-red-500/60 transition cursor-pointer"
+                        title="Remove endpoint from fleet"
                       >
-                        <Unplug className="h-3.5 w-3.5" />
-                        <span>Disconnect</span>
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono text-[var(--sd-text-dim)] border border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/50">
-                        <WifiOff className="h-3 w-3 text-red-400/80" />
-                        <span>Disconnected</span>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemoveAgent(agent.id, agent.hostname);
-                      }}
-                      className="flex items-center justify-center p-1.5 rounded-xl text-[11px] font-mono border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:border-red-500/60 transition cursor-pointer"
-                      title="Remove endpoint from fleet"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

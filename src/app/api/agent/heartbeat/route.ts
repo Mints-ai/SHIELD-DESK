@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
 import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
+import { resolveEndpointIp } from "@/lib/fleet/ipAddress";
 import { trackError } from "@/lib/observability/errorTracker";
 import { MetricsRegistry } from "@/lib/observability/metrics";
 
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
     const memoryUsage = typeof body.memoryUsage === "number" ? body.memoryUsage : null;
     const eps = typeof body.eps === "number" ? body.eps : null;
     const requestedStatus = typeof body.status === "string" ? body.status : null;
-    const ipAddress = typeof body.ipAddress === "string" && body.ipAddress !== "::1" && body.ipAddress !== "127.0.0.1" && !body.ipAddress.includes("::ffff:") ? body.ipAddress : null;
+    const ipAddress = resolveEndpointIp(req.headers, body.ipAddress);
 
     try {
       const { rows } = await query<{
@@ -89,6 +90,7 @@ export async function POST(req: NextRequest) {
       }
 
       agent.last_heartbeat = new Date().toISOString();
+      if (ipAddress) agent.ip_address = ipAddress;
       if (cpuUsage !== null) agent.cpu_usage = cpuUsage;
       if (memoryUsage !== null) agent.memory_usage = memoryUsage;
       if (eps !== null) agent.eps = eps;
