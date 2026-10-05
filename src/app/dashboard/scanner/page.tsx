@@ -20,8 +20,25 @@ import {
   Globe,
   FileCode,
   Lock,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+function getPaginationRange(current: number, total: number): (number | "...")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, "...", total];
+  }
+  if (current >= total - 3) {
+    return [1, "...", total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, "...", current - 1, current, current + 1, "...", total];
+}
 
 interface CveFinding {
   cve_id: string;
@@ -79,11 +96,34 @@ export default function ScannerDashboardPage() {
   );
 
   const [severityFilter, setSeverityFilter] = useState<"ALL" | "CRITICAL" | "HIGH" | "MEDIUM" | "LOW">("ALL");
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 3;
 
   const filteredCves = useMemo(() => {
     if (severityFilter === "ALL") return cves;
     return cves.filter((c) => c.severity?.toUpperCase() === severityFilter);
   }, [cves, severityFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCves.length / PAGE_SIZE));
+
+  const paginatedCves = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredCves.slice(start, start + PAGE_SIZE);
+  }, [filteredCves, currentPage]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(1);
+    }
+  }, [totalPages, currentPage]);
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    const el = document.getElementById("findings-tabs");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
 
   // Patching state
   const [patchHost, setPatchHost] = useState("10.0.4.12 (srv-prod-api-01)");
@@ -110,6 +150,7 @@ export default function ScannerDashboardPage() {
       if (isViewLatest) {
         if (data.cveFindings && data.cveFindings.length > 0) {
           setCves(data.cveFindings);
+          setCurrentPage(1);
           setScanResult(`Scan Completed: Loaded ${data.cveFindings.length} vulnerabilities from Trivy scan.`);
           setActiveTab("cve");
           setTimeout(() => {
@@ -154,6 +195,7 @@ export default function ScannerDashboardPage() {
       }
       if (data.findings && Array.isArray(data.findings)) {
         setCves(data.findings);
+        setCurrentPage(1);
       }
       setActiveTab("cve");
       setScanResult(`Scan Completed: ${data.message || `Found ${data.findings?.length || 0} vulnerabilities.`}`);
@@ -519,7 +561,10 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                       return (
                         <button
                           key={sev}
-                          onClick={() => setSeverityFilter(sev)}
+                          onClick={() => {
+                            setSeverityFilter(sev);
+                            setCurrentPage(1);
+                          }}
                           className={cn(
                             "sd-button px-2.5 py-1 rounded-full text-[13px] font-medium font-mono transition cursor-pointer flex items-center gap-1.5",
                             severityFilter === sev
@@ -534,12 +579,19 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     })}
                   </div>
                   <div className="text-[13px] text-[var(--sd-text-muted)]">
-                    Showing <strong className="text-[var(--sd-text)]">{filteredCves.length}</strong> of {cves.length} findings
+                    {filteredCves.length > 0 ? (
+                      <>
+                        Showing <strong className="text-[var(--sd-text)]">{(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredCves.length)}</strong> of <strong className="text-[var(--sd-text)]">{filteredCves.length}</strong> findings
+                        {severityFilter !== "ALL" && <span> (filtered from {cves.length})</span>}
+                      </>
+                    ) : (
+                      <span>No matching findings</span>
+                    )}
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-3.5">
-                  {filteredCves.map((cve, index) => (
+                  {paginatedCves.map((cve, index) => (
                     <div
                       key={`${cve.cve_id}-${index}`}
                       className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
@@ -606,6 +658,90 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                   </div>
                 ))}
               </div>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface">
+                  <div className="text-[13px] text-[var(--sd-text-muted)] font-mono">
+                    Page <strong className="text-[var(--sd-text)]">{currentPage}</strong> of <strong className="text-[var(--sd-text)]">{totalPages}</strong>
+                    <span className="hidden sm:inline text-[var(--sd-text-muted)] ml-2">
+                      ({filteredCves.length} total findings · 3 per page)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      onClick={() => handlePageChange(1)}
+                      disabled={currentPage === 1}
+                      className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                      title="First Page"
+                      aria-label="First page"
+                    >
+                      <ChevronsLeft className="h-3.5 w-3.5" />
+                      <span className="hidden md:inline">First</span>
+                    </button>
+
+                    <button
+                      onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                      title="Previous Page"
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      <span>Prev</span>
+                    </button>
+
+                    {/* Numeric Page Buttons */}
+                    <div className="flex items-center gap-1 px-1">
+                      {getPaginationRange(currentPage, totalPages).map((p, idx) =>
+                        p === "..." ? (
+                          <span key={`ellipsis-${idx}`} className="px-1 text-[12px] text-[var(--sd-text-muted)] font-mono">
+                            …
+                          </span>
+                        ) : (
+                          <button
+                            key={p}
+                            onClick={() => handlePageChange(Number(p))}
+                            className={cn(
+                              "min-w-8 h-8 px-2 rounded-lg text-[12px] font-mono font-medium transition cursor-pointer flex items-center justify-center",
+                              currentPage === p
+                                ? "sd-button-primary text-[var(--sd-on-accent)] shadow-xs"
+                                : "border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:sd-surface"
+                            )}
+                            aria-label={`Go to page ${p}`}
+                            aria-current={currentPage === p ? "page" : undefined}
+                          >
+                            {p}
+                          </button>
+                        )
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage === totalPages}
+                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                      title="Next Page"
+                      aria-label="Next page"
+                    >
+                      <span>Next</span>
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+
+                    <button
+                      onClick={() => handlePageChange(totalPages)}
+                      disabled={currentPage === totalPages}
+                      className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                      title="Last Page"
+                      aria-label="Last page"
+                    >
+                      <span className="hidden md:inline">Last</span>
+                      <ChevronsRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
