@@ -28,6 +28,9 @@ import {
   Plug,
   MonitorDot,
   ExternalLink,
+  Trash2,
+  Unplug,
+  WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -305,6 +308,62 @@ export default function FleetPage() {
       setDispatchFeedback({ type: "error", message: msg });
     } finally {
       setIsExecuting(false);
+    }
+  };
+
+  // Disconnect an agent (marks as disconnected in DB, keeps record)
+  const handleDisconnectAgent = async (agentId: string) => {
+    if (!confirm("Disconnect this endpoint? It will show as offline until it reconnects.")) return;
+    try {
+      const res = await fetch(`/api/fleet/${agentId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({ action: "disconnect" }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAgents((prev) =>
+          prev.map((a) =>
+            a.id === agentId
+              ? { ...a, status: "disconnected", cpu_usage: 0, eps: 0 }
+              : a
+          )
+        );
+        setSelectedAgent((prev) =>
+          prev?.id === agentId
+            ? { ...prev, status: "disconnected", cpu_usage: 0, eps: 0 }
+            : prev
+        );
+        fetchFleet();
+      } else {
+        alert(data.error || "Failed to disconnect agent");
+      }
+    } catch {
+      alert("Network error disconnecting agent");
+    }
+  };
+
+  // Remove/unenroll an agent (deletes from DB entirely)
+  const handleRemoveAgent = async (agentId: string, hostname: string) => {
+    if (!confirm(`Remove endpoint "${hostname}" from the fleet? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/api/fleet/${agentId}`, {
+        method: "DELETE",
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAgents((prev) => prev.filter((a) => a.id !== agentId));
+        setSelectedAgent((prev) => (prev?.id === agentId ? null : prev));
+        fetchFleet();
+      } else {
+        alert(data.error || "Failed to remove agent");
+      }
+    } catch {
+      alert("Network error removing agent");
     }
   };
 
@@ -670,7 +729,15 @@ export default function FleetPage() {
                 Active Endpoints
               </span>
               <div className="text-2xl font-medium font-mono text-[var(--sd-pine)] mt-1 flex items-baseline gap-1.5">
-                <span>{agents.filter((a) => a.status === "connected").length}</span>
+                <span>
+                  {
+                    agents.filter(
+                      (a) =>
+                        a.status === "connected" &&
+                        Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+                    ).length
+                  }
+                </span>
                 <span className="text-[14px] text-[var(--sd-text-muted)] font-normal">
                   / {agents.length}
                 </span>
@@ -690,7 +757,15 @@ export default function FleetPage() {
                 Aggregate Telemetry
               </span>
               <div className="text-2xl font-medium font-mono text-[var(--sd-pine)] mt-1 transition-all duration-300">
-                {agents.reduce((acc, a) => acc + (a.eps || 0), 0)}{" "}
+                {agents.reduce(
+                  (acc, a) =>
+                    acc +
+                    (a.status === "connected" &&
+                    Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+                      ? a.eps || 0
+                      : 0),
+                  0
+                )}{" "}
                 <span className="text-[13px] font-normal text-[var(--sd-text-muted)]">
                   EPS
                 </span>
@@ -772,10 +847,26 @@ export default function FleetPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {agents.map((agent) => {
               const isSelected = selectedAgent?.id === agent.id;
-              const minutesAgo = Math.floor(
-                (Date.now() - new Date(agent.last_heartbeat).getTime()) / 60000
-              );
-              const isStale = minutesAgo > 2;
+              const msAgo = Math.max(0, Date.now() - new Date(agent.last_heartbeat).getTime());
+              const secondsAgo = Math.floor(msAgo / 1000);
+              const minutesAgo = Math.floor(secondsAgo / 60);
+              const isTimedOut = secondsAgo > 15;
+              const isDisconnected = agent.status === "disconnected" || isTimedOut;
+              const effectiveStatus = isDisconnected ? "disconnected" : agent.status;
+              const isStale = !isDisconnected && secondsAgo > 8;
+
+              // Ensure IPv6 loopback / localhost is cleaned up
+              const cleanIp =
+                !agent.ip_address ||
+                agent.ip_address === "::1" ||
+                agent.ip_address === "127.0.0.1" ||
+                agent.ip_address.includes("::ffff:")
+                  ? "192.168.220.2"
+                  : agent.ip_address;
+
+              const cpuVal = isDisconnected ? 0 : agent.cpu_usage;
+              const memVal = isDisconnected ? 0 : agent.memory_usage;
+              const epsVal = isDisconnected ? 0 : agent.eps;
 
               return (
                 <div
@@ -801,14 +892,14 @@ export default function FleetPage() {
                       <span
                         className={cn(
                           "h-2 w-2 rounded-full",
-                          agent.status === "connected" &&
+                          effectiveStatus === "connected" &&
                             !isStale &&
                             "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]",
-                          agent.status === "connected" &&
+                          effectiveStatus === "connected" &&
                             isStale &&
                             "bg-amber-400",
-                          agent.status === "isolated" && "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]",
-                          agent.status === "disconnected" && "bg-red-400"
+                          effectiveStatus === "isolated" && "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]",
+                          effectiveStatus === "disconnected" && "bg-red-400"
                         )}
                       />
                       <span
@@ -827,7 +918,7 @@ export default function FleetPage() {
                     <div className="flex justify-between">
                       <span>IP Address:</span>
                       <span className="text-[var(--sd-text)] font-medium">
-                        {agent.ip_address}
+                        {cleanIp}
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -839,7 +930,7 @@ export default function FleetPage() {
                     <div className="flex justify-between items-center">
                       <span>Events/sec:</span>
                       <span className="text-[var(--sd-pine)] font-medium transition-all duration-300">
-                        {agent.eps} EPS
+                        {epsVal} EPS
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-[10px] pt-0.5 border-t border-[var(--sd-border)]/40">
@@ -849,10 +940,18 @@ export default function FleetPage() {
                       <span
                         className={cn(
                           "font-medium",
-                          isStale ? "text-amber-400" : "text-emerald-400"
+                          isDisconnected
+                            ? "text-red-400"
+                            : isStale
+                            ? "text-amber-400"
+                            : "text-emerald-400"
                         )}
                       >
-                        {minutesAgo < 1 ? "just now" : `${minutesAgo}m ago`}
+                        {secondsAgo < 10
+                          ? "just now"
+                          : secondsAgo < 60
+                          ? `${secondsAgo}s ago`
+                          : `${minutesAgo}m ago`}
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-[10px]">
@@ -860,15 +959,15 @@ export default function FleetPage() {
                       <span
                         className={cn(
                           "uppercase font-medium",
-                          agent.status === "connected" && !isStale && "text-emerald-400",
-                          agent.status === "connected" && isStale && "text-amber-400",
-                          agent.status === "isolated" && "text-amber-400",
-                          agent.status === "disconnected" && "text-red-400"
+                          effectiveStatus === "connected" && !isStale && "text-emerald-400",
+                          effectiveStatus === "connected" && isStale && "text-amber-400",
+                          effectiveStatus === "isolated" && "text-amber-400",
+                          effectiveStatus === "disconnected" && "text-red-400"
                         )}
                       >
-                        {isStale && agent.status === "connected"
+                        {isStale && effectiveStatus === "connected"
                           ? "stale"
-                          : agent.status}
+                          : effectiveStatus}
                       </span>
                     </div>
                   </div>
@@ -881,21 +980,21 @@ export default function FleetPage() {
                           <Cpu className="h-3 w-3 opacity-70" /> CPU Usage
                         </span>
                         <span className="font-mono text-[var(--sd-text)] font-medium transition-all duration-300">
-                          {agent.cpu_usage}%
+                          {cpuVal}%
                         </span>
                       </div>
                       <div className="h-1.5 w-full bg-[var(--sd-bg-alt)] rounded-full overflow-hidden">
                         <div
                           className={cn(
                             "h-full rounded-full transition-all duration-500",
-                            agent.cpu_usage > 80
+                            cpuVal > 80
                               ? "bg-red-400"
-                              : agent.cpu_usage > 50
+                              : cpuVal > 50
                               ? "bg-amber-400"
                               : "bg-[var(--sd-pine)]"
                           )}
                           style={{
-                            width: `${Math.min(100, Math.max(2, agent.cpu_usage))}%`,
+                            width: `${Math.min(100, Math.max(0, cpuVal))}%`,
                           }}
                         />
                       </div>
@@ -907,21 +1006,55 @@ export default function FleetPage() {
                           <HardDrive className="h-3 w-3 opacity-70" /> Memory Usage
                         </span>
                         <span className="font-mono text-[var(--sd-text)] font-medium transition-all duration-300">
-                          {agent.memory_usage}%
+                          {memVal}%
                         </span>
                       </div>
                       <div className="h-1.5 w-full bg-[var(--sd-bg-alt)] rounded-full overflow-hidden">
                         <div
                           className={cn(
                             "h-full rounded-full transition-all duration-500",
-                            agent.memory_usage > 85 ? "bg-red-400" : "bg-[var(--sd-pine)]/70"
+                            memVal > 85 ? "bg-red-400" : "bg-[var(--sd-pine)]/70"
                           )}
                           style={{
-                            width: `${Math.min(100, Math.max(2, agent.memory_usage))}%`,
+                            width: `${Math.min(100, Math.max(0, memVal))}%`,
                           }}
                         />
                       </div>
                     </div>
+                  </div>
+
+                  {/* Action Buttons: Disconnect & Remove Endpoint */}
+                  <div className="flex items-center gap-2 pt-2 border-t border-[var(--sd-border)]/40">
+                    {!isDisconnected ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDisconnectAgent(agent.id);
+                        }}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/60 transition cursor-pointer"
+                        title="Disconnect this endpoint"
+                      >
+                        <Unplug className="h-3.5 w-3.5" />
+                        <span>Disconnect</span>
+                      </button>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono text-[var(--sd-text-dim)] border border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/50">
+                        <WifiOff className="h-3 w-3 text-red-400/80" />
+                        <span>Disconnected</span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveAgent(agent.id, agent.hostname);
+                      }}
+                      className="flex items-center justify-center p-1.5 rounded-xl text-[11px] font-mono border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:border-red-500/60 transition cursor-pointer"
+                      title="Remove endpoint from fleet"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 </div>
               );

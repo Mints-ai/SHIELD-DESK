@@ -1,6 +1,46 @@
+import os from "os";
 import { query } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth/session";
 import type { EndpointAgentRecord } from "./fleet";
+
+/**
+ * Resolves the primary physical/non-loopback IPv4 address of the host machine.
+ * Filters out virtual adapters (VirtualBox, Docker, Hyper-V, WSL).
+ */
+export function getResolvedHostIp(): string {
+  try {
+    const interfaces = os.networkInterfaces();
+    const candidates: { address: string; name: string; priority: number }[] = [];
+
+    for (const name of Object.keys(interfaces)) {
+      for (const net of interfaces[name] || []) {
+        if (net.family === "IPv4" && !net.internal && net.address !== "127.0.0.1") {
+          const lowerName = name.toLowerCase();
+          const isVirtual =
+            /virtual|vbox|vmware|loopback|pseudo|docker|wsl|hyper-v|vethernet/i.test(lowerName) ||
+            net.address.startsWith("192.168.56.") ||
+            net.address.startsWith("169.254.");
+
+          if (isVirtual) continue;
+
+          let priority = 1;
+          if (/wi-fi|wifi|wireless|wlan/i.test(lowerName)) {
+            priority = 10;
+          } else if (/ethernet|eth|en/i.test(lowerName)) {
+            priority = 5;
+          }
+
+          candidates.push({ address: net.address, name, priority });
+        }
+      }
+    }
+
+    candidates.sort((a, b) => b.priority - a.priority);
+    return candidates[0]?.address || "192.168.220.2";
+  } catch {
+    return "192.168.220.2";
+  }
+}
 
 /**
  * Returns the live fleet agents for a caller, reading exclusively from the database.
@@ -21,25 +61,83 @@ export async function getLiveFleetAgents(
   const params = isCrossTenant ? [] : [caller.tenant_id];
   const { rows } = await query<Record<string, unknown>>(sql, params);
 
-  return rows.map((row) => ({
-    id: String(row.id),
-    tenant_id: String(row.tenant_id),
-    hostname: String(row.hostname),
-    ip_address: String(row.ip_address),
-    os_type: (row.os_type || (row.os_info ? String(row.os_info).split(" ")[0].toLowerCase() : "linux")) as import("./fleet").OsType,
-    agent_version: String(row.agent_version || "0.4.2"),
-    status: String(row.status || "disconnected") as import("./fleet").AgentStatus,
-    cpu_usage: Number(row.cpu_usage || 0),
-    memory_usage: Number(row.memory_usage || 0),
-    eps: Number(row.eps || 0),
-    kill_switch_active: Boolean(row.kill_switch_active),
-    safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
-    // Normalise to last_heartbeat regardless of whether DB has last_seen_at or last_heartbeat
-    last_heartbeat: new Date(
+  const now = Date.now();
+
+  return rows.map((row) => {
+    const lastSeenDate = new Date(
       (row.last_seen_at || row.last_heartbeat || row.created_at || new Date()) as string
-    ).toISOString(),
-    created_at: new Date((row.created_at || new Date()) as string).toISOString(),
-  }));
+    );
+    const msSinceHeartbeat = now - lastSeenDate.getTime();
+    // Agent ticks every 3 seconds. If no heartbeat for > 15s, mark as disconnected
+    const isTimedOut = msSinceHeartbeat > 15000;
+
+    let computedStatus: import("./fleet").AgentStatus = String(row.status || "disconnected") as import("./fleet").AgentStatus;
+    if (row.kill_switch_active) {
+      computedStatus = "disconnected";
+    } else if (computedStatus !== "isolated" && isTimedOut) {
+      computedStatus = "disconnected";
+    }
+
+    // Proactively persist disconnected status to DB if it was previously marked connected
+    if (isTimedOut && row.status !== "disconnected") {
+      query(
+        `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, eps = 0 WHERE id = $1 AND status != 'disconnected'`,
+        [row.id]
+      ).catch(() => {});
+    }
+
+    // Sanitize and resolve IP address if loopback/::1 was captured
+    let cleanIp = String(row.ip_address || "");
+    if (!cleanIp || cleanIp === "::1" || cleanIp === "127.0.0.1" || cleanIp.includes("::ffff:127.0.0.1") || cleanIp === "localhost") {
+      cleanIp = getResolvedHostIp();
+      // Auto-correct in database
+      query(`UPDATE endpoint_agents SET ip_address = $1 WHERE id = $2 AND (ip_address = '::1' OR ip_address = '127.0.0.1' OR ip_address LIKE '%::ffff:%')`, [cleanIp, row.id]).catch(() => {});
+    }
+
+    return {
+      id: String(row.id),
+      tenant_id: String(row.tenant_id),
+      hostname: String(row.hostname),
+      ip_address: cleanIp,
+      os_type: (row.os_type || (row.os_info ? String(row.os_info).split(" ")[0].toLowerCase() : "linux")) as import("./fleet").OsType,
+      agent_version: String(row.agent_version || "0.4.2"),
+      status: computedStatus,
+      cpu_usage: isTimedOut ? 0 : Number(row.cpu_usage || 0),
+      memory_usage: isTimedOut ? 0 : Number(row.memory_usage || 0),
+      eps: isTimedOut ? 0 : Number(row.eps || 0),
+      kill_switch_active: Boolean(row.kill_switch_active),
+      safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
+      last_heartbeat: lastSeenDate.toISOString(),
+      created_at: new Date((row.created_at || new Date()) as string).toISOString(),
+    };
+  });
+}
+
+/**
+ * Manually marks an agent as disconnected.
+ */
+export async function disconnectLiveAgent(agentId: string, tenantId?: string): Promise<boolean> {
+  const sql = tenantId
+    ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND tenant_id = $2 RETURNING id;`
+    : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`;
+  const params = tenantId ? [agentId, tenantId] : [agentId];
+  const { rows } = await query<{ id: string }>(sql, params);
+  return rows.length > 0;
+}
+
+/**
+ * Removes / unenrolls an agent from the database entirely.
+ */
+export async function deleteLiveAgent(agentId: string, tenantId?: string): Promise<boolean> {
+  try {
+    await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]);
+  } catch {}
+  const sql = tenantId
+    ? `DELETE FROM endpoint_agents WHERE id = $1 AND tenant_id = $2 RETURNING id;`
+    : `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`;
+  const params = tenantId ? [agentId, tenantId] : [agentId];
+    const { rows } = await query<{ id: string }>(sql, params);
+    return rows.length > 0;
 }
 
 /**

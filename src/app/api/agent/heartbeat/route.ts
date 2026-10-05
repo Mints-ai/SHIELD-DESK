@@ -23,6 +23,8 @@ export async function POST(req: NextRequest) {
     const cpuUsage = typeof body.cpuUsage === "number" ? body.cpuUsage : null;
     const memoryUsage = typeof body.memoryUsage === "number" ? body.memoryUsage : null;
     const eps = typeof body.eps === "number" ? body.eps : null;
+    const requestedStatus = typeof body.status === "string" ? body.status : null;
+    const ipAddress = typeof body.ipAddress === "string" && body.ipAddress !== "::1" && body.ipAddress !== "127.0.0.1" && !body.ipAddress.includes("::ffff:") ? body.ipAddress : null;
 
     try {
       const { rows } = await query<{
@@ -33,13 +35,18 @@ export async function POST(req: NextRequest) {
       }>(
         `UPDATE endpoint_agents
          SET last_seen_at = now(),
-             cpu_usage = COALESCE($1, cpu_usage),
-             memory_usage = COALESCE($2, memory_usage),
-             eps = COALESCE($3, eps),
-             status = CASE WHEN status = 'isolated' THEN 'isolated' ELSE 'connected' END
+             cpu_usage = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($1, cpu_usage) END,
+             memory_usage = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($2, memory_usage) END,
+             eps = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($3, eps) END,
+             ip_address = COALESCE($5, ip_address),
+             status = CASE
+               WHEN status = 'isolated' THEN 'isolated'
+               WHEN $6::text = 'disconnected' THEN 'disconnected'
+               ELSE 'connected'
+             END
          WHERE id = $4
          RETURNING id, kill_switch_active, tenant_id, status;`,
-        [cpuUsage, memoryUsage, eps, agentId]
+        [cpuUsage, memoryUsage, eps, agentId, ipAddress, requestedStatus]
       );
 
       if (rows.length === 0) {
