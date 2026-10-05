@@ -362,8 +362,9 @@ export async function POST(req: NextRequest) {
     }
 
     const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
-    const isSocAnalyst = session.role === "analyst" || session.uid === "dev-analyst" || session.uid === "dev-other";
-    const canManageContainment = isSystemAdmin || isSocAnalyst || session.role === "super_admin" || session.role === "responder";
+    const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
+    const isSocAnalyst = session.role === "analyst" || session.uid === "dev-analyst";
+    const canManageContainment = isSystemAdmin || isGlobexAnalyst || isSocAnalyst || session.role === "super_admin" || session.role === "responder";
 
     if (action === "unblock_ip") {
       if (!canManageContainment) {

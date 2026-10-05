@@ -24,6 +24,11 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Wrench,
+  Copy,
+  Check,
+  GitCommit,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -85,6 +90,19 @@ export default function ScannerDashboardPage() {
   const [cves, setCves] = useState<CveFinding[]>([]);
   const [secrets, setSecrets] = useState<SecretFinding[]>([]);
   const [serviceConnected, setServiceConnected] = useState(false);
+  const [mitigatingId, setMitigatingId] = useState<string | null>(null);
+  const [mitigatedIds, setMitigatedIds] = useState<Set<string>>(new Set());
+
+  // Review & Remediation modal state
+  const [reviewingSecret, setReviewingSecret] = useState<SecretFinding | null>(null);
+  const [remediationFeedback, setRemediationFeedback] = useState<{
+    findingKey: string;
+    success: boolean;
+    status: string;
+    message: string;
+    newKeyId?: string;
+  } | null>(null);
+  const [copiedGitCmd, setCopiedGitCmd] = useState(false);
 
   const criticalCvesCount = useMemo(
     () => cves.filter((c) => c.severity?.toUpperCase() === "CRITICAL").length,
@@ -242,9 +260,18 @@ export default function ScannerDashboardPage() {
     }
   };
 
-  const rotateKey = async (finding: SecretFinding) => {
-    setLoading(true);
+  const executeRemediation = async (finding: SecretFinding, actionOverride?: string) => {
+    const findingKey = finding.fingerprint || finding.secret_hash || `${finding.location}:${finding.line_number}`;
+    setMitigatingId(findingKey);
     try {
+      const chosenAction =
+        actionOverride ||
+        (finding.rule_id?.includes("github")
+          ? "revoke_pat"
+          : finding.rule_id?.includes("aws")
+          ? "rotate_key"
+          : "rotate_key");
+
       const res = await fetch("/api/gitleaks/mitigate", {
         method: "POST",
         headers: {
@@ -252,20 +279,43 @@ export default function ScannerDashboardPage() {
           "X-ShieldDesk-User": activeUserId,
         },
         body: JSON.stringify({
-          action: finding.rule_id?.includes("github") ? "revoke_pat" : "rotate_key",
+          action: chosenAction,
           finding_id: finding.fingerprint || finding.secret_hash,
           rule_id: finding.rule_id || "",
           key_id: "AKIA1234567890ABCDEF",
         }),
       });
       const data = await res.json();
-      setScanResult(data.message || "Credential rotation completed.");
-    } catch {
-      setScanResult("Rotation request sent.");
+      if (data.success) {
+        setMitigatedIds((prev) => new Set(prev).add(findingKey));
+        setRemediationFeedback({
+          findingKey,
+          success: true,
+          status: data.status || "remediated",
+          message: data.message || "Remediation action completed successfully.",
+          newKeyId: data.new_key_id,
+        });
+      } else {
+        setRemediationFeedback({
+          findingKey,
+          success: false,
+          status: "failed",
+          message: data.error || "Remediation action failed.",
+        });
+      }
+    } catch (err: any) {
+      setRemediationFeedback({
+        findingKey,
+        success: false,
+        status: "error",
+        message: err.message || "Network error while connecting to remediation API.",
+      });
     } finally {
-      setLoading(false);
+      setMitigatingId(null);
     }
   };
+
+  const rotateKey = (finding: SecretFinding) => executeRemediation(finding);
 
   const executePatch = async (dryRun: boolean) => {
     setLoading(true);
@@ -759,6 +809,11 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                   <p className="text-[11px] text-[var(--sd-text-muted)] mt-0.5">
                     {secrets.filter((s) => s.source === "git_history").length} from git history ·{" "}
                     {secrets.filter((s) => s.source !== "git_history").length} from filesystem/env
+                    {mitigatedIds.size > 0 && (
+                      <span className="ml-2 font-medium text-[var(--sd-pine-bright)]">
+                        · {mitigatedIds.size} of {secrets.length} remediated
+                      </span>
+                    )}
                   </p>
                 )}
               </div>
@@ -870,14 +925,35 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        <button
-                          id={`mitigate-${sec.fingerprint || i}`}
-                          onClick={() => rotateKey(sec)}
-                          disabled={loading}
-                          className="sd-button px-2.5 py-1 rounded bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-[var(--sd-on-accent)] font-medium text-[13px] transition cursor-pointer shadow-xs disabled:opacity-50"
-                        >
-                          {sec.action_available}
-                        </button>
+                        {(() => {
+                          const fKey = sec.fingerprint || sec.secret_hash || `${sec.location}:${sec.line_number}`;
+                          const isMitigated = mitigatedIds.has(fKey);
+                          return isMitigated ? (
+                            <button
+                              onClick={() => {
+                                setReviewingSecret(sec);
+                                setRemediationFeedback(null);
+                              }}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[12px] font-medium text-[var(--sd-pine-bright)] bg-[var(--sd-pine)]/15 border border-[var(--sd-pine)]/30 hover:bg-[var(--sd-pine)]/25 transition cursor-pointer shadow-xs ml-auto"
+                              title="Click to view remediation details"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span>Remediated · Details</span>
+                            </button>
+                          ) : (
+                            <button
+                              id={`mitigate-${sec.fingerprint || i}`}
+                              onClick={() => {
+                                setReviewingSecret(sec);
+                                setRemediationFeedback(null);
+                              }}
+                              className="sd-button px-2.5 py-1 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-[var(--sd-on-accent)] font-medium text-[12px] transition cursor-pointer shadow-xs flex items-center gap-1.5 ml-auto"
+                            >
+                              <Wrench className="h-3.5 w-3.5" />
+                              <span>{sec.action_available || "Review & Remediate"}</span>
+                            </button>
+                          );
+                        })()}
                       </td>
                     </tr>
                   ))}
@@ -1052,6 +1128,300 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
             </div>
           </GlassDialog>
         )}
+        {/* Secret Finding Review & Remediate Modal */}
+        {reviewingSecret && (() => {
+          const findingKey = reviewingSecret.fingerprint || reviewingSecret.secret_hash || `${reviewingSecret.location}:${reviewingSecret.line_number}`;
+          const isMitigated = mitigatedIds.has(findingKey);
+          const isMitigating = mitigatingId === findingKey;
+          const purgeCmd = `git filter-repo --path "${reviewingSecret.location}" --invert-paths`;
+
+          return (
+            <GlassDialog
+              open
+              onClose={() => {
+                setReviewingSecret(null);
+                setRemediationFeedback(null);
+                setCopiedGitCmd(false);
+              }}
+              labelledBy="secret-review-title"
+              className="max-w-2xl w-full"
+            >
+              <div className="p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+                {/* Header */}
+                <div className="flex items-start justify-between border-b border-[var(--sd-border)] pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-[var(--sd-danger)]/10 text-[var(--sd-danger)] border border-[var(--sd-danger)]/20">
+                      <Key className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 id="secret-review-title" className="text-base font-semibold text-[var(--sd-text)] flex items-center gap-2">
+                        Review & Remediate Finding
+                        {isMitigated && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-[var(--sd-pine-bright)] bg-[var(--sd-pine)]/15 border border-[var(--sd-pine)]/30">
+                            <CheckCircle2 className="h-3 w-3" /> Remediated
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[12px] text-[var(--sd-text-muted)] font-mono mt-0.5">
+                        Rule: <span className="text-[var(--sd-text)]">{reviewingSecret.rule_id || "generic-api-key"}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setReviewingSecret(null);
+                      setRemediationFeedback(null);
+                      setCopiedGitCmd(false);
+                    }}
+                    className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer px-2 py-1"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+
+                {/* Finding Context & Metadata Card */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[12px]">
+                  <div>
+                    <span className="text-[var(--sd-text-muted)] block text-[11px] uppercase tracking-wider">File Location</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium break-all">
+                      {reviewingSecret.location}
+                      {reviewingSecret.line_number !== undefined && (
+                        <span className="text-[var(--sd-pine-bright)] ml-1">#L{reviewingSecret.line_number}</span>
+                      )}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[var(--sd-text-muted)] block text-[11px] uppercase tracking-wider">Detection Source</span>
+                    <span className="font-mono text-[var(--sd-text)] flex items-center gap-1.5 mt-0.5">
+                      {reviewingSecret.source === "git_history" ? (
+                        <>
+                          <GitCommit className="h-3.5 w-3.5 text-[var(--sd-warning)]" />
+                          <span>Git History Commit</span>
+                        </>
+                      ) : (
+                        <>
+                          <HardDrive className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                          <span>Active Working Directory</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[var(--sd-text-muted)] block text-[11px] uppercase tracking-wider">Risk Level</span>
+                    <span
+                      className={cn(
+                        "inline-block px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider border mt-0.5",
+                        reviewingSecret.risk_level === "CRITICAL"
+                          ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
+                          : reviewingSecret.risk_level === "HIGH"
+                          ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                          : "bg-[var(--sd-panel-hover)] text-[var(--sd-text)] border-[var(--sd-border)]"
+                      )}
+                    >
+                      {reviewingSecret.risk_level}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[var(--sd-text-muted)] block text-[11px] uppercase tracking-wider">Finding Hash</span>
+                    <span className="font-mono text-[11px] text-[var(--sd-text-muted)] truncate block" title={reviewingSecret.fingerprint || reviewingSecret.secret_hash}>
+                      {reviewingSecret.fingerprint || reviewingSecret.secret_hash || "Calculated by Gitleaks"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Git Commit Information if applicable */}
+                {reviewingSecret.commit && (
+                  <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-hover)]/40 space-y-2 text-[12px]">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-[var(--sd-text)] flex items-center gap-1.5">
+                        <GitCommit className="h-3.5 w-3.5 text-[var(--sd-pine-bright)]" />
+                        Commit Context
+                      </span>
+                      <span className="font-mono text-[11px] text-[var(--sd-text-muted)]">
+                        SHA: {reviewingSecret.commit.substring(0, 10)}
+                      </span>
+                    </div>
+                    {reviewingSecret.message && (
+                      <p className="text-[12px] text-[var(--sd-text)] italic bg-[var(--sd-bg)]/80 p-2 rounded border border-[var(--sd-border)]">
+                        &quot;{reviewingSecret.message}&quot;
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-4 text-[11px] text-[var(--sd-text-muted)] pt-1">
+                      {reviewingSecret.author && (
+                        <span>Author: <strong className="text-[var(--sd-text)]">{reviewingSecret.author}</strong></span>
+                      )}
+                      {reviewingSecret.date && (
+                        <span>Date: <strong className="text-[var(--sd-text)]">{new Date(reviewingSecret.date).toUTCString()}</strong></span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Redacted Snippet Box */}
+                <div className="space-y-1.5">
+                  <label className="text-[12px] font-medium text-[var(--sd-text-muted)] flex items-center justify-between">
+                    <span>Detected Secret Content (Masked)</span>
+                    <span className="text-[10px] text-[var(--sd-pine-bright)]">Protected by Gitleaks Redaction</span>
+                  </label>
+                  <pre className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[12px] font-mono text-[var(--sd-danger)] overflow-x-auto">
+                    {reviewingSecret.snippet_masked || "[REDACTED SECRET VALUE]"}
+                  </pre>
+                </div>
+
+                {/* Live Remediation Feedback Banner */}
+                {remediationFeedback && (
+                  <div
+                    className={cn(
+                      "p-3 rounded-xl border text-[13px] space-y-1",
+                      remediationFeedback.success
+                        ? "bg-[var(--sd-pine)]/10 border-[var(--sd-pine)]/30 text-[var(--sd-pine-bright)]"
+                        : "bg-[var(--sd-danger-dim)] border-[var(--sd-danger-border)] text-[var(--sd-danger)]"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 font-medium">
+                      {remediationFeedback.success ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4" />
+                      )}
+                      <span>{remediationFeedback.message}</span>
+                    </div>
+                    {remediationFeedback.newKeyId && (
+                      <div className="font-mono text-[11px] opacity-90 pl-6">
+                        New Replacement Credential ID: <span className="underline font-bold">{remediationFeedback.newKeyId}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Remediation Action Plans */}
+                <div className="space-y-3 pt-1">
+                  <h4 className="text-[13px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
+                    <Wrench className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                    Available Remediation Actions
+                  </h4>
+
+                  {/* Action 1: Automated Key Invalidation */}
+                  <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] space-y-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-[13px] text-[var(--sd-text)]">
+                          1. Automated Credential Revocation & Rotation
+                        </div>
+                        <p className="text-[11px] text-[var(--sd-text-muted)] mt-0.5">
+                          Immediately issue a revocation call to invalidate this token and provision an updated credential via the ShieldDesk rotation orchestrator.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => executeRemediation(reviewingSecret, "rotate_key")}
+                        disabled={isMitigating}
+                        className="sd-button sd-button-primary shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium text-[var(--sd-on-accent)] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        {isMitigating ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            <span>Revoking…</span>
+                          </>
+                        ) : (
+                          <>
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            <span>Revoke / Rotate Key</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Action 2: Purge from Git History if git commit */}
+                  {reviewingSecret.source === "git_history" && (
+                    <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] space-y-2.5">
+                      <div>
+                        <div className="font-medium text-[13px] text-[var(--sd-text)] flex items-center gap-1.5">
+                          <AlertTriangle className="h-3.5 w-3.5 text-[var(--sd-warning)]" />
+                          <span>2. Scrub Secret from Git Repository History</span>
+                        </div>
+                        <p className="text-[11px] text-[var(--sd-text-muted)] mt-0.5">
+                          Because this secret exists in committed git objects, simply editing the file leaves history exposed. Run this command to rewrite git history:
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <code className="p-2 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[11px] font-mono text-[var(--sd-text)] flex-1 overflow-x-auto">
+                          {purgeCmd}
+                        </code>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(purgeCmd);
+                            setCopiedGitCmd(true);
+                            setTimeout(() => setCopiedGitCmd(false), 2000);
+                          }}
+                          className="sd-button px-3 py-2 rounded border border-[var(--sd-border)] bg-[var(--sd-panel-hover)] hover:bg-[var(--sd-panel)] text-[12px] text-[var(--sd-text)] shrink-0 flex items-center gap-1 cursor-pointer font-medium"
+                        >
+                          {copiedGitCmd ? (
+                            <>
+                              <Check className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                              <span className="text-[var(--sd-pine)]">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5" />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action 3: Filesystem Best Practices if active working directory */}
+                  {reviewingSecret.source !== "git_history" && (
+                    <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] space-y-2">
+                      <div className="font-medium text-[13px] text-[var(--sd-text)] flex items-center gap-1.5">
+                        <HardDrive className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                        <span>2. Filesystem & Environment Hygiene</span>
+                      </div>
+                      <p className="text-[11px] text-[var(--sd-text-muted)]">
+                        Ensure <code className="text-[var(--sd-pine-bright)]">{reviewingSecret.location}</code> is added to <code className="text-[var(--sd-text)]">.gitignore</code> so credentials are never checked into remote repositories. Migrate production secrets into a cloud secret manager (Supabase Vault or AWS KMS).
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Action 4: Mark Resolved / Whitelist */}
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[11px] text-[var(--sd-text-muted)]">
+                      Analyst verified key is inactive or non-sensitive test token:
+                    </span>
+                    <button
+                      onClick={() => executeRemediation(reviewingSecret, "mark_resolved")}
+                      disabled={isMitigating || isMitigated}
+                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel-hover)] hover:bg-[var(--sd-panel)] text-[12px] text-[var(--sd-text)] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                      <span>{isMitigated ? "Already Resolved" : "Mark as Resolved"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-between pt-3 border-t border-[var(--sd-border)]">
+                  <div className="text-[11px] text-[var(--sd-text-muted)]">
+                    Audit trail logs all remediation actions to SIEM.
+                  </div>
+                  <button
+                    onClick={() => {
+                      setReviewingSecret(null);
+                      setRemediationFeedback(null);
+                      setCopiedGitCmd(false);
+                    }}
+                    className="sd-button sd-button-primary px-4 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </GlassDialog>
+          );
+        })()}
       </main>
     </div>
   );
