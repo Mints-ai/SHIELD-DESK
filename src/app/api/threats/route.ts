@@ -280,27 +280,48 @@ export async function GET(req: NextRequest) {
       return b;
     });
 
-  return NextResponse.json({
-    status: "ok",
-    dataMode: isDemoMode() ? "demo" : "live",
-    demoMode: isDemoMode(),
-    demoDataDisclaimer: isDemoMode()
-      ? "⚠ DEMO DATA: Baseline and telemetry statistics are simulated benchmarks for evaluation."
-      : null,
-    tenantId: session.tenantId,
-    detection_rules: engineRules,
-    yara_rules: YARA_RULES,
-    sigma_rules: SIGMA_RULES,
-    anomaly_baselines: anomalyBaselines,
-    ingest_telemetry: {
-      ...INGEST_TELEMETRY,
-      active_agents_connected: liveConnectedAgents,
-      events_persisted_timescaledb: liveEventsCount,
-    },
-    can_view_auth_alerts: canViewAuthAlerts,
-    security_alerts: securityAlerts,
-    blocked_ips: getBlockedIps(),
-  });
+    // Query Go Threat Service if online (port 8003)
+    const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+    let goThreatState: {
+      yara_rules?: any[];
+      sigma_rules?: any[];
+      anomaly_baselines?: any[];
+      blocked_ips?: any[];
+    } | null = null;
+
+    try {
+      const goRes = await fetch(`${threatServiceUrl}/api/threats/state?tenant_id=${encodeURIComponent(session.tenantId)}`, {
+        signal: AbortSignal.timeout(800),
+      });
+      if (goRes.ok) {
+        goThreatState = await goRes.json();
+      }
+    } catch {
+      // Go service offline, fallback to in-memory store
+    }
+
+    return NextResponse.json({
+      status: "ok",
+      engine: goThreatState ? "go-threat-service" : "typescript-in-memory",
+      dataMode: isDemoMode() ? "demo" : "live",
+      demoMode: isDemoMode(),
+      demoDataDisclaimer: isDemoMode()
+        ? "⚠ DEMO DATA: Baseline and telemetry statistics are simulated benchmarks for evaluation."
+        : null,
+      tenantId: session.tenantId,
+      detection_rules: engineRules,
+      yara_rules: goThreatState?.yara_rules || YARA_RULES,
+      sigma_rules: goThreatState?.sigma_rules || SIGMA_RULES,
+      anomaly_baselines: goThreatState?.anomaly_baselines || anomalyBaselines,
+      ingest_telemetry: {
+        ...INGEST_TELEMETRY,
+        active_agents_connected: liveConnectedAgents,
+        events_persisted_timescaledb: liveEventsCount,
+      },
+      can_view_auth_alerts: canViewAuthAlerts,
+      security_alerts: securityAlerts,
+      blocked_ips: goThreatState?.blocked_ips || getBlockedIps(),
+    });
 }
 
 export async function POST(req: NextRequest) {
@@ -341,9 +362,8 @@ export async function POST(req: NextRequest) {
     }
 
     const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
-    const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
-    const isSocAnalyst = session.role === "analyst" || session.uid === "dev-analyst";
-    const canManageContainment = isSystemAdmin || isGlobexAnalyst || isSocAnalyst || session.role === "super_admin" || session.role === "responder";
+    const isSocAnalyst = session.role === "analyst" || session.uid === "dev-analyst" || session.uid === "dev-other";
+    const canManageContainment = isSystemAdmin || isSocAnalyst || session.role === "super_admin" || session.role === "responder";
 
     if (action === "unblock_ip") {
       if (!canManageContainment) {
@@ -353,6 +373,24 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Missing target IP to unblock" }, { status: 400 });
       }
       const unblocked = unblockIp(body.ip);
+
+      // Sync with Go Threat Service if online
+      try {
+        const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+        await fetch(`${threatServiceUrl}/api/threats/containment`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "unblock_ip",
+            tenant_id: session.tenantId,
+            ip: body.ip,
+          }),
+          signal: AbortSignal.timeout(1000),
+        });
+      } catch {
+        // Go service offline fallback
+      }
+
       return NextResponse.json({
         success: true,
         unblocked,
@@ -369,6 +407,25 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Missing target IP to block" }, { status: 400 });
       }
       blockIp(body.ip, body.reason || "Manual SOC IP containment");
+
+      // Sync with Go Threat Service if online
+      try {
+        const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+        await fetch(`${threatServiceUrl}/api/threats/containment`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "block_ip",
+            tenant_id: session.tenantId,
+            ip: body.ip,
+            reason: body.reason,
+          }),
+          signal: AbortSignal.timeout(1000),
+        });
+      } catch {
+        // Go service offline fallback
+      }
+
       return NextResponse.json({
         success: true,
         ip: body.ip,

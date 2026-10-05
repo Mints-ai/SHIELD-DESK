@@ -84,6 +84,7 @@ function Stream-Jobs {
                     "PythonBrain" { "[Python AI ] " }
                     "NextJS"      { "[Next.js   ] " }
                     "GoScanner"   { "[Go Scanner] " }
+                    "GoThreat"    { "[Go Threat ] " }
                     default       { "[Service   ] " }
                 }
                 $col = switch ($job.Name) {
@@ -91,6 +92,7 @@ function Stream-Jobs {
                     "PythonBrain" { "Yellow"  }
                     "NextJS"      { "Cyan"    }
                     "GoScanner"   { "Green"   }
+                    "GoThreat"    { "DarkCyan"}
                     default       { "White"   }
                 }
                 $lines -split "`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object {
@@ -142,8 +144,12 @@ if ($hasTrivy) {
 $ollamaJob = Start-Service "Ollama"      "ollama serve"   $ROOT
 $pythonJob = Start-Service "PythonBrain" "python server.py" $PYTHON
 $nextJob   = Start-Service "NextJS"      "npm run dev"    $ROOT
+$threatDir = Join-Path $ROOT "services\threat"
+$threatExe = Join-Path $threatDir "threat.exe"
+$threatCmd = if (Test-Path $threatExe) { ".\threat.exe" } else { "go run ." }
+$threatJob = Start-Service "GoThreat"    $threatCmd       $threatDir
 
-$allJobs = @($ollamaJob, $pythonJob, $nextJob)
+$allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob)
 
 Write-Host ""
 Write-Host "  Waiting for all ports to open..." -ForegroundColor DarkGray
@@ -152,9 +158,10 @@ Write-Host ""
 $ok1 = Wait-ForPort 11434 "Ollama LLM"
 $ok2 = Wait-ForPort 8000  "Python CVE Brain"
 $ok3 = Wait-ForPort 3000  "Next.js UI"
+$ok4 = Wait-ForPort 8003  "Go Threat Engine"
 
 Write-Host ""
-if ($ok1 -and $ok2 -and $ok3) {
+if ($ok1 -and $ok2 -and $ok3 -and $ok4) {
     Write-Host "  [ALL UP] All services are running!" -ForegroundColor Green
 } else {
     Write-Host "  [WARN] Some services may not have started -- check logs below." -ForegroundColor Yellow
@@ -164,6 +171,7 @@ Write-Host ""
 Write-Host "  +-------------------------------------------------+" -ForegroundColor DarkGreen
 Write-Host "  |  ShieldDesk UI   -->  http://localhost:3000     |" -ForegroundColor Green
 Write-Host "  |  Python AI Brain -->  http://localhost:8000     |" -ForegroundColor Yellow
+Write-Host "  |  Go Threat Engine-->  http://localhost:8003     |" -ForegroundColor Cyan
 Write-Host "  |  Trivy Scanner   -->  Embedded (/api/scans)     |" -ForegroundColor Green
 Write-Host "  |  Ollama LLM      -->  http://localhost:11434    |" -ForegroundColor Magenta
 Write-Host "  +-------------------------------------------------+" -ForegroundColor DarkGreen
