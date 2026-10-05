@@ -4,6 +4,9 @@
 
 title = "ShieldDesk Gitleaks Config"
 
+[extend]
+useDefault = true
+
 [allowlist]
   description = "ShieldDesk test, mock, and demo file allowlist"
 

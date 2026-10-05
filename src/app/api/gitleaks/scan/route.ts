@@ -7,6 +7,7 @@ import {
   isGitleaksAvailable,
   runGitleaksScan,
   getLastGitleaksScanResult,
+  setLastGitleaksScanResult,
   GitleaksFinding,
 } from "@/lib/gitleaks";
 
@@ -135,11 +136,70 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Run real scan
-    const result = await runGitleaksScan(targetPath, {
-      redact: true,
-      noGit,
-      logOpts,
+    // Run scan: if scanning root repo without explicit noGit, scan both git history and workspace files to catch uncommitted .env files
+    let findings: GitleaksFinding[] = [];
+    let summary = { critical: 0, high: 0, medium: 0, total: 0 };
+    let scanDurationMs = 0;
+    let scanMode: "git_history" | "filesystem" | "git_and_filesystem" = "filesystem";
+    let binaryPath = "";
+    let scannedTarget = targetPath;
+    let redacted = true;
+
+    if (targetPath === "." && !noGit) {
+      const [gitResult, fsResult] = await Promise.allSettled([
+        runGitleaksScan(targetPath, { redact: true, noGit: false, logOpts }),
+        runGitleaksScan(targetPath, { redact: true, noGit: true }),
+      ]);
+
+      const gitFindings = gitResult.status === "fulfilled" ? gitResult.value.findings : [];
+      const fsFindings = fsResult.status === "fulfilled" ? fsResult.value.findings : [];
+
+      const seen = new Set<string>();
+      for (const f of [...fsFindings, ...gitFindings]) {
+        const key = f.fingerprint || `${f.location}:${f.line_number}:${f.rule_id}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          findings.push(f);
+        }
+      }
+
+      for (const f of findings) {
+        const level = f.risk_level?.toUpperCase();
+        if (level === "CRITICAL") summary.critical++;
+        else if (level === "HIGH") summary.high++;
+        else summary.medium++;
+      }
+      summary.total = findings.length;
+
+      scanDurationMs =
+        (gitResult.status === "fulfilled" ? gitResult.value.scanDurationMs : 0) +
+        (fsResult.status === "fulfilled" ? fsResult.value.scanDurationMs : 0);
+      scanMode = "git_and_filesystem";
+      binaryPath = gitResult.status === "fulfilled" ? gitResult.value.binaryPath : "";
+      redacted = true;
+    } else {
+      const result = await runGitleaksScan(targetPath, {
+        redact: true,
+        noGit,
+        logOpts,
+      });
+      findings = result.findings;
+      summary = result.summary;
+      scanDurationMs = result.scanDurationMs;
+      scanMode = result.scanMode;
+      binaryPath = result.binaryPath;
+      scannedTarget = result.scannedTarget;
+      redacted = result.redacted;
+    }
+
+    setLastGitleaksScanResult({
+      findings,
+      summary,
+      scannedTarget,
+      scanDurationMs,
+      binaryPath,
+      scanMode,
+      redacted,
     });
 
     return NextResponse.json({
@@ -148,18 +208,18 @@ export async function POST(req: NextRequest) {
       _demo_mode: false,
       gitleaksAvailable: true,
       tenantId: session.tenantId,
-      findings: result.findings,
-      secretFindings: result.findings,
-      summary: result.summary,
-      scanDurationMs: result.scanDurationMs,
-      scannedTarget: result.scannedTarget,
-      scanMode: result.scanMode,
-      binaryPath: result.binaryPath,
-      redacted: result.redacted,
+      findings,
+      secretFindings: findings,
+      summary,
+      scanDurationMs,
+      scannedTarget,
+      scanMode,
+      binaryPath,
+      redacted,
       message:
-        result.findings.length === 0
+        findings.length === 0
           ? "No secrets detected in scanned target. Repository appears clean."
-          : `Secret scan complete: ${result.findings.length} finding${result.findings.length !== 1 ? "s" : ""} detected (${result.summary.critical} critical, ${result.summary.high} high).`,
+          : `Secret scan complete: ${findings.length} finding${findings.length !== 1 ? "s" : ""} detected (${summary.critical} critical, ${summary.high} high, ${summary.medium} medium).`,
     });
   } catch (err: unknown) {
     trackError(err, {

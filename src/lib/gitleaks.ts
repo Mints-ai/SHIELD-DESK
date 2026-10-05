@@ -41,7 +41,7 @@ export interface GitleaksScanResult {
   scannedTarget: string;
   scanDurationMs: number;
   binaryPath: string;
-  scanMode: "git_history" | "filesystem";
+  scanMode: "git_history" | "filesystem" | "git_and_filesystem";
   redacted: boolean;
 }
 
@@ -202,10 +202,27 @@ export function parseGitleaksOutput(jsonOutput: string): GitleaksFinding[] {
     const commit: string | undefined = entry.Commit || entry.commit;
     const source = ruleToSource(ruleId, commit);
 
+    // Normalize location to repository-relative path (strip machine-specific absolute C:/... path)
+    let location: string = entry.File || entry.file || "unknown";
+    if (location !== "unknown") {
+      try {
+        const cwd = process.cwd();
+        const resolved = path.isAbsolute(location) ? location : path.resolve(cwd, location);
+        const rel = path.relative(cwd, resolved).replace(/\\/g, "/");
+        if (rel && !rel.startsWith("..")) {
+          location = rel;
+        } else {
+          location = location.replace(/\\/g, "/");
+        }
+      } catch {
+        location = location.replace(/\\/g, "/");
+      }
+    }
+
     return {
       type: entry.Description || ruleId,
       source,
-      location: entry.File || entry.file || "unknown",
+      location,
       snippet_masked: entry.Secret || entry.Match || "[REDACTED]",
       secret_hash: entry.Fingerprint || entry.fingerprint || "",
       risk_level: risk,
@@ -286,7 +303,8 @@ export async function runGitleaksScan(
     (fs.existsSync(defaultConfigPath) ? defaultConfigPath : undefined);
 
   const redact = opts.redact !== false; // default true
-  const noGit = opts.noGit === true;
+  const isTargetFile = fs.existsSync(resolvedTarget) && fs.statSync(resolvedTarget).isFile();
+  const noGit = opts.noGit === true || isTargetFile;
   const scanMode: "git_history" | "filesystem" = noGit ? "filesystem" : "git_history";
 
   // Build argv array — structured, never shell-interpolated
@@ -296,6 +314,8 @@ export async function runGitleaksScan(
     resolvedTarget,
     "--report-format",
     "json",
+    "--report-path",
+    "-",
     "--exit-code",
     "0",   // Do NOT fail process on findings — we handle findings ourselves
     "--no-banner",

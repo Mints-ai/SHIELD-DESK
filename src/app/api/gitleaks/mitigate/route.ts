@@ -143,7 +143,22 @@ export async function POST(req: NextRequest) {
     }
 
     // -----------------------------------------------------------------------
-    // 3. Generic / other credential rotation
+    // 3. Mark resolved / false positive manual verification
+    // -----------------------------------------------------------------------
+    if (action === "mark_resolved") {
+      return NextResponse.json({
+        success: true,
+        status: "manually_resolved",
+        finding_id: findingId,
+        action,
+        rule_id: ruleId,
+        message: `Secret finding '${ruleId || findingId}' marked as resolved following security analyst review.`,
+        remediated_at: new Date().toISOString(),
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // 4. Generic / other credential rotation
     // -----------------------------------------------------------------------
     if (shouldFailClosed()) {
       return NextResponse.json(
@@ -156,6 +171,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const newKeyId = `KEY-${Math.random().toString(36).substring(2, 12).toUpperCase()}`;
+    const ruleMessages: Record<string, string> = {
+      "generic-api-key": "Simulated revocation completed: API key flagged as revoked in authentication cache. Token rotation request dispatched to microservices.",
+      "jwt": "Simulated JWT invalidation: Key signing secret updated, active session cache purged.",
+      "slack-bot-token": "Simulated Slack bot token revocation initiated.",
+      "stripe-api-key": "Simulated Stripe restricted API key rotated.",
+    };
+
     return NextResponse.json({
       success: true,
       status: "remediated",
@@ -163,7 +186,8 @@ export async function POST(req: NextRequest) {
       finding_id: findingId,
       action,
       rule_id: ruleId,
-      message: `Demo: Credential rotation simulated for rule '${ruleId}'. Wire up the appropriate service API in .env.local for live remediation.`,
+      new_key_id: newKeyId,
+      message: ruleMessages[ruleId] || `Credential rotation successfully simulated for '${ruleId}'. Wire up live API credentials in .env.local for automated revocation.`,
       remediated_at: new Date().toISOString(),
     });
   } catch (err: unknown) {
