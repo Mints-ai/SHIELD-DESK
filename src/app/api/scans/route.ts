@@ -64,26 +64,6 @@ const MOCK_CVE_FINDINGS = [
   },
 ];
 
-const MOCK_SECRET_FINDINGS = [
-  {
-    type: "AWS Access Key",
-    source: "git_repo",
-    location: "config/aws_credentials.json",
-    snippet_masked: "[DEMO_AWS_KEY_ID_REDACTED]",
-    secret_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    risk_level: "CRITICAL",
-    action_available: "Rotate & Invalidate Key",
-  },
-  {
-    type: "GitHub Personal Token",
-    source: "env_file",
-    location: ".env.production",
-    snippet_masked: "[DEMO_GITHUB_PAT_REDACTED]",
-    secret_hash: "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-    risk_level: "HIGH",
-    action_available: "Revoke GitHub PAT",
-  },
-];
 
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -146,11 +126,13 @@ export async function GET(req: NextRequest) {
 
   const lastScan = getLastScanResult();
   const cveFindings = lastScan ? lastScan.findings : [];
+  const cachedGitleaks = getLastGitleaksScanResult();
+  const secretFindings = cachedGitleaks ? cachedGitleaks.findings : [];
   const metrics = {
     totalVulnerabilities: lastScan ? lastScan.findings.length : 0,
     critical: lastScan ? lastScan.summary.critical : 0,
     high: lastScan ? lastScan.summary.high : 0,
-    secretsExposed: 2,
+    secretsExposed: secretFindings.length,
     patchedHosts: 14,
     pendingPatches: 2,
   };
@@ -168,12 +150,7 @@ export async function GET(req: NextRequest) {
     metrics,
     findings: cveFindings,
     cveFindings,
-    secretFindings: (() => {
-      const cached = getLastGitleaksScanResult();
-      if (cached) return cached.findings;
-      // No live scan run yet — return mock data with demo label
-      return MOCK_SECRET_FINDINGS;
-    })(),
+    secretFindings,
     recentScans: [
       {
         id: "scan-trivy-9012",
@@ -395,16 +372,16 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // 4. Demo fallback
+      // 4. Fallback if Gitleaks binary not available
       return NextResponse.json({
         success: true,
         status: "success",
-        _demo_mode: true,
+        _demo_mode: false,
         gitleaksAvailable: false,
-        findings_count: MOCK_SECRET_FINDINGS.length,
-        message: `Demo mode: Gitleaks binary not installed. Run 'npm run setup:gitleaks'. Showing ${MOCK_SECRET_FINDINGS.length} example findings.`,
-        findings: MOCK_SECRET_FINDINGS,
-        secretFindings: MOCK_SECRET_FINDINGS,
+        findings_count: 0,
+        message: "Gitleaks binary not installed. Run 'npm run setup:gitleaks' to enable secrets scanning.",
+        findings: [],
+        secretFindings: [],
         setupCommand: "npm run setup:gitleaks",
       });
     }

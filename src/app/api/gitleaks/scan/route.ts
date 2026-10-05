@@ -10,42 +10,7 @@ import {
   GitleaksFinding,
 } from "@/lib/gitleaks";
 
-// ---------------------------------------------------------------------------
-// Demo fallback data — returned when binary is unavailable and fail-closed
-// policy is NOT active. Clearly marked as demo data.
-// ---------------------------------------------------------------------------
-const DEMO_SECRET_FINDINGS: GitleaksFinding[] = [
-  {
-    type: "AWS Access Key",
-    source: "git_history",
-    location: "config/aws_credentials.json",
-    snippet_masked: "AKIA[REDACTED BY GITLEAKS]",
-    secret_hash: "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3",
-    risk_level: "CRITICAL",
-    action_available: "Rotate AWS Key",
-    rule_id: "aws-access-key",
-    commit: "abc1234",
-    author: "demo-user",
-    date: new Date(Date.now() - 86400000).toISOString(),
-    line_number: 12,
-    fingerprint: "demo-aws-key-fingerprint",
-    tags: ["aws", "cloud"],
-    message: "[DEMO] Credential accidentally committed",
-  },
-  {
-    type: "GitHub Personal Token",
-    source: "env_file",
-    location: ".env.production",
-    snippet_masked: "ghp_[REDACTED BY GITLEAKS]",
-    secret_hash: "2c26b46b68ffc68ff99b453c1d30413413422d70",
-    risk_level: "HIGH",
-    action_available: "Revoke GitHub PAT",
-    rule_id: "github-pat",
-    line_number: 7,
-    fingerprint: "demo-github-pat-fingerprint",
-    tags: ["github", "vcs"],
-  },
-];
+
 
 // ---------------------------------------------------------------------------
 // GET /api/gitleaks/scan — return last cached scan result
@@ -149,23 +114,23 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Demo mode fallback
+      // Fallback if binary is not installed
       return NextResponse.json({
         success: true,
-        dataMode: "demo",
-        _demo_mode: true,
+        dataMode: "ready",
+        _demo_mode: false,
         gitleaksAvailable: false,
         tenantId: session.tenantId,
-        findings: DEMO_SECRET_FINDINGS,
-        secretFindings: DEMO_SECRET_FINDINGS,
+        findings: [],
+        secretFindings: [],
         summary: {
-          critical: 1,
-          high: 1,
+          critical: 0,
+          high: 0,
           medium: 0,
-          total: DEMO_SECRET_FINDINGS.length,
+          total: 0,
         },
         scanDurationMs: 0,
-        message: `Demo mode: Gitleaks binary not installed. Run 'npm run setup:gitleaks'. Showing ${DEMO_SECRET_FINDINGS.length} example findings.`,
+        message: "Gitleaks binary is not installed. Run 'npm run setup:gitleaks' to enable scanning.",
         setupCommand: "npm run setup:gitleaks",
       });
     }
