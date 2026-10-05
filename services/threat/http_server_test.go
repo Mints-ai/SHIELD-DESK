@@ -159,3 +159,56 @@ func TestHTTPContainmentHandler(t *testing.T) {
 		t.Errorf("expected successful block of 1 IP, got %v", res)
 	}
 }
+
+func TestIsIPBlockedAndAlerts(t *testing.T) {
+	store := NewMultiTenantThreatStore()
+
+	// Initial check
+	if store.IsIPBlocked("acme-tenant", "192.168.1.50") {
+		t.Errorf("expected IP not to be blocked initially")
+	}
+
+	// Block IP
+	store.BlockIP("acme-tenant", "192.168.1.50", "Test brute force")
+	if !store.IsIPBlocked("acme-tenant", "192.168.1.50") {
+		t.Errorf("expected IP to be blocked after BlockIP")
+	}
+
+	// Verify tenant isolation: Globex should not have this IP blocked
+	if store.IsIPBlocked("globex-tenant", "192.168.1.50") {
+		t.Errorf("leak: globex-tenant should not have acme's blocked IP")
+	}
+
+	// Record Alert
+	alert := &ThreatAlert{
+		Type:          "auth_failure",
+		Severity:      "high",
+		Title:         "Multiple Auth Failures",
+		Description:   "5 failed attempts",
+		ClientIP:      "192.168.1.50",
+		TargetUser:    "admin@acme.corp",
+		AttemptsCount: 5,
+	}
+	recorded := store.RecordAlert("acme-tenant", alert)
+	if recorded.ID == "" {
+		t.Errorf("expected generated alert ID")
+	}
+
+	alerts := store.GetAlerts("acme-tenant")
+	if len(alerts) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(alerts))
+	}
+	if alerts[0].Status != "active" {
+		t.Errorf("expected status 'active', got '%s'", alerts[0].Status)
+	}
+
+	// Acknowledge Alert
+	acked := store.AcknowledgeAlert("acme-tenant", recorded.ID)
+	if !acked {
+		t.Errorf("expected ack to succeed")
+	}
+	if alerts[0].Status != "acknowledged" {
+		t.Errorf("expected status 'acknowledged', got '%s'", alerts[0].Status)
+	}
+}
+

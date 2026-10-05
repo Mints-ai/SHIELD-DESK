@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 )
 
@@ -236,6 +237,71 @@ func (s *MultiTenantThreatStore) GetBlockedIPs(tenantID string) []*BlockedIPReco
 		}
 	}
 	return results
+}
+
+// IsIPBlocked checks if an IP is blocked for a specific tenant
+func (s *MultiTenantThreatStore) IsIPBlocked(tenantID, ip string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cleanIP := strings.TrimSpace(ip)
+	if cleanIP == "::1" || cleanIP == "" {
+		cleanIP = "127.0.0.1"
+	}
+
+	if tenantMap, exists := s.blockedIPs[tenantID]; exists {
+		_, blocked := tenantMap[cleanIP]
+		return blocked
+	}
+	return false
+}
+
+// RecordAlert records a threat alert in memory for a tenant
+func (s *MultiTenantThreatStore) RecordAlert(tenantID string, alert *ThreatAlert) *ThreatAlert {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if alert.ID == "" {
+		alert.ID = uuid.New().String()
+	}
+	if alert.CreatedAt.IsZero() {
+		alert.CreatedAt = time.Now().UTC()
+	}
+	if alert.Status == "" {
+		alert.Status = "active"
+	}
+
+	s.alerts[tenantID] = append([]*ThreatAlert{alert}, s.alerts[tenantID]...)
+	if len(s.alerts[tenantID]) > 100 {
+		s.alerts[tenantID] = s.alerts[tenantID][:100]
+	}
+	return alert
+}
+
+// GetAlerts returns threat alerts for a tenant
+func (s *MultiTenantThreatStore) GetAlerts(tenantID string) []*ThreatAlert {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	list := s.alerts[tenantID]
+	if list == nil {
+		return []*ThreatAlert{}
+	}
+	return list
+}
+
+// AcknowledgeAlert updates the status of an alert to acknowledged
+func (s *MultiTenantThreatStore) AcknowledgeAlert(tenantID, alertID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, a := range s.alerts[tenantID] {
+		if a.ID == alertID {
+			a.Status = "acknowledged"
+			return true
+		}
+	}
+	return false
 }
 
 // Reset clears sliding windows and tenant containment state
@@ -523,6 +589,79 @@ func (h *HTTPServer) Start() error {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"message": "Anomaly baselines and containment reset in Go engine",
+		})
+	})
+
+	// 6. Check if an IP is blocked for a tenant
+	mux.HandleFunc("GET /api/threats/is-blocked", func(w http.ResponseWriter, r *http.Request) {
+		ip := r.URL.Query().Get("ip")
+		tenantID := r.URL.Query().Get("tenant_id")
+		if tenantID == "" {
+			tenantID = "acme-tenant"
+		}
+
+		isBlocked := h.store.IsIPBlocked(tenantID, ip)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ip":         ip,
+			"tenant_id":  tenantID,
+			"is_blocked": isBlocked,
+		})
+	})
+
+	// 7. Record a Threat Alert
+	mux.HandleFunc("POST /api/threats/alerts", func(w http.ResponseWriter, r *http.Request) {
+		var alert ThreatAlert
+		if err := json.NewDecoder(r.Body).Decode(&alert); err != nil {
+			http.Error(w, `{"error":"invalid json body"}`, http.StatusBadRequest)
+			return
+		}
+		if alert.TenantID == "" {
+			alert.TenantID = "acme-tenant"
+		}
+
+		created := h.store.RecordAlert(alert.TenantID, &alert)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(created)
+	})
+
+	// 8. List Alerts
+	mux.HandleFunc("GET /api/threats/alerts", func(w http.ResponseWriter, r *http.Request) {
+		tenantID := r.URL.Query().Get("tenant_id")
+		if tenantID == "" {
+			tenantID = "acme-tenant"
+		}
+
+		alerts := h.store.GetAlerts(tenantID)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    "ok",
+			"tenant_id": tenantID,
+			"alerts":    alerts,
+		})
+	})
+
+	// 9. Acknowledge Alert
+	mux.HandleFunc("POST /api/threats/alerts/ack", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			TenantID string `json:"tenant_id"`
+			AlertID  string `json:"alert_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid json body"}`, http.StatusBadRequest)
+			return
+		}
+		if req.TenantID == "" {
+			req.TenantID = "acme-tenant"
+		}
+
+		success := h.store.AcknowledgeAlert(req.TenantID, req.AlertID)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   success,
+			"alert_id":  req.AlertID,
+			"tenant_id": req.TenantID,
 		})
 	})
 

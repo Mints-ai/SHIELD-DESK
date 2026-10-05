@@ -79,18 +79,12 @@ const failureTimestamps = global.__shieldDeskFailureTimestamps;
 const sudoTimestamps = global.__shieldDeskSudoTimestamps;
 const egressBursts = global.__shieldDeskEgressBursts;
 
-// Clear any stale local loopback or test containment from prior test iterations
+// Clear any stale local loopback containment from prior test iterations
 if (blockedIpsStore.has("127.0.0.1")) {
   blockedIpsStore.delete("127.0.0.1");
 }
-if (blockedIpsStore.has("117.247.219.254")) {
-  blockedIpsStore.delete("117.247.219.254");
-}
 if (ipFailureTracker.has("127.0.0.1")) {
   ipFailureTracker.delete("127.0.0.1");
-}
-if (ipFailureTracker.has("117.247.219.254")) {
-  ipFailureTracker.delete("117.247.219.254");
 }
 
 /**
@@ -108,9 +102,9 @@ export function isIpBlocked(ip?: string | null): boolean {
 }
 
 /**
- * Block a specific IP address
+ * Block a specific IP address and sync with Go Threat Engine
  */
-export function blockIp(ip: string, reason: string = "Exceeded 5 failed login attempts", attempts: number = 6): void {
+export function blockIp(ip: string, reason: string = "Exceeded 5 failed login attempts", attempts: number = 6, tenantId: string = "acme-tenant"): void {
   const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
   blockedIpsStore.set(cleanIp, {
     ip: cleanIp,
@@ -118,12 +112,26 @@ export function blockIp(ip: string, reason: string = "Exceeded 5 failed login at
     reason,
     attempts,
   });
+
+  // Sync to Go Threat Microservice asynchronously
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+  fetch(`${threatServiceUrl}/api/threats/containment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "block_ip",
+      tenant_id: tenantId,
+      ip: cleanIp,
+      reason,
+    }),
+    signal: AbortSignal.timeout(600),
+  }).catch(() => {});
 }
 
 /**
  * Unblock a specific IP address and clear its failure records
  */
-export function unblockIp(ip: string): boolean {
+export function unblockIp(ip: string, tenantId: string = "acme-tenant"): boolean {
   const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
   const deleted = blockedIpsStore.delete(cleanIp);
   ipFailureTracker.delete(cleanIp);
@@ -139,6 +147,20 @@ export function unblockIp(ip: string): boolean {
       alert.isBlocked = false;
     }
   }
+
+  // Sync to Go Threat Microservice asynchronously
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+  fetch(`${threatServiceUrl}/api/threats/containment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "unblock_ip",
+      tenant_id: tenantId,
+      ip: cleanIp,
+    }),
+    signal: AbortSignal.timeout(600),
+  }).catch(() => {});
+
   return deleted;
 }
 
@@ -407,9 +429,9 @@ export function acknowledgeThreatAlert(alertId: string, userId?: string | null):
 
 /**
  * Reset all live sliding-window anomaly telemetry buffers back to nominal baseline.
- * Also removes synthetic simulated burst alerts.
+ * Also removes synthetic simulated burst alerts and notifies Go Threat service.
  */
-export function resetAnomalyBaselines(): void {
+export function resetAnomalyBaselines(tenantId: string = "acme-tenant"): void {
   failureTimestamps.length = 0;
   sudoTimestamps.length = 0;
   egressBursts.length = 0;
@@ -422,12 +444,21 @@ export function resetAnomalyBaselines(): void {
   );
   alertsStore.length = 0;
   alertsStore.push(...filtered);
+
+  // Sync reset to Go Threat Microservice
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+  fetch(`${threatServiceUrl}/api/threats/reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tenant_id: tenantId }),
+    signal: AbortSignal.timeout(600),
+  }).catch(() => {});
 }
 
 /**
  * Clear or reset all threat alerts, failures, and unblock IPs (for testing/demo)
  */
-export function resetThreatAlerts(): void {
+export function resetThreatAlerts(tenantId: string = "acme-tenant"): void {
   alertsStore.length = 0;
   failureTracker.clear();
   ipFailureTracker.clear();
@@ -435,4 +466,13 @@ export function resetThreatAlerts(): void {
   failureTimestamps.length = 0;
   sudoTimestamps.length = 0;
   egressBursts.length = 0;
+
+  // Sync reset to Go Threat Microservice
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+  fetch(`${threatServiceUrl}/api/threats/reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tenant_id: tenantId }),
+    signal: AbortSignal.timeout(600),
+  }).catch(() => {});
 }
