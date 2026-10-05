@@ -174,25 +174,25 @@ export default function FleetPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="sd-dashboard-content flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--sd-border)] pb-5">
           <div>
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl sd-surface border border-[var(--sd-border)] text-[var(--sd-wheat)] shadow-xs">
                 <Server className="h-4.5 w-4.5" />
               </div>
-              <h1 className="text-xl font-bold tracking-tight text-[var(--sd-pine)]">
-                Universal Endpoint Fleet & Live Command
+              <h1 className="tracking-tight text-[var(--sd-text)] text-3xl font-light leading-tight">
+                Fleet & hosts
               </h1>
-              <span className="rounded-md bg-white border border-[var(--sd-border)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--sd-pine)] font-mono shadow-xs">
+              <span className="rounded-md sd-surface border border-[var(--sd-border)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--sd-pine)] font-mono shadow-xs">
                 {agents.length} Enrolled Hosts
               </span>
             </div>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
               Low-overhead Cross-Platform Endpoint Agent Fleet (Windows, Linux, macOS) with Real-Time Telemetry
             </p>
           </div>
@@ -200,7 +200,7 @@ export default function FleetPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={fetchFleet}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-pine)] transition cursor-pointer shadow-xs"
+              className="sd-button flex items-center gap-1.5 px-3 py-2 rounded-full border border-[var(--sd-border)] sd-surface hover:bg-[var(--sd-panel-hover)] text-[13px] font-medium text-[var(--sd-pine)] transition cursor-pointer shadow-xs"
             >
               <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin text-[var(--sd-pine)]")} />
               <span>Refresh Fleet</span>
@@ -210,10 +210,10 @@ export default function FleetPage() {
             <button
               onClick={handleToggleKillSwitch}
               className={cn(
-                "flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition cursor-pointer border shadow-xs",
+                "flex items-center gap-2 px-3.5 py-2 rounded-xl text-[13px] font-medium transition cursor-pointer border shadow-xs",
                 killSwitchEngaged
-                  ? "bg-[var(--sd-success)] text-white border-[var(--sd-success-border)]"
-                  : "bg-[var(--sd-danger)] text-white border-[var(--sd-danger-border)] hover:bg-[#b91c1c]"
+                  ? "bg-[var(--sd-success)] text-[var(--sd-on-accent)] border-[var(--sd-success-border)]"
+                  : "bg-[var(--sd-danger)] text-[var(--sd-on-accent)] border-[var(--sd-danger-border)] hover:opacity-90"
               )}
             >
               <PowerOff className="h-3.5 w-3.5" />
@@ -224,40 +224,40 @@ export default function FleetPage() {
 
         {/* Fleet KPI Banner */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs flex items-center justify-between">
+          <div className="p-4 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--sd-text-muted)] font-semibold">Active Endpoints</span>
-              <div className="text-2xl font-bold font-mono text-[var(--sd-pine)] mt-1">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-[var(--sd-text-muted)] font-medium">Active Endpoints</span>
+              <div className="text-2xl font-medium font-mono text-[var(--sd-pine)] mt-1">
                 {agents.filter((a) => a.status === "connected").length} / {agents.length}
               </div>
             </div>
             <Server className="h-6 w-6 text-[var(--sd-pine)] opacity-70" />
           </div>
 
-          <div className="p-4 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs flex items-center justify-between">
+          <div className="p-4 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--sd-text-muted)] font-semibold">Aggregate Telemetry</span>
-              <div className="text-2xl font-bold font-mono text-[var(--sd-pine)] mt-1">
-                {agents.reduce((acc, a) => acc + (a.eps || 0), 0)} <span className="text-xs font-normal text-[var(--sd-text-muted)]">EPS</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-[var(--sd-text-muted)] font-medium">Aggregate Telemetry</span>
+              <div className="text-2xl font-medium font-mono text-[var(--sd-pine)] mt-1">
+                {agents.reduce((acc, a) => acc + (a.eps || 0), 0)} <span className="text-[13px] font-normal text-[var(--sd-text-muted)]">EPS</span>
               </div>
             </div>
             <Activity className="h-6 w-6 text-[var(--sd-pine)] opacity-70" />
           </div>
 
-          <div className="p-4 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs flex items-center justify-between">
+          <div className="p-4 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--sd-text-muted)] font-semibold">Safety Baselines Active</span>
-              <div className="text-2xl font-bold font-mono text-[var(--sd-success)] mt-1">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-[var(--sd-text-muted)] font-medium">Safety Baselines Active</span>
+              <div className="text-2xl font-medium font-mono text-[var(--sd-success)] mt-1">
                 {agents.filter((a) => a.safety_snapshot_id).length}
               </div>
             </div>
             <ShieldAlert className="h-6 w-6 text-[var(--sd-success)] opacity-70" />
           </div>
 
-          <div className="p-4 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs flex items-center justify-between">
+          <div className="p-4 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--sd-text-muted)] font-semibold">Kill Switch Status</span>
-              <div className={cn("text-xs font-bold font-mono mt-2 uppercase tracking-wider", killSwitchEngaged ? "text-[var(--sd-danger)]" : "text-[var(--sd-success)]")}>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-[var(--sd-text-muted)] font-medium">Kill Switch Status</span>
+              <div className={cn("text-[13px] font-medium font-mono mt-2 uppercase tracking-wider", killSwitchEngaged ? "text-[var(--sd-danger)]" : "text-[var(--sd-success)]")}>
                 {killSwitchEngaged ? "ACTIVE (Fleet Severed)" : "NOMINAL (Listening)"}
               </div>
             </div>
@@ -277,15 +277,15 @@ export default function FleetPage() {
                   "p-4 rounded-2xl border transition-all cursor-pointer space-y-3",
                   isSelected
                     ? "border-[var(--sd-pine)] bg-[var(--sd-bg-alt)]/50 shadow-xs ring-1 ring-[var(--sd-pine)]/20"
-                    : "border-[var(--sd-border)] bg-white hover:border-[var(--sd-border-strong)] hover:bg-[var(--sd-panel-hover)]/40 shadow-xs"
+                    : "border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] hover:bg-[var(--sd-panel-hover)]/40 shadow-xs"
                 )}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className={cn("h-2 w-2 rounded-full", agent.status === "connected" ? "bg-[var(--sd-success)]" : "bg-[var(--sd-danger)]")} />
-                    <span className="font-mono font-bold text-xs text-[var(--sd-pine)]">{agent.hostname}</span>
+                    <span className="font-mono font-medium text-[13px] text-[var(--sd-pine)]">{agent.hostname}</span>
                   </div>
-                  <span className="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--sd-panel-raised)] text-[var(--sd-pine)] border border-[var(--sd-border)] font-medium">
+                  <span className="text-[11px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-[var(--sd-panel-raised)] text-[var(--sd-pine)] border border-[var(--sd-border)] font-medium">
                     {agent.os_type}
                   </span>
                 </div>
@@ -293,7 +293,7 @@ export default function FleetPage() {
                 <div className="space-y-1.5 text-[11px] text-[var(--sd-text-muted)] font-mono">
                   <div className="flex justify-between">
                     <span>IP Address:</span>
-                    <span className="text-[var(--sd-text)] font-semibold">{agent.ip_address}</span>
+                    <span className="text-[var(--sd-text)] font-medium">{agent.ip_address}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Agent Version:</span>
@@ -301,15 +301,15 @@ export default function FleetPage() {
                   </div>
                   <div className="flex justify-between">
                     <span>Events/sec:</span>
-                    <span className="text-[var(--sd-pine)] font-semibold">{agent.eps} EPS</span>
+                    <span className="text-[var(--sd-pine)] font-medium">{agent.eps} EPS</span>
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-[var(--sd-border)] space-y-2 text-[10px]">
+                <div className="pt-2 border-t border-[var(--sd-border)] space-y-2 text-[11px]">
                   <div>
                     <div className="flex justify-between mb-1">
                       <span className="text-[var(--sd-text-muted)]">CPU Usage</span>
-                      <span className="font-mono text-[var(--sd-text)] font-semibold">{agent.cpu_usage}%</span>
+                      <span className="font-mono text-[var(--sd-text)] font-medium">{agent.cpu_usage}%</span>
                     </div>
                     <div className="h-1.5 w-full bg-[var(--sd-bg-alt)] rounded-full overflow-hidden">
                       <div className="h-full bg-[var(--sd-pine)] rounded-full" style={{ width: `${agent.cpu_usage}%` }} />
@@ -319,7 +319,7 @@ export default function FleetPage() {
                   <div>
                     <div className="flex justify-between mb-1">
                       <span className="text-[var(--sd-text-muted)]">Memory Usage</span>
-                      <span className="font-mono text-[var(--sd-text)] font-semibold">{agent.memory_usage}%</span>
+                      <span className="font-mono text-[var(--sd-text)] font-medium">{agent.memory_usage}%</span>
                     </div>
                     <div className="h-1.5 w-full bg-[var(--sd-bg-alt)] rounded-full overflow-hidden">
                       <div className="h-full bg-[var(--sd-pine)]/60 rounded-full" style={{ width: `${agent.memory_usage}%` }} />
@@ -335,28 +335,28 @@ export default function FleetPage() {
         {selectedAgent && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Terminal Command Dispatcher */}
-            <div className="rounded-2xl border border-[var(--sd-border)] bg-white p-5 shadow-xs space-y-4">
+            <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Terminal className="h-4 w-4 text-[var(--sd-pine)]" />
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                  <h3 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
                     Live Instruction Console: {selectedAgent.hostname}
                   </h3>
                 </div>
-                <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
+                <span className="text-[11px] font-mono text-[var(--sd-text-muted)]">
                   OS: {selectedAgent.os_type} &bull; v{selectedAgent.agent_version}
                 </span>
               </div>
 
-              <form onSubmit={handleExecuteCommand} className="space-y-4 text-xs">
+              <form onSubmit={handleExecuteCommand} className="space-y-4 text-[13px]">
                 <div>
-                  <label className="text-[11px] font-semibold text-[var(--sd-pine)] block mb-1">
+                  <label className="text-[11px] font-medium text-[var(--sd-pine)] block mb-1">
                     Select Endpoint Command
                   </label>
                   <select
                     value={commandInput}
                     onChange={(e) => setCommandInput(e.target.value)}
-                    className="w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2.5 text-xs text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
+                    className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2.5 text-[13px] text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
                   >
                     <option value="take_safety_snapshot">take_safety_snapshot (Capture routing + process tree baseline)</option>
                     <option value="isolate_host">isolate_host (Quarantine network interface - Tier 2 Gated)</option>
@@ -368,13 +368,13 @@ export default function FleetPage() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[11px] font-semibold text-[var(--sd-pine)] block mb-1">
+                    <label className="text-[11px] font-medium text-[var(--sd-pine)] block mb-1">
                       Autonomy Tier
                     </label>
                     <select
                       value={selectedTier}
                       onChange={(e) => setSelectedTier(e.target.value as "Tier 1" | "Tier 2")}
-                      className="w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2.5 text-xs text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
+                      className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2.5 text-[13px] text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
                     >
                       <option value="Tier 1">Tier 1 (Automatic Action)</option>
                       <option value="Tier 2">Tier 2 (Requires Approval Token)</option>
@@ -382,7 +382,7 @@ export default function FleetPage() {
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-[var(--sd-pine)] block mb-1">
+                    <label className="text-[11px] font-medium text-[var(--sd-pine)] block mb-1">
                       Approval Token ID {selectedTier === "Tier 2" && <span className="text-[var(--sd-warning)]">*</span>}
                     </label>
                     <input
@@ -391,7 +391,7 @@ export default function FleetPage() {
                       value={tokenIdInput}
                       onChange={(e) => setTokenIdInput(e.target.value)}
                       disabled={selectedTier === "Tier 1"}
-                      className="w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-xs text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)] font-mono disabled:opacity-40"
+                      className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)] font-mono disabled:opacity-40"
                     />
                   </div>
                 </div>
@@ -399,33 +399,33 @@ export default function FleetPage() {
                 <button
                   type="submit"
                   disabled={isExecuting || killSwitchEngaged}
-                  className="w-full py-2.5 px-4 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] text-[#f7f4ed] text-xs font-semibold transition flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
+                  className="sd-button sd-button-primary w-full py-2.5 px-4 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50"
                 >
-                  <Play className="h-3.5 w-3.5 fill-current text-[#e6dbbf]" />
+                  <Play className="h-3.5 w-3.5 fill-current text-[var(--sd-on-accent)]" />
                   <span>{isExecuting ? "Executing Instruction..." : "Dispatch Instruction to Agent"}</span>
                 </button>
               </form>
             </div>
 
             {/* Real-time Command Log */}
-            <div className="rounded-2xl border border-[var(--sd-border)] bg-white p-5 shadow-xs flex flex-col">
+            <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs flex flex-col">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                <h3 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
                   Agent Instruction Audit Trail
                 </h3>
-                <span className="text-[10px] text-[var(--sd-text-muted)] font-mono">Immutable SHA-256 Chained</span>
+                <span className="text-[11px] text-[var(--sd-text-muted)] font-mono">Immutable SHA-256 Chained</span>
               </div>
 
               <div className="space-y-2 flex-1 overflow-y-auto max-h-[300px]">
                 {commandLogs.map((log) => (
                   <div
                     key={log.id}
-                    className="p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] font-mono text-xs space-y-1"
+                    className="p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] font-mono text-[13px] space-y-1"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-[var(--sd-pine)]">{log.command}</span>
+                      <span className="font-medium text-[var(--sd-pine)]">{log.command}{log.id === "init-1" && <span className="sd-sample-label ml-2 font-sans">Sample entry</span>}</span>
                       <span className={cn(
-                        "text-[10px] uppercase font-bold",
+                        "text-[11px] uppercase font-medium",
                         log.status === "succeeded" && "text-[var(--sd-success)]",
                         log.status === "failed" && "text-[var(--sd-danger)]",
                         log.status === "executing" && "text-[var(--sd-warning)] animate-pulse"
@@ -433,8 +433,8 @@ export default function FleetPage() {
                         {log.status}
                       </span>
                     </div>
-                    <div className="text-[10.5px] text-[var(--sd-text-muted)]">{log.output}</div>
-                    <div className="text-[9.5px] text-[var(--sd-text-muted)] flex items-center justify-between pt-1">
+                    <div className="text-[11px] text-[var(--sd-text-muted)]">{log.output}</div>
+                    <div className="text-[11px] text-[var(--sd-text-muted)] flex items-center justify-between pt-1">
                       <span>{log.tier}</span>
                       <span>{log.time}</span>
                     </div>

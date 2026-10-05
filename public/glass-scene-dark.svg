@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" fill="none">
+  <defs>
+    <radialGradient id="reflection"><stop stop-color="#E3D5BB" stop-opacity=".075"/><stop offset=".42" stop-color="#C8AA6F" stop-opacity=".025"/><stop offset="1" stop-color="#C8AA6F" stop-opacity="0"/></radialGradient>
+    <radialGradient id="warmth"><stop stop-color="#A07F3A" stop-opacity=".12"/><stop offset=".45" stop-color="#A07F3A" stop-opacity=".035"/><stop offset="1" stop-color="#A07F3A" stop-opacity="0"/></radialGradient>
+    <linearGradient id="ribbon" x1="150" y1="600" x2="650" y2="1000" gradientUnits="userSpaceOnUse"><stop stop-color="#E3D5BB" stop-opacity=".018"/><stop offset=".35" stop-color="#C8AA6F" stop-opacity=".04"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>
+    <linearGradient id="edge" x1="0" y1="640" x2="1600" y2="880" gradientUnits="userSpaceOnUse"><stop stop-color="#E3D5BB" stop-opacity=".07"/><stop offset=".2" stop-color="#C8AA6F" stop-opacity=".16"/><stop offset=".5" stop-color="#E3D5BB" stop-opacity=".025"/><stop offset=".82" stop-color="#C8AA6F" stop-opacity=".095"/><stop offset="1" stop-color="#E3D5BB" stop-opacity="0"/></linearGradient>
+    <linearGradient id="sweep" x1="900" y1="60" x2="1500" y2="350" gradientUnits="userSpaceOnUse"><stop stop-color="#E3D5BB" stop-opacity="0"/><stop offset=".6" stop-color="#E3D5BB" stop-opacity=".045"/><stop offset="1" stop-color="#E3D5BB" stop-opacity="0"/></linearGradient>
+  </defs>
+  <ellipse cx="290" cy="80" rx="190" ry="300" transform="rotate(32 290 80)" fill="url(#reflection)"/>
+  <ellipse cx="1490" cy="250" rx="190" ry="300" transform="rotate(24 1490 250)" fill="url(#warmth)"/>
+  <ellipse cx="370" cy="865" rx="240" ry="200" fill="url(#warmth)" opacity=".65"/>
+  <path d="M-80 615C170 450 310 810 570 735S980 420 1210 560S1490 835 1700 620V1100H-80Z" fill="url(#ribbon)"/>
+  <path d="M-80 615C170 450 310 810 570 735S980 420 1210 560S1490 835 1700 620" stroke="url(#edge)" stroke-width=".9"/>
+  <path d="M-100 860C190 645 350 950 650 845S1080 730 1350 900S1580 905 1720 760V1100H-100Z" fill="url(#ribbon)" opacity=".55"/>
+  <path d="M-100 860C190 645 350 950 650 845S1080 730 1350 900S1580 905 1720 760" stroke="url(#edge)" stroke-width=".7" opacity=".65"/>
+  <path d="M870-40C1010 80 1190 45 1370 180S1590 280 1690 390" stroke="url(#sweep)" stroke-width=".8"/>
+</svg>
