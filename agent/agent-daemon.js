@@ -51,6 +51,38 @@ function getOsType() {
   return 'linux';
 }
 
+// Detect real host IPv4 address (prioritizing Wi-Fi/Ethernet physical adapters)
+function getLocalIpAddress() {
+  const interfaces = os.networkInterfaces();
+  const candidates = [];
+
+  for (const name of Object.keys(interfaces)) {
+    for (const net of interfaces[name] || []) {
+      if (net.family === 'IPv4' && !net.internal && net.address !== '127.0.0.1') {
+        const lowerName = name.toLowerCase();
+        const isVirtual =
+          /virtual|vbox|vmware|loopback|pseudo|docker|wsl|hyper-v|vethernet/i.test(lowerName) ||
+          net.address.startsWith('192.168.56.') ||
+          net.address.startsWith('169.254.');
+
+        if (isVirtual) continue;
+
+        let priority = 1;
+        if (/wi-fi|wifi|wireless|wlan/i.test(lowerName)) {
+          priority = 10;
+        } else if (/ethernet|eth|en/i.test(lowerName)) {
+          priority = 5;
+        }
+
+        candidates.push({ address: net.address, name, priority });
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.priority - a.priority);
+  return candidates[0] ? candidates[0].address : '127.0.0.1';
+}
+
 // Calculate real CPU usage percentage between intervals
 function cpuAverage() {
   const cpus = os.cpus();
@@ -128,7 +160,7 @@ async function start() {
   console.log('\x1b[36m====================================================\x1b[0m');
   console.log(`[*] Target Hostname:     \x1b[33m${customHostname}\x1b[0m`);
   console.log(`[*] Platform / OS:       \x1b[33m${getOsType()} (${os.release()})\x1b[0m`);
-  console.log(`[*] Control Plane URL:   \x1b[33${controlUrl}\x1b[0m`);
+  console.log(`[*] Control Plane URL:   \x1b[33m${controlUrl}\x1b[0m`);
   console.log(`[*] Presenting enrollment token to control plane...`);
 
   // 1. Enroll Agent
@@ -136,12 +168,16 @@ async function start() {
   let tenantId = '';
 
   try {
+    const localIp = getLocalIpAddress();
+    console.log(`[*] Detected Local IP:    \x1b[33m${localIp}\x1b[0m`);
+
     const enrollRes = await request(`${controlUrl}/api/agent/enroll`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     }, {
       token: token.trim(),
       hostname: customHostname,
+      ipAddress: localIp,
       osType: getOsType(),
       agentVersion: '0.4.2',
     });
@@ -155,22 +191,39 @@ async function start() {
     tenantId = enrollRes.data.tenantId;
 
     console.log(`\x1b[32m[+] ENROLLMENT SUCCESSFUL!\x1b[0m`);
-    console.log(`    Agent ID:  \x1b[35m${agentId}\x1b[0m`);
-    console.log(`    Tenant ID: \x1b[35m${tenantId}\x1b[0m`);
-    console.log(`    Status:    \x1b[32mCONNECTED\x1b[0m`);
+    console.log(`    Agent ID:   \x1b[35m${agentId}\x1b[0m`);
+    console.log(`    Tenant ID:  \x1b[35m${tenantId}\x1b[0m`);
+    console.log(`    Host IP:    \x1b[35m${localIp}\x1b[0m`);
+    console.log(`    Status:     \x1b[32mCONNECTED\x1b[0m`);
   } catch (err) {
     console.error(`\x1b[31m[Network Error]\x1b[0m Could not connect to ${controlUrl}:`, err.message);
     process.exit(1);
   }
 
-  console.log('\n[*] Streaming real-time OS telemetry every 3 seconds (Ctrl+C to stop)...\n');
+  console.log('\n[*] Streaming real-time OS telemetry every 3 seconds (Ctrl+C to stop/disconnect)...\n');
 
   let tickCount = 0;
   let running = true;
 
   process.on('SIGINT', async () => {
-    console.log('\n\x1b[33m[*] Agent daemon shutting down...\x1b[0m');
+    console.log('\n\x1b[33m[*] Agent daemon shutting down — notifying control plane...\x1b[0m');
     running = false;
+    try {
+      await request(`${controlUrl}/api/agent/heartbeat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-ShieldDesk-Agent-ID': agentId,
+        },
+      }, {
+        agentId,
+        status: 'disconnected',
+        cpuUsage: 0,
+        memoryUsage: 0,
+        eps: 0,
+      });
+      console.log('\x1b[32m[+] Successfully signaled DISCONNECTED to control plane.\x1b[0m');
+    } catch {}
     process.exit(0);
   });
 
@@ -181,6 +234,7 @@ async function start() {
     tickCount++;
     const cpu = getCpuUsage();
     const mem = getMemoryUsage();
+    const localIp = getLocalIpAddress();
     // Real events: baseline background security monitor checks
     const eps = Math.floor(Math.random() * 20) + 10; 
 
@@ -193,6 +247,7 @@ async function start() {
         },
       }, {
         agentId,
+        ipAddress: localIp,
         cpuUsage: cpu,
         memoryUsage: mem,
         eps,

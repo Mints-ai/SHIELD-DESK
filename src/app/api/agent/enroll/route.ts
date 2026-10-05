@@ -22,10 +22,15 @@ export async function POST(req: NextRequest) {
     const validOsTypes: OsType[] = ["linux", "windows", "darwin"];
     const resolvedOsType: OsType = validOsTypes.includes(osType) ? osType : "linux";
 
-    const clientIp =
+    let clientIp =
       (typeof ipAddress === "string" && ipAddress) ||
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      "127.0.0.1";
+      "";
+
+    if (!clientIp || clientIp === "::1" || clientIp === "127.0.0.1" || clientIp.includes("::ffff:") || clientIp === "localhost") {
+      const { getResolvedHostIp } = await import("@/lib/fleet/liveTelemetry");
+      clientIp = getResolvedHostIp();
+    }
 
     const result = await enrollEndpointAgent({
       rawToken: token.trim(),
