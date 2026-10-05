@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
         status: string;
       }>(
         `UPDATE endpoint_agents
-         SET last_heartbeat = now(),
+         SET last_seen_at = now(),
              cpu_usage = COALESCE($1, cpu_usage),
              memory_usage = COALESCE($2, memory_usage),
              eps = COALESCE($3, eps),

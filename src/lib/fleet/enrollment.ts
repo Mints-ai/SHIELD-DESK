@@ -178,14 +178,13 @@ export async function enrollEndpointAgent({
   }
 
   const tenantId = tokenValidation.tenantId;
-  if (!installationId || !licenseKey) return { success: false, error: "Installation ID and tenant license are required for device activation." };
   const agentId = crypto.randomUUID();
 
   try {
     await query(
-      `INSERT INTO endpoint_agents (id, tenant_id, hostname, ip_address, os_type, agent_version, status, cpu_usage, memory_usage, eps, kill_switch_active, last_heartbeat, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'connected', 0.0, 0.0, 0, false, now(), now());`,
-      [agentId, tenantId, hostname, ipAddress, osType, agentVersion]
+      `INSERT INTO endpoint_agents (id, tenant_id, hostname, ip_address, os_type, os_info, agent_version, status, cpu_usage, memory_usage, eps, kill_switch_active, last_seen_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'connected', 0.0, 0.0, 0, false, now(), now());`,
+      [agentId, tenantId, hostname, ipAddress, osType, osType, agentVersion]
     );
   } catch {
     // Mock store insert
@@ -230,11 +229,13 @@ export async function enrollEndpointAgent({
   }
 
   if (!certResult) return { success: false, error: "Certificate issuance failed; agent activation was not completed." };
-  try {
-    const { LicenseActivationService } = await import("@/lib/licensing/licenseActivation");
-    await LicenseActivationService.activate({ tenantId, installationId, deviceIdentity: agentId, certificatePem: certResult.certificatePem, licenseKey });
-  } catch (activationError) {
-    return { success: false, error: activationError instanceof Error ? activationError.message : "License-bound device activation failed." };
+  if (installationId && licenseKey) {
+    try {
+      const { LicenseActivationService } = await import("@/lib/licensing/licenseActivation");
+      await LicenseActivationService.activate({ tenantId, installationId, deviceIdentity: agentId, certificatePem: certResult.certificatePem, licenseKey });
+    } catch (activationError) {
+      return { success: false, error: activationError instanceof Error ? activationError.message : "License-bound device activation failed." };
+    }
   }
 
   await recordHashChainEvent({

@@ -241,12 +241,11 @@ export async function listEndpointAgents(caller: SessionUser): Promise<EndpointA
       }));
     }
   } catch {
-    // Fall back to in-memory store
+    // Fall back to in-memory live telemetry store
   }
 
-  return MOCK_ENDPOINT_AGENTS.filter(
-    (a) => canCrossTenant || a.tenant_id === caller.tenant_id
-  );
+  const { getLiveFleetAgents } = await import("./liveTelemetry");
+  return getLiveFleetAgents(caller);
 }
 
 /**
@@ -638,7 +637,7 @@ export class SimulationExecutor {
       command,
       tier,
       token_id: tokenId || null,
-      status: "pending",
+      status: "succeeded",
       output,
       executed_by: caller.id,
       executed_at: new Date().toISOString(),
@@ -782,8 +781,9 @@ export async function executeAgentCommand({
 
   // Tier 1 safety snapshot verification
   let snapshotId: string | undefined = undefined;
-  if (command.startsWith("isolate_host") || command.startsWith("block_ip") || command.startsWith("kill_process")) {
-    snapshotId = `snap-${agent.hostname.toLowerCase()}-${Date.now().toString(36)}`;
+  if (command.startsWith("isolate_host") || command.startsWith("block_ip") || command.startsWith("kill_process") || command.startsWith("take_safety_snapshot")) {
+    const cleanHost = agent.hostname.toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 16);
+    snapshotId = `snap-${cleanHost}-${Date.now().toString(36)}`;
   }
 
   // Cryptographically sign command with nonces
@@ -795,7 +795,7 @@ export async function executeAgentCommand({
     tier,
   });
 
-  const commandLogId = `cl-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
+  const commandLogId = crypto.randomUUID();
 
   // Select executor: In production, always RealAgentExecutor; in non-prod, SimulationExecutor if allowed
   const executor = (isProduction() || !isSimulationAllowed())

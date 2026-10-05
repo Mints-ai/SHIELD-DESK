@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
-import { getLiveFleetAgents } from "@/lib/fleet/liveTelemetry";
+import { getLiveCommandLogs } from "@/lib/fleet/liveTelemetry";
 import { trackError } from "@/lib/observability/errorTracker";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
@@ -13,10 +15,13 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const agents = await getLiveFleetAgents(caller);
-    return NextResponse.json({ agents });
+    const { searchParams } = new URL(req.url);
+    const agentId = searchParams.get("agentId") || undefined;
+
+    const logs = await getLiveCommandLogs(caller, agentId);
+    return NextResponse.json({ logs });
   } catch (err: unknown) {
-    trackError(err, { endpoint: "/api/fleet" });
+    trackError(err, { endpoint: "/api/fleet/logs" });
     const msg = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
