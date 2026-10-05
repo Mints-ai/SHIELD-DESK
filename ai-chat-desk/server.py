@@ -6,15 +6,18 @@ Serves interactive dashboard and prediction API on localhost:8000.
 import os
 import json
 import urllib.parse
+import requests
+import importlib
 from typing import Any
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from cve_ai_engine import CVEAIEngine
 
 # Initialize Sentry error reporting if SENTRY_DSN is configured
+sentry_sdk: Any = None
 sentry_dsn = os.getenv("SENTRY_DSN")
 if sentry_dsn:
     try:
-        import sentry_sdk
+        sentry_sdk = importlib.import_module("sentry_sdk")
         sentry_sdk.init(
             dsn=sentry_dsn,
             traces_sample_rate=1.0,
@@ -22,7 +25,8 @@ if sentry_dsn:
             environment=os.getenv("NODE_ENV", "production")
         )
         print("[Sentry] Python CVE AI Engine error tracking initialized.")
-    except ImportError:
+    except (ImportError, ModuleNotFoundError):
+        sentry_sdk = None
         print("[Sentry] sentry-sdk not installed, continuing without cloud error reporting.")
     except Exception as init_err:
         print(f"[Sentry] Initialization warning: {init_err}")
@@ -65,12 +69,50 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                 )
                 self._send_json(result)
             except Exception as e:
-                try:
-                    import sentry_sdk
-                    sentry_sdk.capture_exception(e)
-                except Exception:
-                    pass
+                if sentry_sdk is not None:
+                    try:
+                        sentry_sdk.capture_exception(e)
+                    except Exception:
+                        pass
                 self._send_json({"error": str(e)}, status=500)
+            return
+
+        elif url.path == "/api/trigger_scan":
+            try:
+                # Call the Next.js API which runs Trivy locally with dev user identity
+                user_id = data.get("user_id") if isinstance(data, dict) else "dev-admin"
+                scan_url = "http://localhost:3000/api/scans"
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-ShieldDesk-User": user_id or "dev-admin",
+                }
+                payload = {
+                    "action": "cve_scan",
+                    "target_path": data.get("target_path", ".") if isinstance(data, dict) else ".",
+                    "scan_type": data.get("scan_type", "fs") if isinstance(data, dict) else "fs",
+                }
+                response = requests.post(scan_url, json=payload, headers=headers, timeout=180)
+                
+                if response.ok:
+                    data_res = response.json()
+                    findings = data_res.get("findings", [])
+                    if findings and len(findings) > 0:
+                        self._send_json({
+                            "success": True, 
+                            "message": f"Scan completed: {len(findings)} vulnerabilities found.", 
+                            "findings": findings,
+                            "metrics": data_res.get("metrics", {}),
+                        })
+                    else:
+                        self._send_json({
+                            "success": True, 
+                            "message": data_res.get("message") or "No vulnerabilities detected.",
+                            "findings": [],
+                        })
+                else:
+                    self._send_json({"error": f"Scan service returned error: {response.status_code}"}, status=response.status_code)
+            except Exception as e:
+                self._send_json({"error": f"Failed to trigger scan: {str(e)}"}, status=500)
             return
 
         elif url.path == "/api/batch":

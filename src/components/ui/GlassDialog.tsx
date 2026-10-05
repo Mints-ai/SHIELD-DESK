@@ -8,12 +8,13 @@ interface GlassDialogProps {
   onClose: () => void;
   labelledBy: string;
   describedBy?: string;
+  closeOnBackdrop?: boolean;
   className?: string;
   children: ReactNode;
 }
 
 /** Native modal semantics keep focus inside the dialog and restore its opener. */
-export function GlassDialog({ open, onClose, labelledBy, describedBy, className, children }: GlassDialogProps) {
+export function GlassDialog({ open, onClose, labelledBy, describedBy, closeOnBackdrop = false, className, children }: GlassDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -23,6 +24,7 @@ export function GlassDialog({ open, onClose, labelledBy, describedBy, className,
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previousOverflow = document.body.style.overflow;
     dialog.showModal();
+    dialog.querySelector<HTMLElement>("[data-autofocus]")?.focus({ preventScroll: true });
     document.body.style.overflow = "hidden";
 
     return () => {
@@ -37,6 +39,13 @@ export function GlassDialog({ open, onClose, labelledBy, describedBy, className,
       ref={dialogRef}
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
+      onClick={(event) => {
+        if (!closeOnBackdrop || event.target !== event.currentTarget) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
+          onClose();
+        }
+      }}
       onCancel={(event) => {
         event.preventDefault();
         onClose();

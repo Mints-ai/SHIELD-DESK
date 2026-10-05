@@ -18,6 +18,7 @@ import { GET as fleetCaGET } from "@/app/api/fleet/ca/route";
 import { GET as fleetCertificatesGET } from "@/app/api/fleet/certificates/route";
 import { POST as revokeCertPOST } from "@/app/api/fleet/certificates/revoke/route";
 import { POST as rotateCertPOST } from "@/app/api/agent/certificate/rotate/route";
+import { issueCommercialLicense } from "@/lib/billing/licenses";
 
 test("ShieldDesk SD-008 & SD-009: X.509 Certificate Pipeline & Revocation Suite", async (t) => {
   const adminToken = createSessionToken({
@@ -174,6 +175,8 @@ test("ShieldDesk SD-008 & SD-009: X.509 Certificate Pipeline & Revocation Suite"
         token: rawToken,
         hostname: "SEC-WORKSTATION-08",
         osType: "linux",
+        installationId: "install-certificate-test-001",
+        licenseKey: issueCommercialLicense({ tenantId: "acme-tenant", tier: "professional", maxEndpoints: 100, maxUsers: 20, features: ["endpointFleet"], expiresAt: new Date(Date.now() + 86400000).toISOString() }).rawLicense,
       }),
     });
 

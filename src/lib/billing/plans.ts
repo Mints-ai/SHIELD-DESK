@@ -290,3 +290,34 @@ export async function updateTenantSubscription(
 
   return updated;
 }
+
+/** Applies a Stripe lifecycle state without silently resetting tier or period. */
+export async function setTenantSubscriptionStatus(
+  tenantId: string,
+  status: TenantSubscription["status"],
+  options: { tier?: BillingTier; subscriptionId?: string; currentPeriodEnd?: string } = {}
+): Promise<TenantSubscription> {
+  const current = await getTenantSubscription(tenantId);
+  const tier = options.tier || current.tier;
+  const updated: TenantSubscription = {
+    ...current,
+    tenantId,
+    tier,
+    status,
+    currentPeriodEnd: options.currentPeriodEnd || current.currentPeriodEnd,
+    maxEndpoints: BILLING_PLANS[tier].maxEndpoints,
+    paymentProvider: "stripe",
+    subscriptionId: options.subscriptionId || current.subscriptionId,
+  };
+  MOCK_SUBSCRIPTIONS[tenantId] = updated;
+  try {
+    await query(
+      `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, subscription_id, updated_at)
+       VALUES ($1,$2,$3,$4,$5,NOW())
+       ON CONFLICT (tenant_id) DO UPDATE SET tier=$2, status=$3, current_period_end=$4, subscription_id=$5, updated_at=NOW()`,
+      [tenantId, tier, status, updated.currentPeriodEnd, updated.subscriptionId || null]
+    );
+  } catch { /* in-memory fallback */ }
+  await recordHashChainEvent({ tenantId, eventType: "SUBSCRIPTION_STATUS_UPDATED", actorId: "billing:stripe", payload: { status, tier, subscriptionId: updated.subscriptionId } });
+  return updated;
+}

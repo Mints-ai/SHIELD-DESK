@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { ShieldAlert, AlertTriangle, CheckCircle, Info, Tag } from "lucide-react";
+import { ShieldAlert, AlertTriangle, CheckCircle, Info, Tag, ExternalLink } from "lucide-react";
 
 interface FormattedAssistantMessageProps {
   content: string;
@@ -109,12 +109,28 @@ export function FormattedAssistantMessage({ content }: FormattedAssistantMessage
    */
   const renderTokens = (text: string) => {
     const tokenRegex =
-      /(\*\*.*?\*\*|`.*?`|\*[^*\n]+\*|\b(?:CRITICAL|HIGH|MEDIUM|LOW-TO-MEDIUM|LOW|RESOLVED|INVESTIGATING|OPEN|CLOSED)\b|\bCVE-\d{4}-\d{4,7}\b|\bINC-\d+\b)/gi;
+      /(\[.*?\]\(.*?\)|\*\*.*?\*\*|`.*?`|\*[^*\n]+\*|\b(?:CRITICAL|HIGH|MEDIUM|LOW-TO-MEDIUM|LOW|RESOLVED|INVESTIGATING|OPEN|CLOSED)\b|\bCVE-\d{4}-\d{4,7}\b|\bINC-\d+\b)/gi;
 
     const parts = text.split(tokenRegex);
 
     return parts.map((part, i) => {
       if (!part) return null;
+
+      // Markdown Link: [text](url)
+      const linkMatch = part.match(/^\[(.*?)\]\((.*?)\)$/);
+      if (linkMatch) {
+        const [, linkText, linkUrl] = linkMatch;
+        return (
+          <a
+            key={i}
+            href={linkUrl}
+            className="inline-flex items-center gap-1.5 my-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--sd-pine)] text-[var(--sd-on-accent)] hover:opacity-90 transition-all shadow-xs border border-[var(--sd-pine)] cursor-pointer no-underline"
+          >
+            <span>{linkText}</span>
+            <ExternalLink className="h-3 w-3 shrink-0" />
+          </a>
+        );
+      }
 
       // Bold text: **text**
       if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {

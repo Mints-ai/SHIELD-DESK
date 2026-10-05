@@ -1,0 +1,52 @@
+# ShieldDesk Gitleaks Configuration
+# Allowlists for false positives in test fixtures, demo data, and build artifacts.
+# See: https://github.com/gitleaks/gitleaks?tab=readme-ov-file#configuration
+
+title = "ShieldDesk Gitleaks Config"
+
+[allowlist]
+  description = "ShieldDesk test, mock, and demo file allowlist"
+
+  # Exclude entire paths that legitimately contain fake/demo credential strings
+  paths = [
+    '''.*test.*''',
+    '''.*mock.*''',
+    '''.*\.example$''',
+    '''.*\.example\..*''',
+    '''.*CHECKLIST\.md''',
+    '''.*README\.md''',
+    '''.*BLAST_RADIUS_README\.md''',
+    '''.*SHIELDDESK_PROJECT_GUIDE\.md''',
+    '''.*node_modules.*''',
+    '''.*\.next.*''',
+    '''.*tools/trivy.*''',
+    '''.*tools/gitleaks.*''',
+    '''.*pgdata.*''',
+    '''.*dist.*''',
+    '''.*coverage.*''',
+  ]
+
+  # Exclude known demo/placeholder patterns that are safe
+  regexes = [
+    '''DEMO_.*_REDACTED''',
+    '''AKIA1234567890ABCDEF''',
+    '''\[DEMO_.*\]''',
+    '''example\.com''',
+    '''localhost''',
+    '''shielddesk\.internal''',
+    '''SuperSecretSecOpsPassword#2026''',
+    '''SuperSecretPassword123!''',
+  ]
+
+  # Exclude specific commit SHAs that contain intentional demo data
+  commits = []
+
+  # Stop words that suppress findings
+  stopwords = [
+    "REDACTED",
+    "DEMO",
+    "PLACEHOLDER",
+    "EXAMPLE",
+    "YOUR_",
+    "_GOES_HERE",
+  ]

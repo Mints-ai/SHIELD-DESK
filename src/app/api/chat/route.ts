@@ -12,6 +12,7 @@ import {
   generateMitigationPlan,
   simulateBlastRadius,
 } from "@/lib/tools";
+import { runTrivyScan } from "@/lib/trivy";
 /**
  * POST /api/chat
  *
@@ -43,8 +44,11 @@ const SEVERITY_RE = /\b(critical|high|medium|low)\b/i;
 const STATUS_RE = /\b(open|investigating|resolved|closed)\b/i;
 const INCIDENTS_WORD_RE = /\bincidents?\b/i;
 const THIS_RE = /\b(this|the current|current|selected|it|that|here)\b/i;
+const TRIVY_SCAN_RE = /\b(run\s+(a\s+)?(full\s+)?trivy(\s+vulnerability)?\s+scan|trigger\s+trivy(\s+vulnerability)?\s+scan|trivy\s+scan|run\s+trivy|full\s+trivy\s+scan|vulnerability\s+scan)\b/i;
+
 const BLAST_RADIUS_RE = /\b(blast\s*radius|posture\s*(downgrade|simulation)|simulate\s*blast|impact\s*scope)\b/i;
 const ASSETS_RE = /\b(asset|assets|affected\s*asset|impacted\s*asset|compromised\s*(host|asset|endpoint)|which\s*(host|machine|server|endpoint|asset)|what\s*(asset|host|machine|server|endpoint))\b/i;
+// ...existing code...
 
 // Strict whitelist regex for context parameters to prevent indirect injection
 const VALID_INCIDENT_ID_RE = /^INC-\d+$/i;
@@ -93,7 +97,8 @@ type ToolName =
   | "investigateIncident"
   | "analyzeCve"
   | "generateMitigationPlan"
-  | "simulateBlastRadius";
+  | "simulateBlastRadius"
+  | "triggerTrivyScan";
 
 export interface ChatContext {
   currentIncidentId?: string;
@@ -102,7 +107,7 @@ export interface ChatContext {
 }
 
 function buildRoutingSystemPrompt(contextBlock: string): string {
-  return `You are the core intelligence engine for ShieldDesk Assistant, an advanced Security Operations Center (SOC) co-pilot. Your primary mandate is to process telemetry, resolve operational context, enforce security guardrails, and assist security analysts safely across five tools: getIncidents, analyzeCve, investigateIncident, generateMitigationPlan, simulateBlastRadius.
+  return `You are the core intelligence engine for ShieldDesk Assistant, an advanced Security Operations Center (SOC) co-pilot. Your primary mandate is to process telemetry, resolve operational context, enforce security guardrails, and assist security analysts safely across six tools: getIncidents, analyzeCve, investigateIncident, generateMitigationPlan, simulateBlastRadius, triggerTrivyScan.
 
 --- ACTIVE OPERATIONAL CONTEXT ---
 ${contextBlock}
@@ -120,6 +125,8 @@ Follow these exact routing associations:
   -> Tool Call: analyzeCve(cveId: extracted or from active context)
 - Query: "Show me today's critical incidents", "Show me todays critical incidents", "List open security alerts", "What incidents are active?"
   -> Tool Call: getIncidents(severity?: "critical"|"high"|"medium"|"low", status?: "open"|"investigating")
+- Query: "Run a full Trivy vulnerability scan", "Scan my system", "Trigger security scan", "Run Trivy"
+  -> Tool Call: triggerTrivyScan()
 - Non-SOC query: "Write a poem", "Tell me a joke", "What is the weather?"
   -> NO TOOL CALL. Decline safely and state your purpose as a SOC incident co-pilot.
 
@@ -154,6 +161,18 @@ Use ONLY the structured tool result data provided below to answer the analyst di
 
 ### 3. Governance & Output Formatting
 - All mitigation plans and recommendations are advisory and require human analyst approval before execution. Always explicitly note this governance requirement when delivering plans.
+- For triggerTrivyScan: You MUST format the output clearly with severity counts, role-based action guidance, and the redirection link:
+Trivy Vulnerability Scan Results:
+
+critical - <critical_count>
+high - <high_count>
+medium - <medium_count>
+low - <low_count>
+total - <total_count>
+
+Role Authority (<role>): <role-specific guidance based on the user's role from tool result>
+
+[👉 View Full Trivy Scan Results in Security Scanner](/dashboard/scanner?view=latest)
 - For simulateBlastRadius, format the assessment point-wise using a clean numbered list:
 1. Initial Vector [Damage Level] — <impact scope>
 2. Process Layer [Damage Level] — <impact scope>
@@ -191,6 +210,22 @@ async function runTool(
       return generateMitigationPlan(session, args);
     case "simulateBlastRadius":
       return simulateBlastRadius(session, args);
+    case "triggerTrivyScan": {
+      try {
+        const scanResult = await runTrivyScan(".", "fs");
+        return {
+          success: true,
+          scannedTarget: scanResult.scannedTarget,
+          scanDurationMs: scanResult.scanDurationMs,
+          total: scanResult.findings.length,
+          summary: scanResult.summary,
+          findings: scanResult.findings.slice(0, 10),
+          userRole: session.role,
+        };
+      } catch (e: any) {
+        return { error: "engine_error", message: `Trivy scan execution failed: ${e.message || String(e)}` };
+      }
+    }
   }
 }
 
@@ -342,8 +377,12 @@ export async function POST(req: NextRequest) {
       ...(cveMatch ? { cveId: cveMatch[0].toUpperCase() } : sanitizedContext.currentCveId ? { cveId: sanitizedContext.currentCveId } : {}),
       ...(incidentMatch ? { incidentId: incidentMatch[0].toUpperCase() } : sanitizedContext.currentIncidentId ? { incidentId: sanitizedContext.currentIncidentId } : {}),
     };
-  // TC-CTX-07: Explicit CVE ID always overrides incident context
+  } else if (TRIVY_SCAN_RE.test(message)) {
+    toolName = "triggerTrivyScan";
+    toolArgs = {};
   } else if (cveMatch) {
+    toolName = "analyzeCve";
+    toolArgs = { cveId: cveMatch[0].toUpperCase() };
     toolName = "analyzeCve";
     toolArgs = { cveId: cveMatch[0].toUpperCase() };
   // TC-CTX-08: Broad listing query overrides active context
@@ -653,6 +692,38 @@ ${compliance}
 7. Recommended Containment Strategy: ${mitigation}
 
 Governance Note: Blast radius simulations are predictive models. Tier 2 host isolation requires human analyst authorization.`;
+  }
+
+  if (toolName === "triggerTrivyScan") {
+    const summary = toolResult.summary || { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
+    const total = toolResult.total ?? (summary.critical + summary.high + summary.medium + summary.low + (summary.unknown || 0));
+    const role = (toolResult?.userRole || session?.role || "user").toLowerCase();
+    const uid = session?.uid || "";
+
+    let rolePerspective = "";
+    if (role === "system_admin" || role === "super_admin" || uid === "dev-admin") {
+      rolePerspective = "Role Authority (SuperAdmin / Governance): Full authorization to approve Tier 2 & Tier 3 containment, enforce fleet-wide quarantine, or execute automated rollback snapshots.";
+    } else if (role === "responder") {
+      rolePerspective = "Role Authority (Incident Responder): Authorized to trigger Tier 2 host isolation, deploy emergency vendor patches, and quarantine compromised dependencies.";
+    } else if (role === "analyst" || uid === "dev-analyst" || uid === "dev-other") {
+      rolePerspective = "Role Authority (Security Operations Analyst): Authorized to draft 3-horizon remediation tasks, calculate CVSS/EPSS blast radius, and recommend Tier 1 containment.";
+    } else if (role === "auditor" || role === "viewer") {
+      rolePerspective = "Role Authority (Auditor / Viewer — Read-Only): Scan findings are read-only. Report can be exported for SOC 2, ISO 27001, and NIST CSF compliance audit evidence.";
+    } else {
+      rolePerspective = "Role Authority (Operator): Review identified vulnerability advisories and request security analyst triage for affected assets.";
+    }
+
+    return `Trivy Vulnerability Scan Results:
+
+critical - ${summary.critical}
+high - ${summary.high}
+medium - ${summary.medium}
+low - ${summary.low}
+total - ${total}
+
+${rolePerspective}
+
+[👉 View Full Trivy Scan Results in Security Scanner](/dashboard/scanner?view=latest)`;
   }
 
   return JSON.stringify(toolResult, null, 2);

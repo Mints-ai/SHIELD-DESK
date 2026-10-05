@@ -26,10 +26,10 @@ interface ChatMessage {
 }
 
 const DEFAULT_SUGGESTIONS = [
+  "Run a full Trivy vulnerability scan",
   "Show me todays critical incidents",
   "Investigate INC-1042",
   "Generate automated remediation runbook",
-  "Run Trivy container scan on fleet",
   "Check for leaked secrets and exposed tokens",
 ];
 
@@ -302,12 +302,14 @@ export function ChatWidget() {
         `Investigate ${activeIncidentId}`,
         "What is the mitigation plan?",
         "What assets are affected?",
-        ...(canSimulateBlastRadius ? ["Simulate Blast Radius for CVE-2024-6387"] : []),
+        ...(canSimulateBlastRadius ? ["Simulate Blast Radius for CVE-2025-38667"] : []),
+        "Run a full Trivy vulnerability scan",
         "Show me todays critical incidents",
       ]
     : canSimulateBlastRadius
       ? [
-          "Simulate Blast Radius for CVE-2024-6387",
+          "Simulate Blast Radius for CVE-2025-38667",
+          "Run a full Trivy vulnerability scan",
           ...DEFAULT_SUGGESTIONS,
         ]
       : DEFAULT_SUGGESTIONS;
@@ -437,8 +439,8 @@ export function ChatWidget() {
                   <p className="mt-2 max-w-[310px] text-[13px] leading-relaxed text-[var(--sd-text-muted)]">Investigate incidents, review exposure, and prepare your next action.</p>
                   <div className="mt-6 space-y-2">
                     <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.12em] text-[var(--sd-text-dim)]">Suggested inquiries</p>
-                    {dynamicSuggestions.map((suggestion) => (
-                      <button key={suggestion} type="button" onClick={() => sendMessage(suggestion)} className="sd-button group flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] px-3.5 py-3 text-left text-[13px] leading-relaxed text-[var(--sd-text)] hover:border-[var(--sd-border-strong)]">
+                    {dynamicSuggestions.map((suggestion, index) => (
+                      <button key={`${suggestion}-${index}`} type="button" onClick={() => sendMessage(suggestion)} className="sd-button group flex w-full items-center justify-between gap-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] px-3.5 py-3 text-left text-[13px] leading-relaxed text-[var(--sd-text)] hover:border-[var(--sd-border-strong)]">
                         <span>{suggestion}</span><Send className="h-3.5 w-3.5 shrink-0 text-[var(--sd-pine)]" />
                       </button>
                     ))}

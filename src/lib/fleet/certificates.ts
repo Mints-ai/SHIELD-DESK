@@ -189,6 +189,47 @@ export function getRootCACertificatePem(): string {
   return getOrCreateControlPlaneCA().caCertificatePem;
 }
 
+/** Resolve an agent's active certificate public key for signed-result verification. */
+export async function getEndpointCertificateByAgent(
+  agentId: string
+): Promise<{ public_key: string } | undefined> {
+  try {
+    const result = await query<Pick<EndpointCertificateRecord, "certificate_pem">>(
+      `SELECT certificate_pem FROM endpoint_certificates
+       WHERE agent_id = $1 AND revoked_at IS NULL AND expires_at > now()
+       ORDER BY issued_at DESC LIMIT 1;`,
+      [agentId]
+    );
+    const certificatePem = result.rows[0]?.certificate_pem;
+    if (certificatePem) {
+      return {
+        public_key: new crypto.X509Certificate(certificatePem).publicKey.export({
+          type: "spki",
+          format: "pem",
+        }) as string,
+      };
+    }
+  } catch {
+    // Use the in-memory certificate store when the database is unavailable in tests/dev.
+  }
+
+  const record = MOCK_ENDPOINT_CERTIFICATES
+    .filter((certificate) =>
+      certificate.agent_id === agentId &&
+      !certificate.revoked_at &&
+      new Date(certificate.expires_at).getTime() > Date.now()
+    )
+    .sort((a, b) => Date.parse(b.issued_at) - Date.parse(a.issued_at))[0];
+
+  if (!record) return undefined;
+  return {
+    public_key: new crypto.X509Certificate(record.certificate_pem).publicKey.export({
+      type: "spki",
+      format: "pem",
+    }) as string,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // SD-008: Endpoint Certificate Issuance Pipeline
 // ---------------------------------------------------------------------------
@@ -523,7 +564,7 @@ export async function validateEndpointCertificate({
 
     // 3. Extract Subject attributes (CN=agent-{id}, OU={tenantId})
     const subject = x509.subject;
-    const cnMatch = subject.match(/CN=agent-([a-f0-9\-]+)/i);
+    const cnMatch = subject.match(/CN=agent-([A-Za-z0-9._-]+)/i);
     const ouMatch = subject.match(/OU=([^,\n]+)/i);
 
     const agentId = cnMatch ? cnMatch[1] : undefined;

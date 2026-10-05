@@ -147,6 +147,8 @@ export async function enrollEndpointAgent({
   osType,
   agentVersion = "0.4.2",
   clientPublicKeyPem,
+  installationId,
+  licenseKey,
 }: {
   rawToken: string;
   hostname: string;
@@ -154,6 +156,8 @@ export async function enrollEndpointAgent({
   osType: OsType;
   agentVersion?: string;
   clientPublicKeyPem?: string;
+  installationId?: string;
+  licenseKey?: string;
 }): Promise<{
   success: boolean;
   agentId?: string;
@@ -174,6 +178,7 @@ export async function enrollEndpointAgent({
   }
 
   const tenantId = tokenValidation.tenantId;
+  if (!installationId || !licenseKey) return { success: false, error: "Installation ID and tenant license are required for device activation." };
   const agentId = crypto.randomUUID();
 
   try {
@@ -222,6 +227,14 @@ export async function enrollEndpointAgent({
     });
   } catch (certErr) {
     console.warn(`[Cert] Warning issuing certificate for agent ${agentId}:`, certErr);
+  }
+
+  if (!certResult) return { success: false, error: "Certificate issuance failed; agent activation was not completed." };
+  try {
+    const { LicenseActivationService } = await import("@/lib/licensing/licenseActivation");
+    await LicenseActivationService.activate({ tenantId, installationId, deviceIdentity: agentId, certificatePem: certResult.certificatePem, licenseKey });
+  } catch (activationError) {
+    return { success: false, error: activationError instanceof Error ? activationError.message : "License-bound device activation failed." };
   }
 
   await recordHashChainEvent({

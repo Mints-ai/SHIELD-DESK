@@ -9,6 +9,8 @@
     "lint": "eslint",
     "test": "tsx --test \"tests/*.test.ts\"",
     "test:sentry": "tsx scripts/trigger-sentry-event.ts",
+    "setup:trivy": "powershell -ExecutionPolicy Bypass -File ./scripts/setup_trivy.ps1",
+    "setup:gitleaks": "powershell -ExecutionPolicy Bypass -File ./scripts/setup_gitleaks.ps1",
     "start:all": "powershell -ExecutionPolicy Bypass -File ./start.ps1"
   },
   "dependencies": {

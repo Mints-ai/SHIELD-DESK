@@ -1,6 +1,6 @@
 import "server-only";
 import type OpenAI from "openai";
-import { query } from "@/lib/db";
+import { query, withTenantContext } from "@/lib/db";
 import { canAccess } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
 
@@ -157,61 +157,6 @@ export const CHAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Dev fallback seed data (used when PostgreSQL / Python AI service is offline)
-// ---------------------------------------------------------------------------
-const MOCK_INCIDENTS = [
-  {
-    id: "11111111-1111-1111-1111-111111111111",
-    incident_code: "INC-1042",
-    tenant_id: "acme-tenant",
-    severity: "critical",
-    status: "investigating",
-    title: "Suspicious lateral movement on FIN-WS-042",
-    description: "Detected lateral movement attempt from FIN-WS-042 toward the finance subnet. Two affected assets so far. No confirmed data exfiltration.",
-    created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
-  },
-  {
-    id: "22222222-2222-2222-2222-222222222222",
-    incident_code: "INC-1039",
-    tenant_id: "acme-tenant",
-    severity: "high",
-    status: "open",
-    title: "Repeated failed admin logins, EU tenant",
-    description: "Multiple failed administrator login attempts detected from an external IP range.",
-    created_at: new Date(Date.now() - 6 * 3600 * 1000).toISOString(),
-  },
-  {
-    id: "33333333-3333-3333-3333-333333333333",
-    incident_code: "INC-1031",
-    tenant_id: "acme-tenant",
-    severity: "medium",
-    status: "resolved",
-    title: "Outbound traffic to a newly-registered domain",
-    description: "Endpoint contacted a domain registered within the last 48 hours; blocked by egress filtering.",
-    created_at: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-  },
-];
-
-const MOCK_EVENTS: Record<string, Array<{ occurred_at: string; description: string }>> = {
-  "11111111-1111-1111-1111-111111111111": [
-    { occurred_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(), description: "Initial detection: anomalous SMB traffic from FIN-WS-042." },
-    { occurred_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(), description: "Confirmed lateral movement attempt toward FIN-DB-01." },
-    { occurred_at: new Date(Date.now() - 1 * 3600 * 1000).toISOString(), description: "Analyst assigned; containment options under review." },
-  ],
-};
-
-const MOCK_ASSETS: Record<string, Array<{ hostname: string; asset_type: string }>> = {
-  "11111111-1111-1111-1111-111111111111": [
-    { hostname: "FIN-WS-042", asset_type: "workstation" },
-    { hostname: "FIN-DB-01", asset_type: "database-server" },
-  ],
-};
-
-const MOCK_INCIDENT_CVES: Record<string, string[]> = {
-  "INC-1042": ["CVE-2024-3400"],
-};
-
 const MOCK_CVE_RECORDS: Record<string, Record<string, unknown>> = {
   "CVE-2024-3400": {
     cve_id: "CVE-2024-3400",
@@ -254,40 +199,15 @@ export async function getIncidents(
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   params.push(limit);
 
-  try {
-    const result = await query(
-      `SELECT incident_code, severity, status, title, created_at
-       FROM incidents
-       ${where}
-       ORDER BY created_at DESC
-       LIMIT $${params.length}`,
-      params
-    );
-    return { incidents: result.rows };
-  } catch (err) {
-    // Dev fallback if database is offline
-    const filtered = MOCK_INCIDENTS.filter((inc) => {
-      if (!canAccess(session.role, "VIEW_CROSS_TENANT") && inc.tenant_id !== session.tenantId) {
-        return false;
-      }
-      if (args.severity && inc.severity.toLowerCase() !== args.severity.toLowerCase()) {
-        return false;
-      }
-      if (args.status) {
-        return inc.status.toLowerCase() === args.status.toLowerCase();
-      }
-      return inc.status !== "resolved" && inc.status !== "closed";
-    });
-    return {
-      incidents: filtered.slice(0, limit).map((inc) => ({
-        incident_code: inc.incident_code,
-        severity: inc.severity,
-        status: inc.status,
-        title: inc.title,
-        created_at: inc.created_at,
-      })),
-    };
-  }
+  const result = await query(
+    `SELECT incident_code, severity, status, title, created_at
+     FROM incidents
+     ${where}
+     ORDER BY created_at DESC
+     LIMIT $${params.length}`,
+    params
+  );
+  return { incidents: result.rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -306,69 +226,42 @@ export async function investigateIncident(
     ? [args.incidentId]
     : [args.incidentId, session.tenantId];
 
-  try {
-    const incidentResult = await query(
-      `SELECT id, incident_code, severity, status, title, description, created_at
-       FROM incidents WHERE incident_code = $1 ${tenantScope}
-       LIMIT 1`,
-      params
-    );
+  const incidentResult = await query(
+    `SELECT id, incident_code, severity, status, title, description, created_at
+     FROM incidents WHERE incident_code = $1 ${tenantScope}
+     LIMIT 1`,
+    params
+  );
 
-    const incident = incidentResult.rows[0];
-    if (!incident) return { error: "not_found" };
+  const incident = incidentResult.rows[0];
+  if (!incident) return { error: "not_found" };
 
-    const [events, assets] = await Promise.all([
-      query(
-        `SELECT occurred_at, description FROM incident_events
-         WHERE incident_id = $1 ORDER BY occurred_at ASC`,
-        [incident.id]
-      ),
-      query(
-        `SELECT a.hostname, a.asset_type FROM assets a
-         JOIN incident_assets ia ON ia.asset_id = a.id
-         WHERE ia.incident_id = $1`,
-        [incident.id]
-      ),
-    ]);
+  const [events, assets] = await Promise.all([
+    query(
+      `SELECT occurred_at, description FROM incident_events
+       WHERE incident_id = $1 ORDER BY occurred_at ASC`,
+      [incident.id]
+    ),
+    query(
+      `SELECT a.hostname, a.asset_type FROM assets a
+       JOIN incident_assets ia ON ia.asset_id = a.id
+       WHERE ia.incident_id = $1`,
+      [incident.id]
+    ),
+  ]);
 
-    return {
-      incident: {
-        incidentCode: incident.incident_code,
-        severity: incident.severity,
-        status: incident.status,
-        title: incident.title,
-        description: incident.description,
-        createdAt: incident.created_at,
-      },
-      events: events.rows,
-      affectedAssets: assets.rows,
-    };
-  } catch (err) {
-    // Dev fallback if database is offline
-    const incident = MOCK_INCIDENTS.find(
-      (i) => i.incident_code.toUpperCase() === args.incidentId!.toUpperCase()
-    );
-    if (!incident) return { error: "not_found" };
-    if (!canAccess(session.role, "VIEW_CROSS_TENANT") && incident.tenant_id !== session.tenantId) {
-      return { error: "not_found" };
-    }
-
-    const events = MOCK_EVENTS[incident.id] || [];
-    const assets = MOCK_ASSETS[incident.id] || [];
-
-    return {
-      incident: {
-        incidentCode: incident.incident_code,
-        severity: incident.severity,
-        status: incident.status,
-        title: incident.title,
-        description: incident.description,
-        createdAt: incident.created_at,
-      },
-      events,
-      affectedAssets: assets,
-    };
-  }
+  return {
+    incident: {
+      incidentCode: incident.incident_code,
+      severity: incident.severity,
+      status: incident.status,
+      title: incident.title,
+      description: incident.description,
+      createdAt: incident.created_at,
+    },
+    events: events.rows,
+    affectedAssets: assets.rows,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -524,18 +417,11 @@ export async function generateMitigationPlan(
     .map((a: { hostname?: string }) => a.hostname)
     .filter(Boolean);
 
-  let linkedCveRows: { cve_id: string }[] = [];
-  try {
-    const result = await query<{ cve_id: string }>(
-      "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE incident_code = $1)",
-      [args.incidentId]
-    );
-    linkedCveRows = result.rows;
-  } catch {
-    // Dev fallback if database is offline
-    const cves = MOCK_INCIDENT_CVES[args.incidentId.toUpperCase()] || ["CVE-2020-6240"];
-    linkedCveRows = cves.map((cve_id) => ({ cve_id }));
-  }
+  const cveResult = await query<{ cve_id: string }>(
+    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE incident_code = $1)",
+    [args.incidentId]
+  );
+  const linkedCveRows = cveResult.rows;
 
   const cveLookups = await Promise.all(
     linkedCveRows.map(async (row) => ({
@@ -619,65 +505,139 @@ export async function generateMitigationPlan(
 
   const allTasks = [...immediateTasks, ...patchTasks, ...longTermTasks];
 
-  // Persist plan to PostgreSQL
+  // Persist one active plan per incident. Locking the incident row keeps
+  // simultaneous generate requests from creating duplicate plans.
   let planId = crypto.randomUUID();
+  let storedTasks: Array<Record<string, unknown>> | undefined;
   try {
-    const planInsert = await query<{ id: string }>(
-      `INSERT INTO mitigation_plans (incident_id, tenant_id, version, status, summary, created_at, updated_at)
-       VALUES ((SELECT id FROM incidents WHERE incident_code = $1), $2, 1, 'active', $3, now(), now())
-       RETURNING id`,
-      [
-        args.incidentId,
-        session.tenantId,
-        `Automated mitigation plan for ${args.incidentId}: 3-horizon remediation sequence`,
-      ]
-    );
+    const incidentTenantScope = canAccess(session.role, "VIEW_CROSS_TENANT")
+      ? ""
+      : "AND tenant_id = $2";
+    const transactionResult = await withTenantContext(
+      session.tenantId,
+      session.role,
+      async (transactionQuery) => {
+        const incidentParams = canAccess(session.role, "VIEW_CROSS_TENANT")
+          ? [args.incidentId]
+          : [args.incidentId, session.tenantId];
+        const incidentResult = await transactionQuery<{
+          id: string;
+          tenant_id: string;
+        }>(
+          `SELECT id, tenant_id FROM incidents
+           WHERE incident_code = $1 ${incidentTenantScope}
+           LIMIT 1 FOR UPDATE`,
+          incidentParams
+        );
+        const incident = incidentResult.rows[0];
+        if (!incident) {
+          throw new Error(`Incident ${args.incidentId} was not found while saving its plan.`);
+        }
 
-    if (planInsert.rows[0]) {
-      planId = planInsert.rows[0].id;
-      for (const t of allTasks) {
-        await query(
-          `INSERT INTO mitigation_tasks (plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+        const existingPlan = await transactionQuery<{ id: string }>(
+          `SELECT id FROM mitigation_plans
+           WHERE incident_id = $1 AND tenant_id = $2 AND status IN ('draft', 'active')
+           ORDER BY version DESC, created_at DESC
+           LIMIT 1`,
+          [incident.id, incident.tenant_id]
+        );
+
+        if (existingPlan.rows[0]) {
+          const existingTasks = await transactionQuery<Record<string, unknown>>(
+            `SELECT id, plan_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at
+             FROM mitigation_tasks
+             WHERE plan_id = $1
+             ORDER BY created_at ASC`,
+            [existingPlan.rows[0].id]
+          );
+          return {
+            id: existingPlan.rows[0].id,
+            tasks: existingTasks.rows,
+          };
+        }
+
+        const planInsert = await transactionQuery<{ id: string }>(
+          `INSERT INTO mitigation_plans (incident_id, tenant_id, version, status, summary, created_at, updated_at)
+           VALUES (
+             $1,
+             $2,
+             (SELECT COALESCE(MAX(version), 0) + 1 FROM mitigation_plans WHERE incident_id = $1 AND tenant_id = $2),
+             'active',
+             $3,
+             now(),
+             now()
+           )
+           RETURNING id`,
           [
-            planId,
-            session.tenantId,
-            t.horizon,
-            t.title,
-            t.description,
-            t.tier,
-            t.status,
-            t.blastRadius,
-            "cveId" in t ? t.cveId : null,
+            incident.id,
+            incident.tenant_id,
+            `Automated mitigation plan for ${args.incidentId}: 3-horizon remediation sequence`,
           ]
         );
+        const createdPlan = planInsert.rows[0];
+        if (!createdPlan) {
+          throw new Error(`Failed to save mitigation plan for ${args.incidentId}.`);
+        }
+
+        for (const t of allTasks) {
+          await transactionQuery(
+            `INSERT INTO mitigation_tasks (plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
+            [
+              createdPlan.id,
+              incident.tenant_id,
+              t.horizon,
+              t.title,
+              t.description,
+              t.tier,
+              t.status,
+              t.blastRadius,
+              "cveId" in t ? t.cveId : null,
+            ]
+          );
+        }
+
+        return { id: createdPlan.id };
       }
-    }
+    );
+    planId = transactionResult.id;
+    storedTasks = transactionResult.tasks;
   } catch {
     // Dev fallback if database is offline: save in mock store
-    MOCK_STORED_PLANS[planId] = {
-      id: planId,
-      incident_code: investigation.incident.incidentCode,
-      incident_title: investigation.incident.title,
-      incident_severity: investigation.incident.severity,
-      tenant_id: session.tenantId,
-      version: 1,
-      status: "active",
-      summary: `Automated mitigation plan for ${args.incidentId}`,
-      created_at: new Date().toISOString(),
-    };
-    MOCK_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
-      id: `task-${idx}-${Date.now()}`,
-      plan_id: planId,
-      horizon: t.horizon,
-      title: t.title,
-      description: t.description,
-      tier: t.tier,
-      status: t.status,
-      blast_radius: t.blastRadius,
-      cve_id: "cveId" in t ? t.cveId : null,
-      created_at: new Date().toISOString(),
-    }));
+    const existingMockPlan = Object.values(MOCK_STORED_PLANS).find(
+      (plan) =>
+        plan.tenant_id === session.tenantId &&
+        plan.incident_code === investigation.incident.incidentCode &&
+        (plan.status === "active" || plan.status === "draft")
+    );
+    if (existingMockPlan) {
+      planId = String(existingMockPlan.id);
+      storedTasks = MOCK_STORED_TASKS[planId] || [];
+    } else {
+      MOCK_STORED_PLANS[planId] = {
+        id: planId,
+        incident_code: investigation.incident.incidentCode,
+        incident_title: investigation.incident.title,
+        incident_severity: investigation.incident.severity,
+        tenant_id: session.tenantId,
+        version: 1,
+        status: "active",
+        summary: `Automated mitigation plan for ${args.incidentId}`,
+        created_at: new Date().toISOString(),
+      };
+      MOCK_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
+        id: `task-${idx}-${Date.now()}`,
+        plan_id: planId,
+        horizon: t.horizon,
+        title: t.title,
+        description: t.description,
+        tier: t.tier,
+        status: t.status,
+        blast_radius: t.blastRadius,
+        cve_id: "cveId" in t ? t.cveId : null,
+        created_at: new Date().toISOString(),
+      }));
+    }
   }
 
   return {
@@ -697,7 +657,7 @@ export async function generateMitigationPlan(
         ? `${unresolvedCves.length} linked CVE(s) could not be resolved against the knowledge base — generic tasks shown for those.`
         : undefined,
     },
-    tasks: allTasks,
+    tasks: storedTasks || allTasks,
     governanceNote:
       "This is a recommendation only. Stored as MitigationPlan " +
       planId +
@@ -1144,7 +1104,7 @@ export async function simulateBlastRadius(
   }
 
   // Fallback defaults if not specified
-  targetCve = targetCve || "CVE-2024-6387";
+  targetCve = targetCve || "CVE-2025-38667";
   targetAsset = targetAsset || "srv-prod-api-01 (Finance Subnet)";
 
   // 2. Query AI Advisor microservice if configured
@@ -1245,4 +1205,3 @@ export async function simulateBlastRadius(
     },
   };
 }
-

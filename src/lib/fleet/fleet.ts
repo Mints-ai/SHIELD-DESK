@@ -701,6 +701,13 @@ export async function executeAgentCommand({
     throw new Error("KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch.");
   }
 
+  if (isProduction()) {
+    const { LicenseActivationService } = await import("@/lib/licensing/licenseActivation");
+    if (!(await LicenseActivationService.isDeviceActive(agent.tenant_id, agent.id))) {
+      throw new Error("LICENSE_ACTIVATION_REQUIRED: Active tenant-bound agent license is required before command execution.");
+    }
+  }
+
   // Blast-Radius Throttle check for Tier 1
   if (tier === "Tier 1") {
     const { allowed, count } = await checkThrottle(caller.tenant_id);

@@ -83,12 +83,14 @@ function Stream-Jobs {
                     "Ollama"      { "[Ollama    ] " }
                     "PythonBrain" { "[Python AI ] " }
                     "NextJS"      { "[Next.js   ] " }
+                    "GoScanner"   { "[Go Scanner] " }
                     default       { "[Service   ] " }
                 }
                 $col = switch ($job.Name) {
                     "Ollama"      { "Magenta" }
                     "PythonBrain" { "Yellow"  }
                     "NextJS"      { "Cyan"    }
+                    "GoScanner"   { "Green"   }
                     default       { "White"   }
                 }
                 $lines -split "`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object {
@@ -129,6 +131,14 @@ Write-Host ""
 Write-Host "  Launching services..." -ForegroundColor White
 Write-Host ""
 
+# Verify Trivy scanner readiness
+$hasTrivy = (Get-Command "trivy" -ErrorAction SilentlyContinue) -or (Test-Path "$ROOT\tools\trivy\trivy.exe") -or (Test-Path "C:\trivy\trivy.exe")
+if ($hasTrivy) {
+    Write-Status "OK" "Trivy Engine" "native scanner detected" "Green"
+} else {
+    Write-Host "  [WARN] Trivy binary missing. Run 'npm run setup:trivy' to download scanner." -ForegroundColor Yellow
+}
+
 $ollamaJob = Start-Service "Ollama"      "ollama serve"   $ROOT
 $pythonJob = Start-Service "PythonBrain" "python server.py" $PYTHON
 $nextJob   = Start-Service "NextJS"      "npm run dev"    $ROOT
@@ -154,6 +164,7 @@ Write-Host ""
 Write-Host "  +-------------------------------------------------+" -ForegroundColor DarkGreen
 Write-Host "  |  ShieldDesk UI   -->  http://localhost:3000     |" -ForegroundColor Green
 Write-Host "  |  Python AI Brain -->  http://localhost:8000     |" -ForegroundColor Yellow
+Write-Host "  |  Trivy Scanner   -->  Embedded (/api/scans)     |" -ForegroundColor Green
 Write-Host "  |  Ollama LLM      -->  http://localhost:11434    |" -ForegroundColor Magenta
 Write-Host "  +-------------------------------------------------+" -ForegroundColor DarkGreen
 Write-Host ""

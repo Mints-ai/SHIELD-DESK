@@ -9,6 +9,8 @@ import {
   Lock,
   X,
   ArrowRight,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { GlassDialog } from "@/components/ui/GlassDialog";
@@ -21,6 +23,9 @@ interface ApprovalModalProps {
   isOpen: boolean;
   onClose: () => void;
   token: ApprovalTokenRecord | null;
+  totalCount?: number;
+  currentIndex?: number;
+  onNavigate?: (index: number) => void;
   onDecisionSuccess?: (updatedToken: ApprovalTokenRecord) => void;
 }
 
@@ -28,6 +33,9 @@ export function ApprovalModal({
   isOpen,
   onClose,
   token,
+  totalCount = 1,
+  currentIndex = 0,
+  onNavigate,
   onDecisionSuccess,
 }: ApprovalModalProps) {
   const { activeUserId, setActiveUserId } = useChat();
@@ -92,6 +100,38 @@ export function ApprovalModal({
           style={{ background: "var(--sd-glass-fill)" }}
           className="relative w-full space-y-5 p-5 text-[var(--sd-text)] sm:p-6"
         >
+          {/* Navigation row (only shown when more than 1 approval) */}
+          {totalCount > 1 && onNavigate && (
+            <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
+              <span className="text-[11px] text-[var(--sd-text-muted)] font-mono">
+                Approval{" "}
+                <span className="font-bold text-[var(--sd-text)]">{currentIndex + 1}</span>
+                {" "}of{" "}
+                <span className="font-bold text-[var(--sd-text)]">{totalCount}</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onNavigate(currentIndex - 1)}
+                  disabled={currentIndex === 0}
+                  className="flex h-6 w-6 items-center justify-center rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)] disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                  title="Previous approval"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate(currentIndex + 1)}
+                  disabled={currentIndex === totalCount - 1}
+                  className="flex h-6 w-6 items-center justify-center rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)] disabled:opacity-30 disabled:cursor-not-allowed transition cursor-pointer"
+                  title="Next approval"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Header */}
           <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-4">
             <div className="flex items-center gap-3">

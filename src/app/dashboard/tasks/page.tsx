@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useId } from "react";
 import {
   CheckSquare,
   Lock,
@@ -17,6 +17,7 @@ import { TopNavBar } from "@/components/navigation/TopNavBar";
 import { useChat } from "@/lib/context/ChatContext";
 import { AutonomyTierBadge } from "@/components/governance/AutonomyTierBadge";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
+import { GlassDialog } from "@/components/ui/GlassDialog";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 interface MitigationTaskItem {
@@ -92,6 +93,7 @@ const SEED_TASKS: MitigationTaskItem[] = [
 ];
 
 export default function SOCTaskBoardPage() {
+  const taskDialogId = useId();
   const { activeUserId, activeUser } = useChat();
   const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);
@@ -302,8 +304,8 @@ export default function SOCTaskBoardPage() {
 
             {/* Quick Add Task */}
             <button
-              onClick={() => setIsCreatingTask(!isCreatingTask)}
-              className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer shadow-xs"
+              onClick={() => setIsCreatingTask(true)}
+              className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-2 text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer"
             >
               <Plus className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
               <span>Add Custom Task</span>
@@ -311,73 +313,128 @@ export default function SOCTaskBoardPage() {
           </div>
         </div>
 
-        {/* Create Task Form */}
+        {/* Add Custom Task Modal */}
         {isCreatingTask && (
-          <form
-            onSubmit={handleCreateTask}
-            className="p-5 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-4"
+          <GlassDialog
+            open={isCreatingTask}
+            onClose={() => { setIsCreatingTask(false); setNewTaskTitle(""); }}
+            labelledBy={taskDialogId}
+            closeOnBackdrop
+            className="max-w-lg"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
-                Draft New Remediation Task
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsCreatingTask(false)}
-                className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] cursor-pointer"
-              >
-                Cancel
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
-                <input
-                  type="text"
-                  placeholder="Task title (e.g., Flush ARP table on Gateway router)"
-                  value={newTaskTitle}
-                  onChange={(e) => setNewTaskTitle(e.target.value)}
-                  className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)]"
-                  required
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={newTaskTier}
-                  onChange={(e) => setNewTaskTier(e.target.value as "Tier 1" | "Tier 2" | "Tier 3")}
-                  className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-[13px] text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)]"
-                >
-                  <option value="Tier 1">Tier 1 (Automatic Action)</option>
-                  <option value="Tier 2">Tier 2 (Human Sign-off)</option>
-                  <option value="Tier 3">Tier 3 (Dual Sign-off)</option>
-                </select>
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-5 border-b border-[var(--sd-border)]">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--sd-pine-dim)] text-[var(--sd-wheat)] border border-[var(--sd-border)]">
+                    <Plus className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 id={taskDialogId} className="text-base font-medium text-[var(--sd-text)]">Draft New Remediation Task</h3>
+                    <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-0.5">New task will land in <span className="font-semibold text-[var(--sd-pine)]">Pending Authorization</span></p>
+                  </div>
+                </div>
                 <button
-                  type="submit"
-                  className="sd-button sd-button-primary px-4 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shrink-0 cursor-pointer transition shadow-xs"
+                  type="button"
+                  onClick={() => { setIsCreatingTask(false); setNewTaskTitle(""); }}
+                  className="sd-button flex h-9 w-9 items-center justify-center p-0 text-[var(--sd-text-muted)] transition cursor-pointer text-lg leading-none"
+                  aria-label="Close modal"
                 >
-                  Create
+                  ×
                 </button>
               </div>
-            </div>
-          </form>
+
+              {/* Modal Body */}
+              <form onSubmit={handleCreateTask} className="p-5 space-y-4">
+                <div className="space-y-1.5">
+                  <label htmlFor={`${taskDialogId}-title`} className="text-[11px] font-medium uppercase tracking-wider text-[var(--sd-text-muted)] font-mono">
+                    Task Title <span className="text-[var(--sd-danger)]">*</span>
+                  </label>
+                  <input
+                    id={`${taskDialogId}-title`}
+                    type="text"
+                    placeholder="e.g., Flush ARP table on Gateway router"
+                    value={newTaskTitle}
+                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                    className="sd-input w-full rounded-xl px-3.5 py-2.5 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] transition"
+                    autoFocus
+                    data-autofocus
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor={`${taskDialogId}-tier`} className="text-[11px] font-medium uppercase tracking-wider text-[var(--sd-text-muted)] font-mono">
+                    Autonomy Tier
+                  </label>
+                  <select
+                    id={`${taskDialogId}-tier`}
+                    value={newTaskTier}
+                    onChange={(e) => setNewTaskTier(e.target.value as "Tier 1" | "Tier 2" | "Tier 3")}
+                    className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
+                  >
+                    <option value="Tier 1">Tier 1 — Automatic Action</option>
+                    <option value="Tier 2">Tier 2 — Human Sign-off Required</option>
+                    <option value="Tier 3">Tier 3 — Dual Sign-off Required</option>
+                  </select>
+                  <p className="text-[10.5px] text-[var(--sd-text-muted)]">
+                    {newTaskTier === "Tier 1" && "Agent executes autonomously with no human gate."}
+                    {newTaskTier === "Tier 2" && "Requires one authorised analyst to sign off before execution."}
+                    {newTaskTier === "Tier 3" && "Requires two independent approvals — high blast-radius actions only."}
+                  </p>
+                </div>
+
+                {/* Modal Footer Actions */}
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[var(--sd-border)]">
+                  <button
+                    type="button"
+                    onClick={() => { setIsCreatingTask(false); setNewTaskTitle(""); }}
+                    className="sd-button px-4 py-2 text-[13px] text-[var(--sd-text-muted)] transition cursor-pointer font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting || !newTaskTitle.trim()}
+                    className="sd-button sd-button-primary flex items-center gap-1.5 px-4 py-2 disabled:cursor-not-allowed text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                        </svg>
+                        <span>Creating…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Create Task</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+          </GlassDialog>
         )}
 
         {/* 4-Column Board */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 items-start">
-          {columns.map((col) => (
-            <div
-              key={col.id}
-              className="rounded-2xl border border-[var(--sd-border)] sd-surface flex flex-col min-h-[500px] overflow-hidden shadow-xs"
-            >
-              {/* Column Header */}
-              <div className="p-3.5 border-b border-[var(--sd-border)] flex items-center justify-between bg-[var(--sd-bg-alt)]/50">
-                <span className="text-[13px] font-medium text-[var(--sd-pine)]">{col.label}</span>
-                <span className={cn("px-2 py-0.5 rounded-full text-[11px] font-mono font-medium border", col.headerBadge)}>
-                  {col.items.length}
-                </span>
-              </div>
+        <div className="w-full overflow-x-auto pb-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 min-w-[720px] lg:min-w-0">
+            {columns.map((col) => (
+              <div
+                key={col.id}
+                className="sd-surface rounded-2xl border border-[var(--sd-border)] flex flex-col h-[600px] lg:h-[calc(100vh-230px)] min-h-[480px] max-h-[850px] overflow-hidden"
+              >
+                {/* Column Header */}
+                <div className="p-3.5 border-b border-[var(--sd-border)] flex items-center justify-between bg-[var(--sd-bg-alt)]/50 shrink-0">
+                  <span className="text-xs font-bold text-[var(--sd-pine)]">{col.label}</span>
+                  <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border", col.headerBadge)}>
+                    {col.items.length}
+                  </span>
+                </div>
 
-              {/* Tasks List */}
-              <div className="p-3 space-y-3 flex-1 overflow-y-auto sd-surface">
+                {/* Tasks List */}
+                <div className="p-3 space-y-3 flex-1 min-h-0 overflow-y-auto">
                 {col.items.length === 0 ? (
                   <div className="py-12 text-center text-[13px] text-[var(--sd-text-muted)] border border-dashed border-[var(--sd-border)] rounded-xl my-2 bg-[var(--sd-panel-raised)]">
                     No tasks in this lane
@@ -438,6 +495,7 @@ export default function SOCTaskBoardPage() {
               </div>
             </div>
           ))}
+          </div>
         </div>
       </main>
 

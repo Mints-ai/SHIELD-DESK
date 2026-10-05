@@ -8,8 +8,10 @@ import { POST as enrollPOST } from "@/app/api/agent/enroll/route";
 import { POST as heartbeatPOST } from "@/app/api/agent/heartbeat/route";
 import { POST as telemetryPOST } from "@/app/api/agent/telemetry/route";
 import { triggerKillSwitch } from "@/lib/fleet/fleet";
+import { issueCommercialLicense } from "@/lib/billing/licenses";
 
 test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry Suite", async (t) => {
+  const licenseKey = issueCommercialLicense({ tenantId: "acme-tenant", tier: "professional", maxEndpoints: 100, maxUsers: 20, features: ["endpointFleet"], expiresAt: new Date(Date.now() + 86400000).toISOString() }).rawLicense;
   const adminToken = createSessionToken({
     uid: "usr-admin-01",
     email: "admin@acme.corp",
@@ -90,6 +92,8 @@ test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry S
         ipAddress: "10.0.15.99",
         osType: "linux",
         agentVersion: "0.4.2",
+        installationId: "install-enrollment-test-001",
+        licenseKey,
       }),
     });
 

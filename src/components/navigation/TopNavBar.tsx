@@ -55,6 +55,7 @@ export function TopNavBar() {
 
   const [pendingTokens, setPendingTokens] = useState<ApprovalTokenRecord[]>([]);
   const [activeModalToken, setActiveModalToken] = useState<ApprovalTokenRecord | null>(null);
+  const [activeModalIndex, setActiveModalIndex] = useState(0);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState(false);
 
   useEffect(() => {
@@ -129,9 +130,22 @@ export function TopNavBar() {
             <summary className="sd-health-trigger"><Activity size={18} className="text-[var(--sd-wheat)]" /><div className="sd-health-caption">System health<p>{healthLoaded ? `${connectedCount} of 4 services connected` : "Checking services…"}</p></div><ChevronDown size={12} /></summary>
             <div className="sd-popover"><p className="sd-eyebrow mb-2">System connections</p>{services.map(({ label, connected, icon: Icon }) => <div key={label} className="sd-health-row"><span><Icon size={14} />{label}</span><span className={connected ? "text-[var(--sd-success)]" : "text-[var(--sd-text-muted)]"}><i className="sd-status-dot" />{healthLoaded ? connected ? "Connected" : "Offline" : "Checking"}</span></div>)}</div>
           </details>
-          <button className="sd-button !px-3" disabled={!pendingTokens.length} aria-label={`Approvals, ${pendingTokens.length} pending`} title={pendingTokens.length ? "Review pending approvals" : "No pending approvals"} onClick={() => { if (!pendingTokens.length) return; setActiveModalToken(pendingTokens[0]); setIsApprovalModalOpen(true); }}>
-            <Lock size={16} /><span>{pendingTokens.length}</span>
-          </button>
+          {activeUserId !== "dev-analyst" && (
+            <button
+              className="sd-button !px-3"
+              disabled={pendingTokens.length === 0}
+              aria-label={`Approvals, ${pendingTokens.length} pending`}
+              title={pendingTokens.length > 0 ? "Review pending approvals" : "No pending approvals"}
+              onClick={() => {
+                if (pendingTokens.length === 0) return;
+                setActiveModalIndex(0);
+                setActiveModalToken(pendingTokens[0]);
+                setIsApprovalModalOpen(true);
+              }}
+            >
+              <Lock size={16} /><span>{pendingTokens.length}</span>
+            </button>
+          )}
           {envMeta.devPersonasAllowed && <div className="sd-profile"><span className="sd-avatar" aria-hidden="true">{activeUser.label.split(" ").map((word) => word[0]).slice(0,2).join("")}</span><div><select aria-label="Active operator persona" value={activeUserId} onChange={(event) => setActiveUserId(event.target.value as DevUserId)}>{(Object.keys(DEV_USERS) as DevUserId[]).map((id) => <option key={id} value={id}>{DEV_USERS[id].label}</option>)}</select><p className="sd-profile-caption">{activeUser.tenantName}</p></div></div>}
           <Link href="/login" className="sd-button !px-3" aria-label="Sign in"><LogIn size={16} /><span className="sd-signin-label">Sign in</span></Link>
         </div>
@@ -141,7 +155,22 @@ export function TopNavBar() {
         <nav aria-label="Dashboard"><p className="sd-nav-label">Workspace</p>{navLinks.map(({ href, label, icon: Icon }) => <Link key={href} href={href} onClick={() => setMobileNavOpen(false)} className="sd-nav-link" aria-current={(href === "/" ? pathname === "/" : pathname?.startsWith(href)) ? "page" : undefined}><Icon size={18} strokeWidth={1.5} /><span>{label}</span></Link>)}</nav>
         <div className="sd-sidebar-bottom"><p>Clarity in every signal.<br />Confidence in every action.</p><div className="sd-sidebar-rule" /><span className="sd-sample-label"><i className="sd-status-dot" />{envMeta.isDemoMode ? "Demo environment" : "Live SOC"}</span><div className="sd-sidebar-footnote">{envMeta.isDemoMode ? "Illustrative data · Development workspace" : "Live telemetry · Governed operations"}<br />ShieldDesk · Mints Global</div></div>
       </aside>
-      <ApprovalModal isOpen={isApprovalModalOpen} onClose={() => setIsApprovalModalOpen(false)} token={activeModalToken} onDecisionSuccess={fetchApprovals} />
+
+      {/* Approval Modal mounted globally */}
+      <ApprovalModal
+        isOpen={isApprovalModalOpen}
+        onClose={() => setIsApprovalModalOpen(false)}
+        token={activeModalToken}
+        totalCount={pendingTokens.length}
+        currentIndex={activeModalIndex}
+        onNavigate={(index) => {
+          setActiveModalIndex(index);
+          setActiveModalToken(pendingTokens[index]);
+        }}
+        onDecisionSuccess={() => {
+          fetchApprovals();
+        }}
+      />
     </>
   );
 }

@@ -87,3 +87,28 @@ export function verifyCommandSignature(payload: {
 export function getControlPlanePublicKey(): string {
   return process.env.CONTROL_PLANE_PUBLIC_KEY || getFallbackKeys().publicKey;
 }
+
+/**
+ * Cryptographically signs arbitrary string data using the control plane RSA private key.
+ */
+export function signControlPlaneData(data: string): string {
+  const privateKey = process.env.CONTROL_PLANE_PRIVATE_KEY || getFallbackKeys().privateKey;
+  const signer = crypto.createSign("RSA-SHA256");
+  signer.update(data, "utf8");
+  return signer.sign(privateKey, "base64");
+}
+
+/**
+ * Cryptographically verifies arbitrary string data signature using the control plane RSA public key.
+ */
+export function verifyControlPlaneData(data: string, signature: string): boolean {
+  try {
+    const publicKey = getControlPlanePublicKey();
+    const verifier = crypto.createVerify("RSA-SHA256");
+    verifier.update(data, "utf8");
+    return verifier.verify(publicKey, signature, "base64");
+  } catch {
+    return false;
+  }
+}
+
