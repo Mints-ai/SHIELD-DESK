@@ -7,6 +7,7 @@
 [![Sentry](https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry)](https://sentry.io/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
 [![Trivy](https://img.shields.io/badge/Trivy-v0.74.0_Integrated-007acc?style=flat&logo=aqua)]()
+[![Gitleaks](https://img.shields.io/badge/Gitleaks-v8.30.1_Integrated-0052cc?style=flat&logo=git)]()
 [![Status](https://img.shields.io/badge/Launch_Readiness-Validation_In_Progress-orange?style=flat)]()
 [![License](https://img.shields.io/badge/License-Proprietary-red?style=flat)]()
 
@@ -27,7 +28,7 @@ Security Operations teams are overwhelmed by thousands of fragmented alerts acro
 4. **4-Tier Human Governance**: Enforces Separation of Duties. Non-destructive actions run autonomously, while host isolation and destructive remediation require single or dual cryptographic SuperAdmin approvals (`check_separation_of_duties` at the DB level) with mandatory RFC 6238 TOTP MFA.
 5. **Signed Fleet Dispatch & mTLS X.509 PKI**: Authorized containment commands are cryptographically signed with RSA-2048 keys (`RSA-SHA256`), verified against an emergency admin kill-switch and a Tier 1 blast-radius throttle (max 5 hosts / 5 min), and queued for remote endpoint daemons with a tamper-proof hash-chain audit ledger.
 6. **Self-Service Public Onboarding & SaaS Quotas**: Features a 4-step onboarding wizard (`/onboarding`) with universal PowerShell/Bash agent installation commands, and a multi-tier SaaS billing engine (`/api/billing`) enforcing Community (5 endpoints), Professional (100 endpoints), and Enterprise (Unlimited) quotas.
-7. **Vulnerability Scanning Integration**: Includes a Trivy integration for scanning supported targets. Scanner-dependent tests require the Trivy binary installed by CI; local results depend on scanner availability and configured data sources.
+7. **Vulnerability & Secret Scanning Integration**: Includes native integrations with Aqua Security Trivy for deep CVE vulnerability assessment and Gitleaks for detecting committed credentials, API tokens, and secret exposures across git history and repository filesystems.
 
 ## Capability status
 
@@ -195,10 +196,11 @@ ShieldDesk implements explicit runtime safety boundaries (`src/lib/config/enviro
 
 ---
 
-## 8. Real-Time Aqua Trivy Vulnerability Scanner & Remediation Center
+## 8. Real-Time Aqua Trivy Vulnerability Scanner & Gitleaks Secret Detection
 
-The **Security Scanner & Remediation Center** (`/dashboard/scanner`) integrates an enterprise vulnerability assessment engine powered by Aqua Security Trivy v0.74.0 (`src/lib/trivy.ts`):
+The **Security Scanner & Remediation Center** (`/dashboard/scanner`) integrates dual enterprise scanning engines for both CVE vulnerability assessment and credential leak detection:
 
+### Aqua Security Trivy (v0.74.0) — CVE Vulnerability Scanner (`src/lib/trivy.ts`)
 - **100% Live Real-Time Findings**: Clicking **"Trigger Trivy Scan"** directly spawns `trivy.exe fs` (or `trivy` on Linux) against local workspaces, Go modules, npm dependencies, and OS packages. It returns real-time CVEs with actual installed versions, fixed versions, NVD CVSS v3 severity scores, and upgrade instructions.
 - **Clean Initial State**: Upon entering the scanner tab, CVE findings and metrics start blank (`0` Critical, `0` High) until an explicit scan is triggered by the analyst.
 - **Dynamic Risk Metrics**: Metric cards (`Critical CVEs`, `High CVEs`, `Active CVEs`) compute live via `useMemo` dynamically reflecting the current scan findings count.
@@ -214,6 +216,21 @@ The **Security Scanner & Remediation Center** (`/dashboard/scanner`) integrates 
   ```
   Automatically downloads and extracts the official Aqua Security Trivy v0.74.0 binary directly into `tools/trivy/` with cross-platform validation.
 - **Continuous Integration (CI/CD)**: GitHub Actions workflow (`.github/workflows/ci.yml`) automatically installs Aqua Trivy on Ubuntu runners during CI test execution to guarantee zero regressions.
+
+### Gitleaks (v8.30.1) — High-Performance Secret Detection (`src/lib/gitleaks.ts`)
+- **Deep Git History & Filesystem Scans**: Dispatches `gitleaks.exe git` or `gitleaks.exe dir` to detect committed API keys, tokens, AWS credentials, database passwords, private keys, and high-entropy secrets across commit history or working tree files.
+- **Automatic Output Redaction**: Strictly enforces the `--redact` flag and SHA-1 secret hashing so raw secret materials are never exposed in JSON responses, server logs, or UI dashboards.
+- **Actionable Remediation Workflows**: Detected secrets provide automated remediation options (`Rotate AWS Key`, `Revoke GitHub PAT`, `Invalidate Secret Token`) with auditable dispatch via `/api/gitleaks/mitigate`.
+- **Policy & Allowlist Configuration**: Automatically detects `.gitleaks.toml` configuration at the repository root or `tools/gitleaks/` to support custom regex rules, path allowlists, and entropy thresholds.
+- **Security & Safety Guards**:
+  - **CWE-78 Command Injection Defense**: Executes via Node.js `execFile` with an immutable argument array (no shell expansion).
+  - **Fail-Closed Safety Policy**: In production (`APP_ENV=production` & `DEMO_MODE=false`), queries fail closed with `503 Service Unavailable` if the binary is absent, preventing silent false negatives.
+  - **Memory & Timeout Protection**: Enforces an 8 MB buffer ceiling and configurable execution timeout (default: 120s).
+- **One-Command CLI Setup**:
+  ```bash
+  npm run setup:gitleaks
+  ```
+  Automatically downloads Gitleaks v8.30.1 from official GitHub releases, verifies archive integrity, unpacks into `tools/gitleaks/gitleaks.exe`, syncs `.gitleaks.toml` to the project root, and validates binary execution.
 
 ---
 
@@ -253,6 +270,9 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 | `POST` | `/api/billing` | `system_admin`, `super_admin` | Upgrades subscription tier and generates checkout sessions |
 | `GET` | `/api/scans` | `cve.read` | Returns scanner status, engine mode, and cached or clean initial CVE posture |
 | `POST` | `/api/scans` | `cve.read` | Executes live Aqua Trivy scan on codebase/container (`action: "cve_scan"`) or Gitleaks scan |
+| `GET` | `/api/gitleaks/scan` | `cve.read` | Returns Gitleaks scanner status, engine mode, and cached secret leak findings |
+| `POST` | `/api/gitleaks/scan` | `cve.read` | Triggers live Gitleaks secret detection across git commit history or working tree |
+| `POST` | `/api/gitleaks/mitigate` | `responder`, `super_admin` | Dispatches credential rotation, revocation, or quarantine workflows for detected secrets |
 | `POST` | `/api/threats` | Authenticated tenant user | Telemetry bus for YARA/Sigma rules and anomaly monitoring |
 | `POST` | `/api/ingest/webhooks` | HMAC / API Key | Validates signature, scrubs PII/secrets, and normalizes alerts into incidents |
 | `GET` | `/api/compliance` | Authenticated tenant user | Generates SOC 2, ISO 27001, and NIST CSF compliance posture reports |
@@ -294,6 +314,7 @@ The database (`db/schema.sql`) contains 15 core tables equipped with foreign key
 - **Python**: 3.10+
 - **PostgreSQL**: 16+ (or Supabase Cloud)
 - **Aqua Security Trivy**: v0.74.0 (installed automatically via `npm run setup:trivy`)
+- **Gitleaks**: v8.30.1 (installed automatically via `npm run setup:gitleaks`)
 - **Optional**: [Ollama](https://ollama.com) with model `qwen3:4b`
 
 ### 1. Clone & Install Dependencies
@@ -303,11 +324,20 @@ cd shielddesk
 npm install
 ```
 
-### 2. Setup Local Trivy Vulnerability Scanner Binary
+### 2. Setup Local Scanner Binaries (Trivy & Gitleaks)
+
+ShieldDesk provides one-step automated installation scripts for both enterprise scanner engines:
+
 ```bash
+# 2a. Download & verify Aqua Security Trivy (CVE scanner v0.74.0)
 npm run setup:trivy
+
+# 2b. Download & verify Gitleaks (Secret scanner v8.30.1)
+npm run setup:gitleaks
 ```
-This automated script downloads and unpacks Aqua Security Trivy into `tools/trivy/` and validates executable functionality.
+
+- `setup:trivy`: Downloads and unpacks official Aqua Security Trivy into `tools/trivy/` and validates binary execution.
+- `setup:gitleaks`: Downloads official Gitleaks v8.30.1 into `tools/gitleaks/gitleaks.exe`, syncs `.gitleaks.toml` configuration to the project root, and verifies CLI availability.
 
 ### 3. Configure Environment
 
@@ -398,6 +428,7 @@ shielddesk/
 │   │   │   ├── plans/             # 3-horizon remediation plans index API
 │   │   │   ├── approvals/         # Tier 2/3 human authorization & separation of duties
 │   │   │   ├── fleet/             # Remote host telemetry, signed dispatch, X.509 CA, & kill-switch
+│   │   │   ├── gitleaks/          # Gitleaks secret scanning and mitigation routes
 │   │   │   ├── scans/             # Live Aqua Trivy & secret scanner integration
 │   │   │   ├── threats/           # YARA/Sigma rules & telemetry bus
 │   │   │   ├── ingest/            # Authenticated alert webhook ingest
@@ -422,15 +453,19 @@ shielddesk/
 │       ├── permissions.ts         # 6-tier RBAC matrix & tool execution gates
 │       ├── governance/            # Approval tokens, blast radius throttle, autonomy tiers
 │       ├── fleet/                 # RSA-2048 command signing & fleet management logic
+│       ├── gitleaks.ts            # Gitleaks secret scanner execution engine & parser
 │       ├── trivy.ts               # Aqua Trivy vulnerability scanner execution engine & parser
 │       ├── security/              # Centralized PII and secret redactor engine
 │       ├── observability/         # Central errorTracker with dynamic Sentry instrumentation
 │       ├── config/environment.ts  # Safety boundaries (DEMO_MODE vs FAIL_CLOSED)
 │       └── db/                    # PostgreSQL connection pool with lazy initialization
 ├── tools/
+│   ├── gitleaks/                  # Local Gitleaks v8.30.1 binary & configuration directory
 │   └── trivy/                     # Local Aqua Security Trivy binary installation directory
 ├── scripts/
+│   ├── setup_gitleaks.ps1         # Automated Gitleaks secret scanner setup & download script
 │   └── setup_trivy.ps1            # Automated cross-platform Trivy setup & download script
+├── .gitleaks.toml                 # Repository-wide Gitleaks detection rules & allowlist config
 ├── ai-chat-desk/                  # Python HTTP service & Random Forest ML model for CVE/EPSS
 ├── services/
 │   ├── threat/                    # High-speed Go threat & anomaly worker with NATS
