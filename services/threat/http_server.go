@@ -322,6 +322,16 @@ func (s *MultiTenantThreatStore) Reset(tenantID string) {
 	}
 }
 
+// ResetAnomalies clears only the sliding-window anomaly telemetry rates back to nominal
+func (s *MultiTenantThreatStore) ResetAnomalies() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.failureTimestamps = make([]int64, 0)
+	s.sudoTimestamps = make([]int64, 0)
+	s.egressBursts = make([]EgressBurst, 0)
+}
+
 // HTTPServer provides the REST API for the Next.js BFF and remote clients
 type HTTPServer struct {
 	port   int
@@ -580,15 +590,20 @@ func (h *HTTPServer) Start() error {
 	// 5. Reset Baselines
 	mux.HandleFunc("POST /api/threats/reset", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			TenantID string `json:"tenant_id"`
+			TenantID         string `json:"tenant_id"`
+			ClearContainment bool   `json:"clear_containment"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		h.store.Reset(req.TenantID)
+		if req.ClearContainment {
+			h.store.Reset(req.TenantID)
+		} else {
+			h.store.ResetAnomalies()
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"message": "Anomaly baselines and containment reset in Go engine",
+			"message": "Anomaly baselines reset in Go engine",
 		})
 	})
 

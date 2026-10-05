@@ -473,7 +473,7 @@ export function ChatWidget() {
             <form onSubmit={handleSubmit} className="shrink-0 border-t border-[var(--sd-border)] bg-[var(--sd-panel-raised)] p-4">
               <label htmlFor="assistant-message" className="sr-only">Message ShieldDesk Assistant</label>
               <div className="flex items-center gap-2">
-                <input ref={inputRef} id="assistant-message" value={input} onChange={(event) => setInput(event.target.value)} placeholder={activeIncidentId ? "Ask about " + activeIncidentId + "…" : "Ask about incidents, CVEs, or mitigation…"} maxLength={4000} disabled={isSending} className="sd-input h-11 min-w-0 flex-1 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] px-3 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] disabled:opacity-50" />
+                <input ref={inputRef} id="assistant-message" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about incidents, threats, CVEs, or mitigations…" maxLength={4000} disabled={isSending} className="sd-input h-11 min-w-0 flex-1 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] px-3 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] disabled:opacity-50" />
                 <button type="submit" disabled={isSending || !input.trim()} className="sd-button-primary flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--sd-on-accent)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="Send message"><Send className="h-4 w-4" /></button>
               </div>
               <p className="mt-2.5 text-center text-[11px] text-[var(--sd-text-dim)]">Review recommendations before taking action.</p>

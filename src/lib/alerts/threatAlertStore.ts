@@ -199,6 +199,13 @@ export function recordFailureTimestamp(timestamp: number = Date.now(), count: nu
   for (let i = 0; i < count; i++) {
     failureTimestamps.push(timestamp);
   }
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+  fetch(`${threatServiceUrl}/api/threats/simulate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "auth_failure", count, tenant_id: "acme-tenant" }),
+    signal: AbortSignal.timeout(500),
+  }).catch(() => {});
 }
 
 /**
@@ -226,6 +233,13 @@ export function recordSudoExecution(count: number = 1): void {
   for (let i = 0; i < count; i++) {
     sudoTimestamps.push(now);
   }
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+  fetch(`${threatServiceUrl}/api/threats/simulate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "sudo_burst", count, tenant_id: "acme-tenant" }),
+    signal: AbortSignal.timeout(500),
+  }).catch(() => {});
 }
 
 /**
@@ -250,6 +264,13 @@ export function getLiveSudoRatePerMin(): number {
  */
 export function recordNetworkEgress(mb: number, timestamp: number = Date.now()): void {
   egressBursts.push({ timestamp, mb });
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+  fetch(`${threatServiceUrl}/api/threats/simulate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "egress_spike", mb, tenant_id: "acme-tenant" }),
+    signal: AbortSignal.timeout(500),
+  }).catch(() => {});
 }
 
 /**
@@ -279,14 +300,17 @@ export function getLiveEgressRateMBPerMin(): { current_value: number; is_anomaly
 
 /**
  * Determine if a user/persona is authorized to view or manage threat alerts.
- * Strictly restricted to System Admin (dev-admin / system_admin) and Globex Analyst (dev-other / globex-tenant).
+ * Strictly restricted to Company System Admin (dev-admin / system_admin).
+ * Globex Analyst (dev-other) is an external developer persona and has a blank view.
  */
 export function isUserAuthorizedForAlerts(userId?: string | null): boolean {
   if (!userId) return false;
-  if (userId === "dev-admin" || userId === "dev-other" || userId === "dev-analyst") return true;
+  if (userId === "dev-other") return false; // Globex analyst is developer, not company admin
+  if (userId === "dev-admin") return true;
   const devUser = DEV_USERS[userId as DevUserId];
   if (devUser) {
-    return devUser.role === "system_admin" || devUser.tenantId === "globex-tenant" || devUser.role === "analyst";
+    if (devUser.tenantId === "globex-tenant") return false;
+    return devUser.role === "system_admin" || devUser.role === "super_admin";
   }
   return false;
 }
@@ -367,7 +391,7 @@ export function recordThreatAlert(params: {
         : params.failureReason,
       attemptsCount: ipFailures,
       isBlocked,
-      allowedRecipients: ["dev-admin", "dev-other", "dev-analyst"],
+      allowedRecipients: ["dev-admin"],
       createdAt: new Date().toISOString(),
     };
   } else {
@@ -385,7 +409,7 @@ export function recordThreatAlert(params: {
         : params.failureReason,
       attemptsCount: ipFailures,
       isBlocked,
-      allowedRecipients: ["dev-admin", "dev-other", "dev-analyst"],
+      allowedRecipients: ["dev-admin"],
       status: "active",
       createdAt: new Date().toISOString(),
     };

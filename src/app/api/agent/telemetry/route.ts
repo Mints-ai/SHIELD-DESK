@@ -45,7 +45,11 @@ export async function POST(req: NextRequest) {
         hostname = rows[0].hostname;
       }
     } catch {
-      const agent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId);
+      // DB offline fallback
+    }
+
+    if (!tenantId) {
+      const agent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
       if (agent) {
         tenantId = agent.tenant_id;
         hostname = agent.hostname;

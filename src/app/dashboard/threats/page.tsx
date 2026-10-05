@@ -91,15 +91,14 @@ export default function ThreatsDashboardPage() {
   const [canViewAuthAlerts, setCanViewAuthAlerts] = useState<boolean>(false);
   const [unblockFeedback, setUnblockFeedback] = useState<string | null>(null);
 
-  // Authorized personas: System Admin (dev-admin), Globex Analyst (dev-other), and SOC Analyst (dev-analyst)
-  const isAuthorizedForAlerts =
+  // System Admin (Company Admin) is the only one who can monitor, block, and unblock login containment.
+  // Globex Analyst is a developer persona and doesn't sync user login alerts (kept blank).
+  const isSystemAdmin =
     activeUserId === "dev-admin" ||
-    activeUserId === "dev-other" ||
-    activeUserId === "dev-analyst" ||
     activeUser?.role === "system_admin" ||
-    activeUser?.tenantId === "globex-tenant" ||
-    activeUser?.role === "analyst" ||
-    canViewAuthAlerts;
+    activeUser?.role === "super_admin";
+
+  const isAuthorizedForAlerts = isSystemAdmin || canViewAuthAlerts;
 
   // Auto-switch to anomaly tab if active persona is not authorized for alerts
   useEffect(() => {
@@ -127,12 +126,17 @@ export default function ThreatsDashboardPage() {
       if (data.yara_rules) setYaraRules(data.yara_rules);
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
-      if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
-      if (data.blocked_ips) setBlockedIps(data.blocked_ips);
-      if (data.security_alerts && isAuthorizedForAlerts) {
-        setSecurityAlerts(data.security_alerts);
-      } else {
+      if (activeUserId === "dev-other" || activeUser?.tenantId === "globex-tenant") {
+        setBlockedIps([]);
         setSecurityAlerts([]);
+      } else {
+        if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
+        else setBlockedIps([]);
+        if (data.security_alerts && isSystemAdmin) {
+          setSecurityAlerts(data.security_alerts);
+        } else {
+          setSecurityAlerts([]);
+        }
       }
       setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
     } catch (err) {
@@ -345,7 +349,7 @@ export default function ThreatsDashboardPage() {
               <span>Refresh</span>
             </button>
 
-            {activeUserId !== "dev-analyst" && (
+            {isSystemAdmin && (
               <div className="flex items-center gap-2">
                 <button
                   onClick={triggerAnomalySimulation}
@@ -690,7 +694,7 @@ export default function ThreatsDashboardPage() {
 
         {/* Tab 5: Alerts (Real-time Authentication Failures & Threats) */}
         {activeTab === "alerts" && (
-          !isAuthorizedForAlerts ? (
+          !isSystemAdmin ? (
             <div className="p-8 rounded-xl border border-[var(--sd-border)] sd-surface text-center space-y-3">
               <div className="inline-flex p-3 rounded-full bg-[var(--sd-warning-dim)] text-[var(--sd-warning)]">
                 <Lock className="h-6 w-6" />
@@ -699,7 +703,7 @@ export default function ThreatsDashboardPage() {
                 Access Restricted: Security Alerts
               </h4>
               <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
-                Real-time threat and authentication security alerts are strictly restricted to System Administrators and Globex SOC Analysts. Switch to System Admin or Globex Analyst persona to view real-time alert feeds.
+                User login alerts and autonomous IP containment are restricted to Company System Administrators. Globex Analyst (Developer persona) has a blank view and does not monitor company user logins.
               </p>
             </div>
           ) : (
@@ -930,22 +934,24 @@ export default function ThreatsDashboardPage() {
                         </div>
 
                         <div className="flex items-center justify-end gap-2.5 pt-1 flex-wrap">
-                          {isIpCurrentlyBlocked ? (
-                            <button
-                              onClick={() => handleUnblockIp(alert.clientIp)}
-                              className="sd-button flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] hover:bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs font-medium transition cursor-pointer shadow-xs"
-                            >
-                              <Unlock className="h-3.5 w-3.5" />
-                              <span>Unblock IP ({alert.clientIp})</span>
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleBlockIp(alert.clientIp)}
-                              className="sd-button flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-danger)]/20 hover:text-[var(--sd-danger)] text-xs font-medium text-[var(--sd-text-muted)] transition cursor-pointer shadow-xs"
-                            >
-                              <Ban className="h-3.5 w-3.5" />
-                              <span>Block IP</span>
-                            </button>
+                          {isSystemAdmin && (
+                            isIpCurrentlyBlocked ? (
+                              <button
+                                onClick={() => handleUnblockIp(alert.clientIp)}
+                                className="sd-button flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] hover:bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs font-medium transition cursor-pointer shadow-xs"
+                              >
+                                <Unlock className="h-3.5 w-3.5" />
+                                <span>Unblock IP ({alert.clientIp})</span>
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleBlockIp(alert.clientIp)}
+                                className="sd-button flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-danger)]/20 hover:text-[var(--sd-danger)] text-xs font-medium text-[var(--sd-text-muted)] transition cursor-pointer shadow-xs"
+                              >
+                                <Ban className="h-3.5 w-3.5" />
+                                <span>Block IP</span>
+                              </button>
+                            )
                           )}
 
                           <button

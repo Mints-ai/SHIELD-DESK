@@ -233,16 +233,13 @@ export async function GET(req: NextRequest) {
     }
 
     // Determine if this user can view authentication security alerts.
-    // Authorized: System Admin, Globex Analyst, and SOC Analysts
-    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
-    const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
-    const isSocAnalyst = session.role === "analyst" || session.uid === "dev-analyst";
-    const canViewAuthAlerts = Boolean(
-      session && (isSystemAdmin || isGlobexAnalyst || isSocAnalyst || session.role === "super_admin" || session.role === "responder")
-    );
+    // Strictly restricted to Company System Admin (admin@acme.corp).
+    // Globex Analyst (dev-other) is a developer persona and receives a blank view.
+    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin" || session.role === "super_admin";
+    const canViewAuthAlerts = Boolean(session && isSystemAdmin);
 
-    // Use dynamic threat alert store for authorized users.
-    // Defaults to empty array if no active alerts or user is unauthorized
+    // Use dynamic threat alert store for authorized users only.
+    // Defaults to empty array if no active alerts or user is unauthorized (e.g. Globex Analyst)
     const securityAlerts = canViewAuthAlerts
       ? getThreatAlertsForUser(session.uid)
       : [];
@@ -320,7 +317,7 @@ export async function GET(req: NextRequest) {
       },
       can_view_auth_alerts: canViewAuthAlerts,
       security_alerts: securityAlerts,
-      blocked_ips: goThreatState?.blocked_ips || getBlockedIps(),
+      blocked_ips: isSystemAdmin ? (goThreatState?.blocked_ips || getBlockedIps()) : [],
     });
 }
 
@@ -361,10 +358,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin";
-    const isGlobexAnalyst = session.tenantId === "globex-tenant" || session.uid === "dev-other";
-    const isSocAnalyst = session.role === "analyst" || session.uid === "dev-analyst";
-    const canManageContainment = isSystemAdmin || isGlobexAnalyst || isSocAnalyst || session.role === "super_admin" || session.role === "responder";
+    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin" || session.role === "super_admin";
+    const canManageContainment = isSystemAdmin;
 
     if (action === "unblock_ip") {
       if (!canManageContainment) {
@@ -456,6 +451,22 @@ export async function POST(req: NextRequest) {
       recordSudoExecution(5);
       recordNetworkEgress(285.4);
 
+      // Sync simulation with Go Threat Service
+      try {
+        const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+        await fetch(`${threatServiceUrl}/api/threats/simulate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenant_id: session.tenantId,
+            type: "all",
+          }),
+          signal: AbortSignal.timeout(1000),
+        });
+      } catch {
+        // Go service offline fallback
+      }
+
       return NextResponse.json({
         success: true,
         _demo_mode: true,
@@ -472,7 +483,22 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "reset_anomalies" || action === "reset_baseline") {
-      resetAnomalyBaselines();
+      resetAnomalyBaselines(session.tenantId);
+
+      // Sync reset with Go Threat Service
+      try {
+        const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+        await fetch(`${threatServiceUrl}/api/threats/reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenant_id: session.tenantId,
+          }),
+          signal: AbortSignal.timeout(1000),
+        });
+      } catch {
+        // Go service offline fallback
+      }
 
       const nominalBaselines = ANOMALY_BASELINES.map((b) => ({
         ...b,
@@ -484,7 +510,7 @@ export async function POST(req: NextRequest) {
         success: true,
         message: "Anomaly telemetry reset to nominal baselines.",
         anomaly_baselines: nominalBaselines,
-        security_alerts: (isSystemAdmin || isGlobexAnalyst) ? getThreatAlertsForUser(session.uid) : [],
+        security_alerts: isSystemAdmin ? getThreatAlertsForUser(session.uid) : [],
       });
     }
 

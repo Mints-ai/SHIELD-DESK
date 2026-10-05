@@ -234,23 +234,76 @@ The **Security Scanner & Remediation Center** (`/dashboard/scanner`) integrates 
 
 ---
 
-## 9. System Port Map & Microservices
+## 9. Go Threat Detection & Statistical Anomaly Engine (Go 1.27)
+
+The **Threat Intelligence & Containment Engine** (`/dashboard/threats` and `services/threat/`) is a dedicated high-performance backend microservice written in **Go 1.27** running on port `8003`. It provides multi-tenant telemetry evaluation, detection rule execution, rolling 3-sigma statistical baseline scoring, and autonomous IP containment.
+
+### Core Detection Architecture
+
+1. **High-Speed Dual-Stack Architecture**:
+   - **Frontend BFF Gateway**: The Next.js App Router route (`/api/threats`) validates session tokens, enforces tenant context, and delegates authoritative threat state queries to `http://localhost:8003`.
+   - **Go HTTP REST Engine (`services/threat/http_server.go`)**: Implements an in-memory concurrent thread-safe store (`sync.RWMutex`) maintaining sliding-window telemetry buffers and tenant-scoped containment records.
+
+2. **Detection Rule Framework**:
+   - **YARA Signature Matcher**: Inspects filesystem and process memory payloads against signatures including webshell backdoors (PHP C99/b374k), ransomware extensions (.lockbit, .blackcat), and Cobalt Strike malleable C2 reflective DLL loader memory patterns.
+   - **Sigma Behavioral Log Matcher**: Analyzes Windows and Linux audit streams for attacker tradecraft: encoded PowerShell execution bypasses, distributed SSH credential brute-forcing, and Volume Shadow Copy deletion (`vssadmin.exe delete shadows`).
+
+3. **3σ Autonomic Gaussian Statistical Anomaly Engine**:
+   - Computes rolling event rates across a **60-second sliding window**:
+     - **Failed Authentications / Min**: Historical mean $\mu = 4.2$, StdDev $\sigma = 2.1$, Threshold: $10.5$ attempts/min ($3\sigma$).
+     - **Outbound Network Egress Rate**: Historical mean $\mu = 84.5$ MB/min, StdDev $\sigma = 65.2$, Threshold: $215.0$ MB/min ($2\sigma$).
+     - **Sudo Execution Frequency**: Historical mean $\mu = 1.1$ exec/min, StdDev $\sigma = 0.8$, Threshold: $3.5$ exec/min ($3\sigma$).
+   - **Zero False Noise**: At rest, rates reflect exact, honest 60-second sliding-window activity (showing `0.0` when idle). When real login failures or endpoint agent events occur, rates immediately increment and naturally expire after 60 seconds.
+   - **Incident Drills**: Clicking **"Simulate Anomaly Burst"** injects a synthetic multi-stream burst (18+ auth failures, 380+ MB egress, 8+ sudo executions), driving metrics into the critical red state (`3 ANOMALIES ACTIVE`) with one-click restoration via **"Reset Baseline"**.
+
+4. **Multi-Tenant IP Containment & Leak Prevention**:
+   - **Tenant Partitioning**: Blocked IPs and security alerts are strictly partitioned by tenant ID (`map[string]map[string]*BlockedIPRecord`).
+   - **Zero Cross-Tenant Leakage**: Tenant A (e.g. Acme Corp) cannot see, query, or unblock Tenant B's (e.g. Globex Corp) contained IPs. Probing `is-blocked` returns `false` across tenant boundaries.
+   - **Autonomous Containment**: Automatically blocks any source IP that exceeds 5 consecutive invalid authentication attempts within the detection window.
+
+5. **Role-Based Persona Access Control**:
+   - **Company System Admin (`dev-admin` / `system_admin`)**: Full operational authority to view live authentication security alerts, trigger anomaly burst simulations, and execute **Block IP / Unblock IP** actions.
+   - **Globex Analyst (`dev-other`)**: External developer persona with a clean, blank view. User login alerts and IP containment are completely hidden, and containment modifications return `403 Forbidden: IP unblocking restricted`.
+
+### Go Threat Service API Catalog (`:8003`)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Service health, version (`1.0.0`), and Go runtime metadata |
+| `GET` | `/api/threats/state?tenant_id=...` | Returns tenant-scoped YARA rules, Sigma rules, live anomaly baselines, and blocked IPs |
+| `POST` | `/api/threats/containment` | Executes tenant-bound `block_ip` or `unblock_ip` actions |
+| `POST` | `/api/threats/simulate` | Injects synthetic anomaly telemetry bursts (`auth_failure`, `sudo_burst`, `egress_spike`, or `all`) |
+| `POST` | `/api/threats/reset` | Resets active anomaly sliding windows back to nominal baseline |
+| `GET` | `/api/threats/is-blocked?tenant_id=...&ip=...` | Ultra-fast containment verification lookup |
+
+### Local Development & Testing
+
+```bash
+cd services/threat
+go test -v .          # Runs full suite (6 automated tests, 100% passing)
+go build -o threat.exe .
+.\threat.exe          # Starts the HTTP daemon on port 8003
+```
+
+---
+
+## 10. System Port Map & Microservices
 
 | Service | Port | Technology | Purpose & Source Location |
 | :--- | :--- | :--- | :--- |
 | **ShieldDesk Web Console** | `3000` | Next.js 16 / React 19 / Tailwind v4 | SOC console, Kanban task board, fleet controller, compliance, AI chat (`src/app/`) |
 | **Python Vulnerability AI Brain** | `8000` | Python 3.10+ / Scikit-Learn Random Forest | Multi-target CVE/EPSS risk scoring, KEV catalog matching (`ai-chat-desk/server.py`) |
+| **Go Threat & Anomaly Engine** | `8003` | Go 1.27 / HTTP REST / NATS | Authoritative YARA, Sigma, 3σ statistical anomaly detection, and tenant-isolated IP containment (`services/threat/`) |
 | **PostgreSQL Database** | `5432` | PostgreSQL 16+ (Alpine) | Multi-tenant schema, incidents, mitigation tasks, approval tokens, audit log (`db/schema.sql`) |
 | **Local LLM Co-Pilot** | `11434` | Ollama (`qwen3:4b`) | Local conversational intent router & synthesis with zero data egress |
 | **Distributed Cache & Throttle** | `6379` | Redis 7+ (Alpine) | Command throttle rate limiter (5 hosts / 5 min) and session caching |
 | **Python Scan Microservice** | Internal / `8001` | Python FastAPI / Trivy / Gitleaks | Automated CVE scanning, secret detection, and patch orchestration (`services/scan/`) |
-| **Go Threat Engine** | Worker | Go 1.21+ / NATS JetStream | High-speed telemetry consumer with YARA, Sigma, and anomaly detection (`services/threat/`) |
-| **Go Ingestion Service** | `8080` | Go 1.21+ / gRPC / mTLS | High-throughput alert intake and webhook signature validation (`services/ingest/`) |
+| **Go Ingestion Service** | `50051` / `8004` | Go 1.27 / gRPC / mTLS / HTTP | High-throughput alert intake and webhook signature validation (`services/ingest/`) |
 | **Python AI Advisor** | Internal / `8002` | Python FastAPI / Claude / RAG | Specialized AI advisor microservice with vector store retrieval (`services/ai-advisor/`) |
 
 ---
 
-## 10. Comprehensive API Route Catalog
+## 11. Comprehensive API Route Catalog
 
 All routes reside under `src/app/api/` and enforce strict session authentication and tenant isolation:
 
@@ -273,7 +326,7 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 | `GET` | `/api/gitleaks/scan` | `cve.read` | Returns Gitleaks scanner status, engine mode, and cached secret leak findings |
 | `POST` | `/api/gitleaks/scan` | `cve.read` | Triggers live Gitleaks secret detection across git commit history or working tree |
 | `POST` | `/api/gitleaks/mitigate` | `responder`, `super_admin` | Dispatches credential rotation, revocation, or quarantine workflows for detected secrets |
-| `POST` | `/api/threats` | Authenticated tenant user | Telemetry bus for YARA/Sigma rules and anomaly monitoring |
+| `GET`, `POST` | `/api/threats` | Authenticated tenant user | BFF gateway delegating to Go Threat Engine (:8003) for authoritative rules, 3σ baselines, and containment |
 | `POST` | `/api/ingest/webhooks` | HMAC / API Key | Validates signature, scrubs PII/secrets, and normalizes alerts into incidents |
 | `GET` | `/api/compliance` | Authenticated tenant user | Generates SOC 2, ISO 27001, and NIST CSF compliance posture reports |
 | `GET` | `/api/reports/scorecard` | Authenticated tenant user | Aggregates executive security risk scorecards |
@@ -284,7 +337,7 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 
 ---
 
-## 11. Database Schema Overview
+## 12. Database Schema Overview
 
 The database (`db/schema.sql`) contains 15 core tables equipped with foreign key cascades, tenant indexes, and Row-Level Security (RLS) policies:
 
@@ -306,11 +359,12 @@ The database (`db/schema.sql`) contains 15 core tables equipped with foreign key
 
 ---
 
-## 12. Quick Start & Production Deployment Guide
+## 13. Quick Start & Production Deployment Guide
 
 ### Prerequisites
 - **Node.js**: v20.x or v22.x
 - **npm**: v10+
+- **Go**: 1.22+ (Go 1.27 recommended)
 - **Python**: 3.10+
 - **PostgreSQL**: 16+ (or Supabase Cloud)
 - **Aqua Security Trivy**: v0.74.0 (installed automatically via `npm run setup:trivy`)
@@ -350,6 +404,7 @@ DATABASE_URL=postgresql://shielddesk:shielddesk@localhost:5432/shielddesk
 APP_ENV=development
 DEMO_MODE=true
 SHIELDDESK_SESSION_SECRET=local_dev_secret_minimum_32_characters_long!
+THREAT_SERVICE_URL=http://localhost:8003
 ```
 
 #### For Public User Production Launch:
@@ -360,33 +415,36 @@ DEMO_MODE=false
 DATABASE_URL=postgresql://user:password@db-host:5432/shielddesk?sslmode=require
 SHIELDDESK_SESSION_SECRET=replace_with_strong_random_64_char_hex_secret
 SHIELDDESK_INGEST_API_KEY=sd_live_replace_with_secure_random_key_in_production
+THREAT_SERVICE_URL=http://localhost:8003
 ```
 
-### 4. Build & Run Production Bundle
+### 4. Build & Run Services
 ```bash
-npm run build
-npm run start
-```
-The production bundle builds with Next.js Turbopack, pre-rendering static assets and compiling dynamic and edge routes.
+# Run the full stack with Go Threat microservice via PowerShell:
+.\start.ps1
 
-### 5. Public User Onboarding Flow
-1. Visit **`/onboarding`** to access the 4-step interactive onboarding wizard:
-   - **Step 1**: Register organization name and select cloud data residency region.
-   - **Step 2**: Enroll mandatory TOTP MFA using Google Authenticator or 1Password.
-   - **Step 3**: Copy the 1-line PowerShell or Bash universal agent installation command.
-   - **Step 4**: Verify live endpoint heartbeat and enter the unified SOC console.
+# Or run individual components:
+npm run build && npm run start              # Next.js web application (:3000)
+cd services/threat && go run .             # Go Threat Engine (:8003)
+```
 
 ---
 
-## 13. Automated Testing & Verification
+## 14. Automated Testing & Verification
 
-ShieldDesk maintains a rigorous automated test suite with **204 passing unit, security, and integration tests across 32 test suites** with zero failures:
+ShieldDesk maintains rigorous automated test suites across both TypeScript/Node.js and Go:
 
 ```bash
+# 1. Run TypeScript Test Suite (204 automated tests across 32 suites)
 npm test
+
+# 2. Run Go Threat Engine Test Suite (6 tests, 100% passing)
+cd services/threat
+go test -v .
 ```
 
 ### Test Suite Highlights:
+- `services/threat/http_server_test.go` (6 tests): Health endpoint validation, tenant-isolated state containment, 60-second sliding-window anomaly calculation, HTTP containment block/unblock, cross-tenant isolation enforcement (`TestIsIPBlockedAndAlerts`), and detection engine pipeline.
 - `tests/trivy.test.ts` (5 tests): Deterministic binary discovery, CWE-78 CLI flag injection prevention, nonexistent filesystem path guards, live filesystem scan execution, and container `/app` path normalization.
 - `tests/agent-remediation-api.test.ts` (6 tests): Remote agent command queueing, pre-flight snapshot requirements, kill-switch locking, and blast-radius throttle downgrade.
 - `tests/approval-tokens.test.ts` (7 tests): Tier 2 single approval, Tier 3 dual named SuperAdmin approval, anti-replay, and DB Separation of Duties constraints.
@@ -412,7 +470,7 @@ npx tsc --noEmit
 
 ---
 
-## 14. Repository Directory Structure
+## 15. Repository Directory Structure
 
 ```text
 shielddesk/
@@ -488,7 +546,7 @@ shielddesk/
 
 ---
 
-## 15. Useful Reference Documentation
+## 16. Useful Reference Documentation
 
 - [CHECKLIST.md](CHECKLIST.md) — Team operations, release checklist, and cross-functional sign-off protocol.
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) — Master Implementation Plan, Engineering Tickets (SD-001 to SD-030), and Production Release Gates.
@@ -497,13 +555,13 @@ shielddesk/
 
 ---
 
-## 16. Security & Responsible Disclosure
+## 17. Security & Responsible Disclosure
 
 ShieldDesk is built for enterprise security environments. If you discover a vulnerability or security flaw, please do not file a public GitHub issue. Instead, report it directly to the security team at **security@mints.ai**.
 
 ---
 
-## 17. License
+## 18. License
 
 Copyright © 2026 Mints Global IT & Advertisement. All rights reserved.  
 Proprietary enterprise software. Unauthorized copying, modification, or distribution is strictly prohibited.
