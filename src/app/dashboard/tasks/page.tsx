@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
-import { useChat } from "@/lib/context/ChatContext";
+import { useChat, DEV_USERS } from "@/lib/context/ChatContext";
 import { AutonomyTierBadge } from "@/components/governance/AutonomyTierBadge";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
 import { GlassDialog } from "@/components/ui/GlassDialog";
@@ -33,68 +33,14 @@ interface MitigationTaskItem {
   incident_code?: string;
 }
 
-const SEED_TASKS: MitigationTaskItem[] = [
-  {
-    id: "t1111111-1111-1111-1111-111111111111",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "immediate",
-    title: "Isolate affected host FIN-WS-042",
-    description: "Quarantine endpoint network interface to halt lateral movement toward database server",
-    tier: "Tier 2",
-    status: "pending",
-    blast_radius: "Workstation FIN-WS-042 (Finance Subnet)",
-    incident_code: "INC-1042",
-  },
-  {
-    id: "t2222222-2222-2222-2222-222222222222",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "immediate",
-    title: "Revoke exposed user and administrative credentials",
-    description: "Terminate active session tokens for compromised user accounts",
-    tier: "Tier 1",
-    status: "completed",
-    blast_radius: "User Sessions",
-    incident_code: "INC-1042",
-  },
-  {
-    id: "t3333333-3333-3333-3333-333333333333",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "short_term",
-    title: "Deploy vendor patch for CVE-2020-6240",
-    description: "Apply SAP Security Notes to resolve NetWeaver DoS vulnerability",
-    tier: "Tier 2",
-    status: "approved",
-    blast_radius: "Finance Subnet Application Servers",
-    cve_id: "CVE-2020-6240",
-    incident_code: "INC-1042",
-  },
-  {
-    id: "t4444444-4444-4444-4444-444444444444",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "long_term",
-    title: "Implement zero-trust microsegmentation",
-    description: "Enforce strict firewall ACLs between general workstations and financial database tier",
-    tier: "Tier 2",
-    status: "pending",
-    blast_radius: "Entire Finance Zone",
-    incident_code: "INC-1042",
-  },
-  {
-    id: "t5555555-5555-5555-5555-555555555555",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "immediate",
-    title: "Block outbound egress to suspicious domain",
-    description: "Add DNS filter entry for newly registered domain detected in INC-1031",
-    tier: "Tier 1",
-    status: "completed",
-    blast_radius: "Perimeter Gateway",
-    incident_code: "INC-1031",
-  },
-];
+
 
 export default function SOCTaskBoardPage() {
   const taskDialogId = useId();
   const { activeUserId, activeUser } = useChat();
+  // Only System Admin (dev-admin) and Globex Analyst (dev-other) can assign tasks
+  const canAssignTask =
+    activeUser.role === "system_admin" || activeUser.tenantId === "globex-tenant";
   const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);
   const [filterHorizon, setFilterHorizon] = useState<string>("all");
@@ -123,14 +69,14 @@ export default function SOCTaskBoardPage() {
           }
         } else {
           if (isMounted) {
-            setTasks(activeUserId === "dev-other" ? [] : SEED_TASKS);
-            setIsSampleData(activeUserId !== "dev-other");
+            setTasks([]);
+            setIsSampleData(false);
           }
         }
       } catch {
         if (isMounted) {
-            setTasks(activeUserId === "dev-other" ? [] : SEED_TASKS);
-            setIsSampleData(activeUserId !== "dev-other");
+            setTasks([]);
+            setIsSampleData(false);
           }
       } finally {
         if (isMounted) setIsLoading(false);
@@ -302,14 +248,16 @@ export default function SOCTaskBoardPage() {
               ))}
             </div>
 
-            {/* Quick Add Task */}
-            <button
-              onClick={() => setIsCreatingTask(true)}
-              className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-2 text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
-              <span>Add Custom Task</span>
-            </button>
+            {/* Quick Add Task — visible only to System Admin & Globex Analyst */}
+            {canAssignTask && (
+              <button
+                onClick={() => setIsCreatingTask(true)}
+                className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-2 text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
+                <span>Add Custom Task</span>
+              </button>
+            )}
           </div>
         </div>
 
