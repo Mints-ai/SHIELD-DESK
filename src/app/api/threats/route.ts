@@ -22,6 +22,10 @@ import {
   getLiveEgressRateMBPerMin,
   recordNetworkEgress,
   resetAnomalyBaselines,
+  getLivePIIMetrics,
+  recordScrubbedPII,
+  resetPIIMetrics,
+  scrubTelemetryPayload,
 } from "@/lib/alerts/threatAlertStore";
 import { resolveClientIp } from "@/lib/network/clientIp";
 
@@ -118,21 +122,11 @@ const ANOMALY_BASELINES = [
   },
 ];
 
-const INGEST_TELEMETRY = {
-  active_agents_connected: 48,
-  agent_handshake_protocol: "mTLS v1.3",
-  events_per_minute: 4120,
+const BASELINE_INGEST_POLICY = {
+  agent_handshake_protocol: "mTLS v1.3 with X.509 cert (gRPC :50051)",
   max_capacity_per_tenant: 10000,
+  rate_limit_policy: "10,000 ev/min per tenant",
   rate_limit_drops: 0,
-  pii_redacted_today: 184,
-  pii_categories: {
-    jwt_tokens: 92,
-    passwords_and_secrets: 41,
-    credit_cards: 29,
-    ssn_and_national_ids: 22,
-  },
-  bus_status: "NATS JetStream (Healthy)",
-  events_persisted_timescaledb: 148290,
 };
 
 
@@ -176,9 +170,9 @@ export async function GET(req: NextRequest) {
 
   const engineRules = getActiveDetectionRules();
 
-  // Try to query real telemetry count from DB
-  let liveEventsCount = INGEST_TELEMETRY.events_persisted_timescaledb;
-  let liveConnectedAgents = INGEST_TELEMETRY.active_agents_connected;
+  // Real telemetry count from DB (starts at 0, no static mock data)
+  let liveEventsCount = 0;
+  let liveConnectedAgents = 0;
   let liveSudoDbCount = 0;
 
   try {
@@ -297,9 +291,68 @@ export async function GET(req: NextRequest) {
       // Go service offline, fallback to in-memory store
     }
 
+    // Query Go Ingest Service if online (port 8004)
+    const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8004";
+    let liveIngestStats: {
+      pii_redacted_today?: number;
+      pii_categories?: {
+        jwt_tokens?: number;
+        passwords_and_secrets?: number;
+        credit_cards?: number;
+        ssn_and_national_ids?: number;
+        emails?: number;
+      };
+      bus_status?: string;
+      active_agents_connected?: number;
+      events_per_minute?: number;
+    } | null = null;
+
+    try {
+      const ingestRes = await fetch(`${ingestServiceUrl}/api/ingest/stats`, {
+        signal: AbortSignal.timeout(800),
+      });
+      if (ingestRes.ok) {
+        liveIngestStats = await ingestRes.json();
+      }
+    } catch {
+      // Go Ingest service offline, fallback to local in-memory metrics
+    }
+
+    const localPii = getLivePIIMetrics();
+    const livePiiTotal = (liveIngestStats?.pii_redacted_today !== undefined && liveIngestStats.pii_redacted_today > 0)
+      ? liveIngestStats.pii_redacted_today
+      : localPii.totalRedacted;
+
+    const livePiiCategories = {
+      jwt_tokens: (liveIngestStats?.pii_categories?.jwt_tokens ?? 0) + localPii.categories.jwt_tokens,
+      passwords_and_secrets: (liveIngestStats?.pii_categories?.passwords_and_secrets ?? 0) + localPii.categories.passwords_and_secrets,
+      credit_cards: (liveIngestStats?.pii_categories?.credit_cards ?? 0) + localPii.categories.credit_cards,
+      ssn_and_national_ids: (liveIngestStats?.pii_categories?.ssn_and_national_ids ?? 0) + localPii.categories.ssn_and_national_ids,
+      emails: (liveIngestStats?.pii_categories?.emails ?? 0) + localPii.categories.emails,
+    };
+
+    const liveAgentsTotal = (liveIngestStats?.active_agents_connected && liveIngestStats.active_agents_connected > 0)
+      ? liveIngestStats.active_agents_connected
+      : liveConnectedAgents;
+
+    const liveEventRate = (liveIngestStats?.events_per_minute !== undefined && liveIngestStats.events_per_minute > 0)
+      ? liveIngestStats.events_per_minute
+      : Math.round(liveFailureRate + liveSudoRate);
+
+    const mergedTelemetry = {
+      ...BASELINE_INGEST_POLICY,
+      active_agents_connected: liveAgentsTotal,
+      events_persisted_timescaledb: liveEventsCount,
+      pii_redacted_today: livePiiTotal,
+      pii_categories: livePiiCategories,
+      bus_status: liveIngestStats?.bus_status ?? (goThreatState ? "NATS JetStream (Standalone)" : "Active Ingestion Loop"),
+      events_per_minute: liveEventRate,
+    };
+
     return NextResponse.json({
       status: "ok",
       engine: goThreatState ? "go-threat-service" : "typescript-in-memory",
+      ingest_engine: liveIngestStats ? "go-ingest-grpc" : "nominal-benchmark",
       dataMode: isDemoMode() ? "demo" : "live",
       demoMode: isDemoMode(),
       demoDataDisclaimer: isDemoMode()
@@ -310,11 +363,7 @@ export async function GET(req: NextRequest) {
       yara_rules: goThreatState?.yara_rules || YARA_RULES,
       sigma_rules: goThreatState?.sigma_rules || SIGMA_RULES,
       anomaly_baselines: goThreatState?.anomaly_baselines || anomalyBaselines,
-      ingest_telemetry: {
-        ...INGEST_TELEMETRY,
-        active_agents_connected: liveConnectedAgents,
-        events_persisted_timescaledb: liveEventsCount,
-      },
+      ingest_telemetry: mergedTelemetry,
       can_view_auth_alerts: canViewAuthAlerts,
       security_alerts: securityAlerts,
       blocked_ips: isSystemAdmin ? (goThreatState?.blocked_ips || getBlockedIps()) : [],
@@ -467,6 +516,25 @@ export async function POST(req: NextRequest) {
         // Go service offline fallback
       }
 
+      // Sync simulation with Go Ingest Service (increments live PII scrubbed count)
+      try {
+        const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8004";
+        await fetch(`${ingestServiceUrl}/api/ingest/simulate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(1000),
+        });
+      } catch {
+        // Go ingest service offline fallback
+      }
+
+      // Scrub synthetic credentials in-flight to simulate real telemetry cleaning
+      scrubTelemetryPayload({
+        auth_header: "Bearer sk-live-test-simulated-token-9921",
+        user_email: "analyst@acme.corp",
+        db_password: "TempPassword123!",
+      });
+
       return NextResponse.json({
         success: true,
         _demo_mode: true,
@@ -479,6 +547,37 @@ export async function POST(req: NextRequest) {
         alert_dispatched: true,
         alert_subject: "alerts.tenant_acme.auth_anomaly_burst",
         alert: simulatedAlert,
+      });
+    }
+
+    if (action === "scrub_telemetry") {
+      const payload = body.payload || {
+        command: body.command || "curl -H 'Authorization: Bearer sk-live-secret-jwt-token-998877' https://api.corp",
+        user_email: body.email || "security.officer@shielddesk.corp",
+        password: body.password || "SuperSecretPassword123!",
+        cc_number: body.credit_card || "4111 2222 3333 4444",
+      };
+
+      const { cleaned, redactedCount, categories } = scrubTelemetryPayload(payload);
+
+      // Sync with Go Ingest if online
+      try {
+        const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8004";
+        await fetch(`${ingestServiceUrl}/api/ingest/simulate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(800),
+        });
+      } catch {
+        // Go Ingest offline fallback
+      }
+
+      return NextResponse.json({
+        success: true,
+        cleaned,
+        redactedCount,
+        categories,
+        live_pii: getLivePIIMetrics(),
       });
     }
 
