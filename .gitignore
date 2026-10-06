@@ -47,6 +47,7 @@ next-env.d.ts
 pgdata/
 package-lock.json
 
+tools/trivy/trivy.exe
 # compiled agent binaries & backups
 agent/bin/
 *.dump
