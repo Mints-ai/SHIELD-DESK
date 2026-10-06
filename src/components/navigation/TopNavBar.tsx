@@ -93,6 +93,17 @@ export function TopNavBar() {
 
   useEffect(() => {
     fetchApprovals();
+
+    const handleSync = () => {
+      fetchApprovals();
+    };
+    window.addEventListener("shielddesk:approvals-changed", handleSync);
+    const interval = setInterval(fetchApprovals, 4000);
+
+    return () => {
+      window.removeEventListener("shielddesk:approvals-changed", handleSync);
+      clearInterval(interval);
+    };
   }, [fetchApprovals]);
 
   const navLinks = [
@@ -183,8 +194,15 @@ export function TopNavBar() {
           setActiveModalIndex(index);
           setActiveModalToken(pendingTokens[index]);
         }}
-        onDecisionSuccess={() => {
+        onDecisionSuccess={(updatedToken) => {
           fetchApprovals();
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("shielddesk:approvals-changed", {
+                detail: { action: updatedToken?.status, token: updatedToken },
+              })
+            );
+          }
         }}
       />
     </>

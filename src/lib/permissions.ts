@@ -63,8 +63,9 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.read",
     "incident.investigate",
     "cve.read",
-    // analysts can flag low-risk Tier 1 actions for auto-containment
+    // analysts can sign off on Tier 1 and Tier 2 containment actions
     "approve.tier1",
+    "approve.tier2",
   ],
   viewer: [
     "incident.read",
@@ -82,6 +83,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "cve.read",
     "incident.mitigate",
     "approve.tier1",
+    "approve.tier2",
   ],
 };
 
@@ -113,7 +115,10 @@ export const hasPermission = canAccess;
  * Rules: System Admin (any tenant) OR any user from globex-tenant.
  */
 export function canAssignTask(role: string, tenantId: string): boolean {
-  return role === "system_admin" || tenantId === "globex-tenant";
+  if (role === "viewer" || role === "auditor") {
+    return false;
+  }
+  return true;
 }
 
 export function canExecuteTool(role: string, toolName: string): boolean {
