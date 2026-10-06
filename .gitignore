@@ -23,8 +23,6 @@
 # misc
 .DS_Store
 *.pem
-*.exe
-*.exe~
 
 # debug
 npm-debug.log*
@@ -48,7 +46,3 @@ pgdata/
 package-lock.json
 
 tools/trivy/trivy.exe
-# compiled agent binaries & backups
-agent/bin/
-*.dump
-backup_drill_*/
