@@ -292,27 +292,12 @@ export function ChatWidget() {
     sendMessage(input);
   };
 
-  // Roles that are permitted to use Simulate Blast Radius (mirrors cve.read in permissions.ts)
-  const canSimulateBlastRadius = ["system_admin", "super_admin", "analyst", "responder", "user"].includes(
-    activeUser.role
-  );
-
   const dynamicSuggestions = activeIncidentId
     ? [
-        `Investigate ${activeIncidentId}`,
-        "What is the mitigation plan?",
-        "What assets are affected?",
-        ...(canSimulateBlastRadius ? ["Simulate Blast Radius for CVE-2025-38667"] : []),
         "Run a full Trivy vulnerability scan",
         "Show me todays critical incidents",
       ]
-    : canSimulateBlastRadius
-      ? [
-          "Simulate Blast Radius for CVE-2025-38667",
-          "Run a full Trivy vulnerability scan",
-          ...DEFAULT_SUGGESTIONS,
-        ]
-      : DEFAULT_SUGGESTIONS;
+    : DEFAULT_SUGGESTIONS;
 
 
   return (
