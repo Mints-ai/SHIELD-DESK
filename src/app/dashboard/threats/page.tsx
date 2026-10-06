@@ -126,6 +126,7 @@ export default function ThreatsDashboardPage() {
       if (data.yara_rules) setYaraRules(data.yara_rules);
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
+      if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
       if (activeUserId === "dev-other" || activeUser?.tenantId === "globex-tenant") {
         setBlockedIps([]);
         setSecurityAlerts([]);

@@ -184,7 +184,11 @@ export async function GET(req: NextRequest) {
       liveEventsCount = parseInt(telRes.rows[0].count, 10);
     }
     const agentRes = await query<{ count: string }>(
-      `SELECT count(*) FROM endpoint_agents WHERE tenant_id = $1 AND status = 'connected'`,
+      `SELECT count(*) FROM endpoint_agents
+       WHERE tenant_id = $1
+         AND status = 'connected'
+         AND kill_switch_active = false
+         AND COALESCE(last_seen_at, created_at) >= now() - interval '15 seconds'`,
       [session.tenantId]
     );
     if (agentRes.rows.length > 0) {
