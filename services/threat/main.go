@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,7 +46,7 @@ func NewThreatEngine(natsURL, dbURL string) (*ThreatEngine, error) {
 			Storage:  nats.FileStorage,
 		})
 	} else {
-		log.Warn().Err(err).Msg("[ThreatEngine] NATS connection offline, running in standalone mode")
+		log.Info().Msg("[ThreatEngine] NATS not detected on localhost:4222. Running in standalone HTTP mode (ideal for local dev).")
 	}
 
 	return &ThreatEngine{
@@ -57,6 +58,7 @@ func NewThreatEngine(natsURL, dbURL string) (*ThreatEngine, error) {
 		anomaly: NewAnomalyDetector(),
 	}, nil
 }
+
 
 // ProcessEvent applies detection pipeline to a single incoming security event
 func (te *ThreatEngine) ProcessEvent(ctx context.Context, event *IngestEvent) *Alert {
@@ -113,7 +115,7 @@ func (te *ThreatEngine) PublishAlert(ctx context.Context, alert *Alert) error {
 
 func (te *ThreatEngine) Start(ctx context.Context) error {
 	if te.js == nil {
-		log.Warn().Msg("[ThreatEngine] Ingesting in simulated standalone loop (NATS not bound)")
+		log.Info().Msg("[ThreatEngine] Ingesting in standalone in-memory mode on port 8003 (NATS not bound)")
 		<-ctx.Done()
 		return nil
 	}
@@ -158,7 +160,28 @@ func main() {
 		if os.Getenv("APP_ENV") == "production" {
 			log.Fatal().Msg("FATAL: DATABASE_URL environment variable is required in production")
 		}
-		dbURL = "postgresql://localhost:5432/shielddesk?sslmode=disable"
+		// Look for .env.local in repo root if present
+		for _, envPath := range []string{".env.local", "../../.env.local", ".env", "../../.env"} {
+			if envBytes, err := os.ReadFile(envPath); err == nil {
+				for _, line := range strings.Split(string(envBytes), "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "DATABASE_URL=") {
+						val := strings.TrimPrefix(line, "DATABASE_URL=")
+						val = strings.Trim(val, `"'`)
+						if val != "" {
+							dbURL = val
+							break
+						}
+					}
+				}
+				if dbURL != "" {
+					break
+				}
+			}
+		}
+		if dbURL == "" {
+			dbURL = "postgresql://shielddesk:shielddesk_dev@localhost:5432/shielddesk?sslmode=disable"
+		}
 	}
 
 	log.Info().Msg("[ShieldDesk-Threat] Initializing Go Threat Detection & Anomaly Service...")

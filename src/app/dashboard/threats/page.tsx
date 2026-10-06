@@ -312,6 +312,26 @@ export default function ThreatsDashboardPage() {
     }
   };
 
+  const [scrubbingLoading, setScrubbingLoading] = useState(false);
+
+  const handleScrubTestTelemetry = async () => {
+    setScrubbingLoading(true);
+    try {
+      const res = await fetch("/api/threats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "scrub_telemetry" }),
+      });
+      if (res.ok) {
+        await fetchThreatData(true);
+      }
+    } catch (e) {
+      console.error("Failed to scrub test telemetry:", e);
+    } finally {
+      setScrubbingLoading(false);
+    }
+  };
+
   return (
     <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
@@ -426,18 +446,18 @@ export default function ThreatsDashboardPage() {
               <EyeOff className="h-4 w-4 text-[var(--sd-pine-bright)]" />
             </div>
             <div className="text-2xl font-medium text-[var(--sd-text)] font-mono">
-              {telemetry?.pii_redacted_today || 184}
+              {(telemetry?.pii_redacted_today ?? 0).toLocaleString()}
             </div>
             <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Zero plaintext tokens on bus</p>
           </div>
 
           <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-[13px] font-medium">NATS Throughput</span>
+              <span className="text-[13px] font-medium">Ingestion Throughput</span>
               <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
             </div>
             <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">
-              {telemetry?.events_per_minute || 4120} / 10k
+              {(telemetry?.events_per_minute ?? 0).toLocaleString()} / 10k
             </div>
             <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Events/min capacity</p>
           </div>
@@ -635,10 +655,21 @@ export default function ThreatsDashboardPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Telemetry Card */}
               <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-3 shadow-xs">
-                <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
-                  <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
-                  gRPC Ingest Service &amp; PII Scrubbing
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
+                    <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
+                    gRPC Ingest Service &amp; PII Scrubbing
+                  </h3>
+                  <button
+                    onClick={handleScrubTestTelemetry}
+                    disabled={scrubbingLoading}
+                    className="sd-button sd-button-secondary px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer flex items-center gap-1.5"
+                    title="Stream test payload with secrets to verify live regex redaction"
+                  >
+                    <EyeOff className="h-3 w-3 text-[var(--sd-pine-bright)]" />
+                    {scrubbingLoading ? "Scrubbing..." : "Scrub Test Event"}
+                  </button>
+                </div>
                 <p className="text-[13px] text-[var(--sd-text-muted)]">
                   In-flight regex tokenizer redacting sensitive credentials before events reach the NATS message bus.
                 </p>
@@ -646,19 +677,72 @@ export default function ThreatsDashboardPage() {
                 <div className="space-y-2 pt-2">
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Agent Handshake Protocol:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-medium">mTLS v1.3 with X.509 cert</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">
+                      {telemetry?.agent_handshake_protocol || "mTLS v1.3 with X.509 cert"}
+                    </span>
                   </div>
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Active Enrolled Endpoints:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-medium">48 agents online</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">
+                      {telemetry?.active_agents_connected ?? 0} {telemetry?.active_agents_connected === 1 ? "agent" : "agents"} online
+                    </span>
                   </div>
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Rate Limit Policy:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-medium">10,000 ev/min per tenant</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">
+                      {telemetry?.rate_limit_policy || "10,000 ev/min per tenant"}
+                    </span>
                   </div>
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
-                    <span className="text-[var(--sd-text-muted)]">TimescaleDB Hypertable Events:</span>
-                    <span className="font-mono text-[var(--sd-pine-bright)] font-medium">148,290 records</span>
+                    <span className="text-[var(--sd-text-muted)]">Telemetry Database Records:</span>
+                    <span className="font-mono text-[var(--sd-pine-bright)] font-medium">
+                      {(telemetry?.events_persisted_timescaledb ?? 0).toLocaleString()} records
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
+                    <span className="text-[var(--sd-text-muted)]">PII Tokens Scrubbed Today:</span>
+                    <span className="font-mono text-[var(--sd-pine-bright)] font-medium">
+                      {(telemetry?.pii_redacted_today ?? 0).toLocaleString()} redacted
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[13px] py-1.5">
+                    <span className="text-[var(--sd-text-muted)]">Ingestion Message Bus:</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">
+                      {telemetry?.bus_status || "Active Ingestion Loop"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Live PII Token Redaction Breakdown */}
+                <div className="mt-3 pt-3 border-t border-[var(--sd-border)]">
+                  <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider mb-2">
+                    Live PII Redaction Breakdown
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                      <div className="text-[var(--sd-text-muted)] text-[11px]">JWT Tokens</div>
+                      <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
+                        {(telemetry?.pii_categories?.jwt_tokens ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                      <div className="text-[var(--sd-text-muted)] text-[11px]">Secrets / Keys</div>
+                      <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
+                        {(telemetry?.pii_categories?.passwords_and_secrets ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                      <div className="text-[var(--sd-text-muted)] text-[11px]">Credit Cards</div>
+                      <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
+                        {(telemetry?.pii_categories?.credit_cards ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                      <div className="text-[var(--sd-text-muted)] text-[11px]">User Emails</div>
+                      <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
+                        {(telemetry?.pii_categories?.emails ?? 0).toLocaleString()}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -41,6 +41,19 @@ declare global {
   var __shieldDeskSudoTimestamps: number[] | undefined;
   // eslint-disable-next-line no-var
   var __shieldDeskEgressBursts: { timestamp: number; mb: number }[] | undefined;
+  // eslint-disable-next-line no-var
+  var __shieldDeskPIIMetrics: PIIScrubMetrics | undefined;
+}
+
+export interface PIIScrubMetrics {
+  totalRedacted: number;
+  categories: {
+    jwt_tokens: number;
+    passwords_and_secrets: number;
+    credit_cards: number;
+    ssn_and_national_ids: number;
+    emails: number;
+  };
 }
 
 if (!global.__shieldDeskThreatAlerts) {
@@ -71,13 +84,27 @@ if (!global.__shieldDeskEgressBursts) {
   global.__shieldDeskEgressBursts = [];
 }
 
-const alertsStore = global.__shieldDeskThreatAlerts;
-const failureTracker = global.__shieldDeskRecentLoginFailures;
-const ipFailureTracker = global.__shieldDeskIpLoginFailures;
-const blockedIpsStore = global.__shieldDeskBlockedIps;
-const failureTimestamps = global.__shieldDeskFailureTimestamps;
-const sudoTimestamps = global.__shieldDeskSudoTimestamps;
-const egressBursts = global.__shieldDeskEgressBursts;
+if (!global.__shieldDeskPIIMetrics) {
+  global.__shieldDeskPIIMetrics = {
+    totalRedacted: 0,
+    categories: {
+      jwt_tokens: 0,
+      passwords_and_secrets: 0,
+      credit_cards: 0,
+      ssn_and_national_ids: 0,
+      emails: 0,
+    },
+  };
+}
+
+const alertsStore = global.__shieldDeskThreatAlerts!;
+const failureTracker = global.__shieldDeskRecentLoginFailures!;
+const ipFailureTracker = global.__shieldDeskIpLoginFailures!;
+const blockedIpsStore = global.__shieldDeskBlockedIps!;
+const failureTimestamps = global.__shieldDeskFailureTimestamps!;
+const sudoTimestamps = global.__shieldDeskSudoTimestamps!;
+const egressBursts = global.__shieldDeskEgressBursts!;
+const piiMetricsStore = global.__shieldDeskPIIMetrics!;
 
 // Clear any stale local loopback containment from prior test iterations
 if (blockedIpsStore.has("127.0.0.1")) {
@@ -499,4 +526,122 @@ export function resetThreatAlerts(tenantId: string = "acme-tenant"): void {
     body: JSON.stringify({ tenant_id: tenantId }),
     signal: AbortSignal.timeout(600),
   }).catch(() => {});
+  resetPIIMetrics();
 }
+
+/**
+ * Returns a live snapshot of in-memory PII scrubbing metrics
+ */
+export function getLivePIIMetrics(): PIIScrubMetrics {
+  return {
+    totalRedacted: piiMetricsStore.totalRedacted,
+    categories: { ...piiMetricsStore.categories },
+  };
+}
+
+/**
+ * Record redacted PII token occurrences in memory
+ */
+export function recordScrubbedPII(counts: Partial<PIIScrubMetrics["categories"]>): PIIScrubMetrics {
+  const jwt = counts.jwt_tokens || 0;
+  const pass = counts.passwords_and_secrets || 0;
+  const cc = counts.credit_cards || 0;
+  const ssn = counts.ssn_and_national_ids || 0;
+  const emails = counts.emails || 0;
+  const sum = jwt + pass + cc + ssn + emails;
+
+  piiMetricsStore.totalRedacted += sum;
+  piiMetricsStore.categories.jwt_tokens += jwt;
+  piiMetricsStore.categories.passwords_and_secrets += pass;
+  piiMetricsStore.categories.credit_cards += cc;
+  piiMetricsStore.categories.ssn_and_national_ids += ssn;
+  piiMetricsStore.categories.emails += emails;
+
+  return getLivePIIMetrics();
+}
+
+/**
+ * Reset live PII counters
+ */
+export function resetPIIMetrics(): void {
+  piiMetricsStore.totalRedacted = 0;
+  piiMetricsStore.categories = {
+    jwt_tokens: 0,
+    passwords_and_secrets: 0,
+    credit_cards: 0,
+    ssn_and_national_ids: 0,
+    emails: 0,
+  };
+}
+
+/**
+ * Real in-flight PII scrubber for telemetry payloads (matches Go pii.go tokenizers)
+ */
+export function scrubTelemetryPayload(payload: Record<string, string>): {
+  cleaned: Record<string, string>;
+  redactedCount: number;
+  categories: Partial<PIIScrubMetrics["categories"]>;
+} {
+  const emailRegex = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+  const ccRegex = /\b(?:\d{4}[-\s]?){3}\d{4}\b/g;
+  const jwtRegex = /\beyJ[a-zA-Z0-9_\-.]+\.[a-zA-Z0-9_\-.]+\.[a-zA-Z0-9_\-.]+\b/g;
+  const bearerRegex = /bearer\s+[a-zA-Z0-9_\-.]{20,}/gi;
+  const sensitiveKeys = new Set([
+    "password", "passwd", "secret", "private_key", "credit_card",
+    "ssn", "token", "api_key", "authorization", "cookie"
+  ]);
+
+  let passCount = 0;
+  let emailCount = 0;
+  let ccCount = 0;
+  let jwtCount = 0;
+  const cleaned: Record<string, string> = {};
+
+  for (const [k, v] of Object.entries(payload)) {
+    const lowerKey = k.toLowerCase();
+    if (sensitiveKeys.has(lowerKey)) {
+      cleaned[k] = "[REDACTED_SENSITIVE_KEY]";
+      passCount++;
+      continue;
+    }
+
+    let val = String(v);
+    const emailsFound = val.match(emailRegex);
+    if (emailsFound) {
+      emailCount += emailsFound.length;
+      val = val.replace(emailRegex, "[REDACTED_EMAIL]");
+    }
+    const ccFound = val.match(ccRegex);
+    if (ccFound) {
+      ccCount += ccFound.length;
+      val = val.replace(ccRegex, "[REDACTED_CREDIT_CARD]");
+    }
+    const jwtFound = val.match(jwtRegex);
+    if (jwtFound) {
+      jwtCount += jwtFound.length;
+      val = val.replace(jwtRegex, "[REDACTED_JWT]");
+    }
+    const bearerFound = val.match(bearerRegex);
+    if (bearerFound) {
+      passCount += bearerFound.length;
+      val = val.replace(bearerRegex, "[REDACTED_BEARER]");
+    }
+    cleaned[k] = val;
+  }
+
+  const catCounts = {
+    jwt_tokens: jwtCount,
+    passwords_and_secrets: passCount,
+    credit_cards: ccCount,
+    emails: emailCount,
+  };
+
+  recordScrubbedPII(catCounts);
+
+  return {
+    cleaned,
+    redactedCount: passCount + emailCount + ccCount + jwtCount,
+    categories: catCounts,
+  };
+}
+
