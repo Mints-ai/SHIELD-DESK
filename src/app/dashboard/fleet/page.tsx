@@ -51,6 +51,16 @@ interface EnrollResult {
   tenantId: string;
 }
 
+// Maps each command value to its required autonomy tier
+const COMMAND_TIERS: Record<string, "Tier 1" | "Tier 2"> = {
+  take_safety_snapshot: "Tier 1",
+  "block_ip 198.51.100.4": "Tier 1",
+  isolate_host: "Tier 2",
+  restore_host: "Tier 2",
+  "kill_process 4812": "Tier 2",
+  rollback_snapshot: "Tier 2",
+};
+
 export default function FleetPage() {
   const { activeUserId, activeUser } = useChat();
   const canManageFleetAgents =
@@ -1161,23 +1171,32 @@ export default function FleetPage() {
                   </label>
                   <select
                     value={commandInput}
-                    onChange={(e) => setCommandInput(e.target.value)}
+                    onChange={(e) => {
+                      const cmd = e.target.value;
+                      setCommandInput(cmd);
+                      // Auto-set the correct tier for the selected command
+                      const requiredTier = COMMAND_TIERS[cmd];
+                      if (requiredTier) setSelectedTier(requiredTier);
+                    }}
                     className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2.5 text-[13px] text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
                   >
                     <option value="take_safety_snapshot">
-                      take_safety_snapshot (Capture routing + process tree baseline)
-                    </option>
-                    <option value="isolate_host">
-                      isolate_host (Quarantine network interface - Tier 2 Gated)
-                    </option>
-                    <option value="restore_host">
-                      restore_host (Restore network routing - Tier 2 Gated)
+                      take_safety_snapshot — Capture routing + process baseline [Tier 1 Auto]
                     </option>
                     <option value="block_ip 198.51.100.4">
-                      block_ip (Block suspicious C2 IP address - Tier 1 Auto)
+                      block_ip — Block suspicious C2 IP address [Tier 1 Auto]
+                    </option>
+                    <option value="isolate_host">
+                      isolate_host — Quarantine network interface [Tier 2 Gated]
+                    </option>
+                    <option value="restore_host">
+                      restore_host — Restore network routing [Tier 2 Gated]
                     </option>
                     <option value="kill_process 4812">
-                      kill_process (Terminate suspicious executable - Tier 2 Gated)
+                      kill_process — Terminate suspicious executable [Tier 2 Gated]
+                    </option>
+                    <option value="rollback_snapshot">
+                      rollback_snapshot — Revert host to safety snapshot [Tier 2 Gated]
                     </option>
                   </select>
                 </div>
