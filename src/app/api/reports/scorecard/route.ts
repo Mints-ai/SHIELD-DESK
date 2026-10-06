@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
 import { getExecutiveRiskScorecard } from "@/lib/reporting/scorecard";
+import { trackError } from "@/lib/observability/errorTracker";
 
 export async function GET(req: NextRequest) {
   try {
@@ -15,6 +16,7 @@ export async function GET(req: NextRequest) {
     const scorecard = await getExecutiveRiskScorecard(caller);
     return NextResponse.json(scorecard);
   } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/reports/scorecard" });
     const msg = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

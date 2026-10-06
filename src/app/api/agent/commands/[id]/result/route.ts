@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordCommandResult } from "@/lib/fleet/fleet";
+import { trackError } from "@/lib/observability/errorTracker";
 
 /**
  * POST /api/agent/commands/:id/result
@@ -14,24 +15,41 @@ export async function POST(
     const { id } = await params;
     const body = await req.json();
 
-    const { status, output = "", snapshotId } = body;
+    const { status, output = "", snapshotId, verified } = body;
+    const agentId = body.agentId || req.headers.get("x-shielddesk-agent-id") || undefined;
 
-    if (!status || !["executed", "failed", "rolled_back"].includes(status)) {
+    const validStatuses = ["executed", "succeeded", "failed", "rolled_back", "verified", "acknowledged", "executing"];
+    if (!status || !validStatuses.includes(status)) {
       return NextResponse.json(
-        { error: "Valid status ('executed', 'failed', 'rolled_back') is required" },
+        { error: "Valid status ('executed', 'succeeded', 'failed', 'rolled_back', 'verified', 'acknowledged', 'executing') is required" },
         { status: 400 }
       );
     }
+    const normalizedStatus = status === "succeeded" ? "executed" : status;
 
-    await recordCommandResult({
+    const res = await recordCommandResult({
       commandId: id,
-      status,
+      status: normalizedStatus as "executed" | "failed" | "rolled_back" | "verified" | "acknowledged" | "executing",
       output: typeof output === "string" ? output : JSON.stringify(output),
       snapshotId: typeof snapshotId === "string" ? snapshotId : undefined,
+      agentId,
+      verified: Boolean(verified),
     });
+
+    if (res.notFound) {
+      return NextResponse.json({ error: "Command not found" }, { status: 404 });
+    }
+
+    if (res.unauthorized) {
+      return NextResponse.json(
+        { error: "Forbidden: Command does not belong to reporting agent" },
+        { status: 403 }
+      );
+    }
 
     return NextResponse.json({ success: true, commandId: id, status });
   } catch (err: unknown) {
+    trackError(err, { endpoint: "/api/agent/commands/[id]/result" });
     const msg = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

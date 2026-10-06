@@ -1,6 +1,7 @@
 import { listApprovalTokens } from "@/lib/governance/approvalTokens";
 import { listEndpointAgents, MOCK_HASH_CHAINS } from "@/lib/fleet/fleet";
 import type { SessionUser } from "@/lib/auth/session";
+import { type MetricStatus, type MetricValue, createMetric } from "@/lib/types/metrics";
 
 export type ControlAutomationStatus = "fully_automated" | "partially_automated" | "policy_governed";
 export type HorizonMapping = "immediate" | "short_term" | "long_term" | "continuous";
@@ -24,6 +25,7 @@ export interface IsoControl {
   /** Always "estimated_baseline" until replaced by a live measurement pipeline. */
   dataSource: "estimated_baseline" | "live_telemetry";
   isEstimated: boolean;
+  metric: MetricValue<number>;
 }
 
 export const ISO_27001_CONTROLS: IsoControl[] = [
@@ -38,6 +40,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 98,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(98, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Automated platform capability mapping against clause A.5.24"),
   },
   {
     code: "A.5.25",
@@ -50,6 +53,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 96,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(96, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.5.25"),
   },
   {
     code: "A.5.26",
@@ -62,6 +66,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 92,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(92, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.5.26"),
   },
   {
     code: "A.5.28",
@@ -74,6 +79,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 100,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(100, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.5.28"),
   },
   {
     code: "A.8.7",
@@ -86,6 +92,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 94,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(94, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.8.7"),
   },
   {
     code: "A.8.8",
@@ -98,6 +105,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 95,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(95, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.8.8"),
   },
   {
     code: "A.8.16",
@@ -110,6 +118,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 95,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(95, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.8.16"),
   },
   {
     code: "A.8.20",
@@ -122,6 +131,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 88,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(88, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.8.20"),
   },
   {
     code: "A.8.24",
@@ -134,6 +144,7 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 98,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(98, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.8.24"),
   },
   {
     code: "A.9.2",
@@ -146,11 +157,13 @@ export const ISO_27001_CONTROLS: IsoControl[] = [
     compliancePct: 100,
     dataSource: "estimated_baseline",
     isEstimated: true,
+    metric: createMetric(100, "ESTIMATED", "ISO/IEC 27001:2022 Baseline Mapping", "Capability mapping against clause A.9.2"),
   },
 ];
 
 export interface ComplianceSummary {
   overallScore: number;
+  overallScoreMetric: MetricValue<number>;
   totalControls: number;
   fullyAutomated: number;
   partiallyAutomated: number;
@@ -158,11 +171,6 @@ export interface ComplianceSummary {
   controls: IsoControl[];
   soc2Readiness: string;
   auditEvidenceCount: number;
-  /**
-   * True when any control's compliancePct is estimated rather than
-   * derived from live telemetry. Must be surfaced in any UI or report
-   * before presenting numbers to a client or auditor.
-   */
   dataDisclaimer: string;
 }
 
@@ -186,6 +194,7 @@ export async function getComplianceSummary(caller: SessionUser): Promise<Complia
 
   return {
     overallScore: avgScore,
+    overallScoreMetric: createMetric(avgScore, "ESTIMATED", "ISO 27001 Baseline Aggregation", "Mean compliance across 9 core controls"),
     totalControls: ISO_27001_CONTROLS.length,
     fullyAutomated,
     partiallyAutomated,

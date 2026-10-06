@@ -6,6 +6,10 @@
 const SECRET_PATTERNS = [
   // Generic password/secret assignments
   /(password|passwd|secret|api_key|access_token)\s*[:=]\s*["']?[^\s"';]{6,}["']?/gi,
+  // API Keys (e.g. OpenAI / Anthropic sk-...)
+  /\b(sk-[a-zA-Z0-9]{20,})\b/gi,
+  // Authorization Bearer tokens
+  /\b(bearer\s+[a-zA-Z0-9_\-\.]{20,})\b/gi,
   // AWS Access Key ID
   /AKIA[0-9A-Z]{16}/g,
   // GitHub Personal Access Token

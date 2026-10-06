@@ -73,8 +73,11 @@ export const TIER_DEFINITIONS: Record<AutonomyTier, TierClassification> = {
   },
 };
 
+import { PolicyEngine } from "../policy-engine/engine";
+
 /**
  * Classifies an action type into its corresponding operational Autonomy Tier.
+ * Delegates to the deterministic PolicyEngine while preserving legacy tier contracts.
  */
 export function classifyResponseTier(
   actionType: string,
@@ -83,57 +86,77 @@ export function classifyResponseTier(
     assetType?: string;
     cveScore?: number;
     epssScore?: number;
+    tenantId?: string;
+    blastRadiusScore?: number;
   }
 ): TierClassification {
   const normalized = actionType.toLowerCase().replace(/[\s_-]+/g, "_");
 
-  // Tier 3: Break-glass, emergency execution, destructive actions
+  // Determine risk severity
+  let riskSeverity: "low" | "medium" | "high" | "critical" = "medium";
+  if (context?.cveScore && context.cveScore >= 8.5) riskSeverity = "critical";
+  else if (context?.cveScore && context.cveScore >= 7.0) riskSeverity = "high";
+  else if (context?.cveScore && context.cveScore < 4.0) riskSeverity = "low";
+
+  // Determine asset criticality
+  let assetCriticality: "low" | "medium" | "high" | "critical" = "medium";
   if (
-    normalized.includes("emergency") ||
-    normalized.includes("break_glass") ||
-    normalized.includes("reboot_database") ||
-    normalized.includes("wipe") ||
-    normalized.includes("arbitrary_command") ||
-    (context?.isProduction && normalized.includes("database_restart"))
+    normalized.includes("database") ||
+    normalized.includes("domain_controller") ||
+    context?.assetType === "production_database"
   ) {
+    assetCriticality = "critical";
+  }
+
+  const result = PolicyEngine.evaluatePolicy({
+    tenantId: context?.tenantId || "default-tenant",
+    action: actionType,
+    assetType: context?.assetType,
+    assetCriticality,
+    riskSeverity,
+    blastRadiusScore: context?.blastRadiusScore,
+    isProduction: context?.isProduction,
+  });
+
+  if (result.decision === "REQUIRE_DUAL_APPROVAL") {
     return {
       ...TIER_DEFINITIONS["Tier 3"],
-      justification: `Action '${actionType}' targets critical production assets with high blast radius.`,
+      justification: result.reason,
     };
   }
 
-  // Tier 2: Host isolation, patching, killing processes, firewall rule modification
-  if (
-    normalized.includes("isolate") ||
-    normalized.includes("patch") ||
-    normalized.includes("remediate") ||
-    normalized.includes("kill_process") ||
-    normalized.includes("quarantine") ||
-    normalized.includes("disable_telemetry") ||
-    (context?.cveScore && context.cveScore >= 7.0)
-  ) {
+  if (result.decision === "REQUIRE_APPROVAL") {
     return {
       ...TIER_DEFINITIONS["Tier 2"],
-      justification: `Action '${actionType}' alters host state or network connectivity; requires analyst approval.`,
+      justification: result.reason,
     };
   }
 
-  // Tier 1: Reversible containment (session revocation, temporary IP block)
-  if (
-    normalized.includes("revoke") ||
-    normalized.includes("block_ip") ||
-    normalized.includes("rotate_key") ||
-    normalized.includes("invalidate_token") ||
-    normalized.includes("update_rule")
-  ) {
+  if (result.decision === "ALLOW") {
+    const isTier0 =
+      normalized.includes("gather") ||
+      normalized.includes("read") ||
+      normalized.includes("inspect") ||
+      normalized.includes("telemetry") ||
+      normalized.startsWith("get_");
+
+    if (isTier0) {
+      return {
+        ...TIER_DEFINITIONS["Tier 0"],
+        justification: result.reason,
+      };
+    }
+
     return {
       ...TIER_DEFINITIONS["Tier 1"],
-      justification: `Action '${actionType}' is safe and easily rolled back.`,
+      justification: result.reason,
     };
   }
 
-  // Tier 0: Default read-only / observation
-  return TIER_DEFINITIONS["Tier 0"];
+  return {
+    ...TIER_DEFINITIONS["Tier 2"],
+    justification: result.reason,
+  };
 }
 
 /**

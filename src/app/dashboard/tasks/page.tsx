@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useId } from "react";
 import {
   CheckSquare,
   Lock,
@@ -14,9 +14,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
-import { useChat } from "@/lib/context/ChatContext";
+import { useChat, DEV_USERS } from "@/lib/context/ChatContext";
 import { AutonomyTierBadge } from "@/components/governance/AutonomyTierBadge";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
+import { GlassDialog } from "@/components/ui/GlassDialog";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 interface MitigationTaskItem {
@@ -32,67 +33,15 @@ interface MitigationTaskItem {
   incident_code?: string;
 }
 
-const SEED_TASKS: MitigationTaskItem[] = [
-  {
-    id: "t1111111-1111-1111-1111-111111111111",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "immediate",
-    title: "Isolate affected host FIN-WS-042",
-    description: "Quarantine endpoint network interface to halt lateral movement toward database server",
-    tier: "Tier 2",
-    status: "pending",
-    blast_radius: "Workstation FIN-WS-042 (Finance Subnet)",
-    incident_code: "INC-1042",
-  },
-  {
-    id: "t2222222-2222-2222-2222-222222222222",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "immediate",
-    title: "Revoke exposed user and administrative credentials",
-    description: "Terminate active session tokens for compromised user accounts",
-    tier: "Tier 1",
-    status: "completed",
-    blast_radius: "User Sessions",
-    incident_code: "INC-1042",
-  },
-  {
-    id: "t3333333-3333-3333-3333-333333333333",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "short_term",
-    title: "Deploy vendor patch for CVE-2020-6240",
-    description: "Apply SAP Security Notes to resolve NetWeaver DoS vulnerability",
-    tier: "Tier 2",
-    status: "approved",
-    blast_radius: "Finance Subnet Application Servers",
-    cve_id: "CVE-2020-6240",
-    incident_code: "INC-1042",
-  },
-  {
-    id: "t4444444-4444-4444-4444-444444444444",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "long_term",
-    title: "Implement zero-trust microsegmentation",
-    description: "Enforce strict firewall ACLs between general workstations and financial database tier",
-    tier: "Tier 2",
-    status: "pending",
-    blast_radius: "Entire Finance Zone",
-    incident_code: "INC-1042",
-  },
-  {
-    id: "t5555555-5555-5555-5555-555555555555",
-    plan_id: "p1111111-1111-1111-1111-111111111111",
-    horizon: "immediate",
-    title: "Block outbound egress to suspicious domain",
-    description: "Add DNS filter entry for newly registered domain detected in INC-1031",
-    tier: "Tier 1",
-    status: "completed",
-    blast_radius: "Perimeter Gateway",
-    incident_code: "INC-1031",
-  },
-];
+
 
 export default function SOCTaskBoardPage() {
+  const taskDialogId = useId();
   const { activeUserId, activeUser } = useChat();
+  // Only System Admin (dev-admin) and Globex Analyst (dev-other) can assign tasks
+  const canAssignTask =
+    activeUser.role === "system_admin" || activeUser.tenantId === "globex-tenant";
+  const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);
   const [filterHorizon, setFilterHorizon] = useState<string>("all");
   const [activeModalToken, setActiveModalToken] = useState<ApprovalTokenRecord | null>(null);
@@ -101,13 +50,42 @@ export default function SOCTaskBoardPage() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskTier, setNewTaskTier] = useState<"Tier 1" | "Tier 2" | "Tier 3">("Tier 2");
 
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   useEffect(() => {
-    // If Globex tenant (isolation check), show empty task board
-    if (activeUserId === "dev-other") {
-      setTasks([]);
-    } else {
-      setTasks(SEED_TASKS);
+    let isMounted = true;
+    async function loadTasks() {
+      setIsLoading(true);
+      try {
+        const res = await fetch("/api/tasks", {
+          headers: { "X-ShieldDesk-User": activeUserId },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) {
+            setTasks(data.tasks || []);
+            setIsSampleData(data._source === "demo_fallback");
+          }
+        } else {
+          if (isMounted) {
+            setTasks([]);
+            setIsSampleData(false);
+          }
+        }
+      } catch {
+        if (isMounted) {
+            setTasks([]);
+            setIsSampleData(false);
+          }
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
     }
+    loadTasks();
+    return () => {
+      isMounted = false;
+    };
   }, [activeUserId]);
 
   const handleOpenApproval = async (task: MitigationTaskItem) => {
@@ -158,25 +136,43 @@ export default function SOCTaskBoardPage() {
     );
   };
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTaskTitle.trim()) return;
+    if (!newTaskTitle.trim() || isSubmitting) return;
 
-    const newTask: MitigationTaskItem = {
-      id: crypto.randomUUID(),
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      horizon: "immediate",
-      title: newTaskTitle.trim(),
-      description: "Analyst-initiated custom mitigation task",
-      tier: newTaskTier,
-      status: "pending",
-      blast_radius: "Target Workstation Scope",
-      incident_code: "INC-1042",
-    };
+    setIsSubmitting(true);
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({
+          title: newTaskTitle.trim(),
+          description: "Analyst-initiated custom mitigation task",
+          tier: newTaskTier,
+          horizon: "immediate",
+          blastRadius: "Target Workstation Scope",
+        }),
+      });
 
-    setTasks((prev) => [newTask, ...prev]);
-    setNewTaskTitle("");
-    setIsCreatingTask(false);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.task) {
+          setTasks((prev) => [data.task, ...prev]);
+        }
+      } else {
+        const errBody = await res.json().catch(() => null);
+        console.error("Task creation failed:", errBody?.error || "Server rejected task creation");
+      }
+    } catch (err) {
+      console.error("Network error during task creation:", err);
+    } finally {
+      setIsSubmitting(false);
+      setNewTaskTitle("");
+      setIsCreatingTask(false);
+    }
   };
 
   const filteredTasks = tasks.filter((t) => {
@@ -212,108 +208,161 @@ export default function SOCTaskBoardPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="sd-dashboard-content flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
+        {isSampleData && <p className="sd-sample-label w-fit">Sample tasks · Local fallback data</p>}
         {/* Header & Controls */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--sd-border)] pb-5">
           <div>
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl sd-surface border border-[var(--sd-border)] text-[var(--sd-wheat)] shadow-xs">
                 <CheckSquare className="h-4.5 w-4.5" />
               </div>
-              <h1 className="text-xl font-bold tracking-tight text-[var(--sd-pine)]">SOC Task Board</h1>
-              <span className="rounded-md bg-white border border-[var(--sd-border)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--sd-pine)] font-mono shadow-xs">
+              <h1 className="tracking-tight text-[var(--sd-text)] text-3xl font-light leading-tight">Task board</h1>
+              <span className="rounded-md sd-surface border border-[var(--sd-border)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--sd-pine)] font-mono shadow-xs">
                 Tenant: {activeUser.tenantName}
               </span>
             </div>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
               Multi-Tenant Remediation Task Board with Tier-Gated Approvals
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
             {/* Horizon Filter */}
-            <div className="flex items-center gap-1 bg-white border border-[var(--sd-border)] rounded-xl p-1 text-xs shadow-xs">
-              <span className="text-[10px] uppercase font-semibold text-[var(--sd-text-muted)] px-2 flex items-center gap-1 font-mono">
+            <div className="sd-tabs">
+              <span className="shrink-0 text-[11px] uppercase font-medium text-[var(--sd-text-muted)] px-2 flex items-center gap-1 font-mono">
                 <Filter className="h-3 w-3 text-[var(--sd-pine)]" /> Horizon:
               </span>
               {["all", "immediate", "short_term", "long_term"].map((h) => (
                 <button
                   key={h}
                   onClick={() => setFilterHorizon(h)}
-                  className={cn(
-                    "px-2.5 py-1 rounded-lg text-xs capitalize transition cursor-pointer font-medium",
-                    filterHorizon === h
-                      ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs"
-                      : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
-                  )}
+                  aria-pressed={filterHorizon === h}
+                  className="capitalize"
                 >
                   {h.replace("_", " ")}
                 </button>
               ))}
             </div>
 
-            {/* Quick Add Task */}
-            <button
-              onClick={() => setIsCreatingTask(!isCreatingTask)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer shadow-xs"
-            >
-              <Plus className="h-3.5 w-3.5 text-[#e6dbbf]" />
-              <span>Add Custom Task</span>
-            </button>
+            {/* Quick Add Task — visible only to System Admin & Globex Analyst */}
+            {canAssignTask && (
+              <button
+                onClick={() => setIsCreatingTask(true)}
+                className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-2 text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
+                <span>Add Custom Task</span>
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Create Task Form */}
+        {/* Add Custom Task Modal */}
         {isCreatingTask && (
-          <form
-            onSubmit={handleCreateTask}
-            className="p-5 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs space-y-4"
+          <GlassDialog
+            open={isCreatingTask}
+            onClose={() => { setIsCreatingTask(false); setNewTaskTitle(""); }}
+            labelledBy={taskDialogId}
+            closeOnBackdrop
+            className="max-w-lg"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
-                Draft New Remediation Task
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsCreatingTask(false)}
-                className="text-xs text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] cursor-pointer"
-              >
-                Cancel
-              </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-2">
-                <input
-                  type="text"
-                  placeholder="Task title (e.g., Flush ARP table on Gateway router)"
-                  value={newTaskTitle}
-                  onChange={(e) => setNewTaskTitle(e.target.value)}
-                  className="w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-xs text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)]"
-                  required
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={newTaskTier}
-                  onChange={(e) => setNewTaskTier(e.target.value as "Tier 1" | "Tier 2" | "Tier 3")}
-                  className="w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-xs text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)]"
-                >
-                  <option value="Tier 1">Tier 1 (Automatic Action)</option>
-                  <option value="Tier 2">Tier 2 (Human Sign-off)</option>
-                  <option value="Tier 3">Tier 3 (Dual Sign-off)</option>
-                </select>
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-5 border-b border-[var(--sd-border)]">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--sd-pine-dim)] text-[var(--sd-wheat)] border border-[var(--sd-border)]">
+                    <Plus className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 id={taskDialogId} className="text-base font-medium text-[var(--sd-text)]">Draft New Remediation Task</h3>
+                    <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-0.5">New task will land in <span className="font-semibold text-[var(--sd-pine)]">Pending Authorization</span></p>
+                  </div>
+                </div>
                 <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] text-[#f7f4ed] text-xs font-semibold shrink-0 cursor-pointer transition shadow-xs"
+                  type="button"
+                  onClick={() => { setIsCreatingTask(false); setNewTaskTitle(""); }}
+                  className="sd-button flex h-9 w-9 items-center justify-center p-0 text-[var(--sd-text-muted)] transition cursor-pointer text-lg leading-none"
+                  aria-label="Close modal"
                 >
-                  Create
+                  ×
                 </button>
               </div>
-            </div>
-          </form>
+
+              {/* Modal Body */}
+              <form onSubmit={handleCreateTask} className="p-5 space-y-4">
+                <div className="space-y-1.5">
+                  <label htmlFor={`${taskDialogId}-title`} className="text-[11px] font-medium uppercase tracking-wider text-[var(--sd-text-muted)] font-mono">
+                    Task Title <span className="text-[var(--sd-danger)]">*</span>
+                  </label>
+                  <input
+                    id={`${taskDialogId}-title`}
+                    type="text"
+                    placeholder="e.g., Flush ARP table on Gateway router"
+                    value={newTaskTitle}
+                    onChange={(e) => setNewTaskTitle(e.target.value)}
+                    className="sd-input w-full rounded-xl px-3.5 py-2.5 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] transition"
+                    autoFocus
+                    data-autofocus
+                    required
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor={`${taskDialogId}-tier`} className="text-[11px] font-medium uppercase tracking-wider text-[var(--sd-text-muted)] font-mono">
+                    Autonomy Tier
+                  </label>
+                  <select
+                    id={`${taskDialogId}-tier`}
+                    value={newTaskTier}
+                    onChange={(e) => setNewTaskTier(e.target.value as "Tier 1" | "Tier 2" | "Tier 3")}
+                    className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
+                  >
+                    <option value="Tier 1">Tier 1 — Automatic Action</option>
+                    <option value="Tier 2">Tier 2 — Human Sign-off Required</option>
+                    <option value="Tier 3">Tier 3 — Dual Sign-off Required</option>
+                  </select>
+                  <p className="text-[10.5px] text-[var(--sd-text-muted)]">
+                    {newTaskTier === "Tier 1" && "Agent executes autonomously with no human gate."}
+                    {newTaskTier === "Tier 2" && "Requires one authorised analyst to sign off before execution."}
+                    {newTaskTier === "Tier 3" && "Requires two independent approvals — high blast-radius actions only."}
+                  </p>
+                </div>
+
+                {/* Modal Footer Actions */}
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-[var(--sd-border)]">
+                  <button
+                    type="button"
+                    onClick={() => { setIsCreatingTask(false); setNewTaskTitle(""); }}
+                    className="sd-button px-4 py-2 text-[13px] text-[var(--sd-text-muted)] transition cursor-pointer font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting || !newTaskTitle.trim()}
+                    className="sd-button sd-button-primary flex items-center gap-1.5 px-4 py-2 disabled:cursor-not-allowed text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                        </svg>
+                        <span>Creating…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Create Task</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+          </GlassDialog>
         )}
 
         {/* 4-Column Board */}
@@ -322,7 +371,7 @@ export default function SOCTaskBoardPage() {
             {columns.map((col) => (
               <div
                 key={col.id}
-                className="rounded-2xl border border-[var(--sd-border)] bg-white flex flex-col h-[600px] lg:h-[calc(100vh-230px)] min-h-[480px] max-h-[850px] overflow-hidden shadow-xs"
+                className="sd-surface rounded-2xl border border-[var(--sd-border)] flex flex-col h-[600px] lg:h-[calc(100vh-230px)] min-h-[480px] max-h-[850px] overflow-hidden"
               >
                 {/* Column Header */}
                 <div className="p-3.5 border-b border-[var(--sd-border)] flex items-center justify-between bg-[var(--sd-bg-alt)]/50 shrink-0">
@@ -333,25 +382,25 @@ export default function SOCTaskBoardPage() {
                 </div>
 
                 {/* Tasks List */}
-                <div className="p-3 space-y-3 flex-1 min-h-0 overflow-y-auto bg-white">
+                <div className="p-3 space-y-3 flex-1 min-h-0 overflow-y-auto">
                 {col.items.length === 0 ? (
-                  <div className="py-12 text-center text-xs text-[var(--sd-text-muted)] border border-dashed border-[var(--sd-border)] rounded-xl my-2 bg-[var(--sd-panel-raised)]">
+                  <div className="py-12 text-center text-[13px] text-[var(--sd-text-muted)] border border-dashed border-[var(--sd-border)] rounded-xl my-2 bg-[var(--sd-panel-raised)]">
                     No tasks in this lane
                   </div>
                 ) : (
                   col.items.map((task) => (
                     <div
                       key={task.id}
-                      className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-2.5 text-xs group"
+                      className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-2.5 text-[13px] group"
                     >
                       <div className="flex items-center justify-between">
                         <AutonomyTierBadge tier={task.tier} size="sm" showLabel={false} />
-                        <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--sd-pine)] font-semibold">
+                        <span className="text-[11px] font-mono uppercase tracking-wider text-[var(--sd-pine)] font-medium">
                           {task.horizon.replace("_", " ")}
                         </span>
                       </div>
 
-                      <h4 className="font-semibold text-xs text-[var(--sd-text)] leading-snug group-hover:text-[var(--sd-pine)] transition-colors">
+                      <h4 className="font-medium text-[13px] text-[var(--sd-text)] leading-snug group-hover:text-[var(--sd-pine)] transition-colors">
                         {task.title}
                       </h4>
 
@@ -359,7 +408,7 @@ export default function SOCTaskBoardPage() {
                         {task.description}
                       </p>
 
-                      <div className="pt-2 border-t border-[var(--sd-border)] flex items-center justify-between text-[10.5px]">
+                      <div className="pt-2 border-t border-[var(--sd-border)] flex items-center justify-between text-[11px]">
                         <span className="text-[var(--sd-text-muted)] font-mono truncate max-w-[130px]">
                           {task.blast_radius}
                         </span>
@@ -367,7 +416,7 @@ export default function SOCTaskBoardPage() {
                         {task.status === "pending" && (
                           <button
                             onClick={() => handleOpenApproval(task)}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-bold cursor-pointer transition shadow-xs"
+                            className="sd-button flex items-center gap-1 px-2.5 py-1 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-medium cursor-pointer transition shadow-xs"
                           >
                             <Lock className="h-3 w-3" />
                             <span>Sign Off</span>
@@ -375,14 +424,14 @@ export default function SOCTaskBoardPage() {
                         )}
 
                         {task.status === "approved" && (
-                          <span className="flex items-center gap-1 text-[var(--sd-pine)] font-semibold text-[11px]">
+                          <span className="flex items-center gap-1 text-[var(--sd-pine)] font-medium text-[11px]">
                             <ShieldCheck className="h-3.5 w-3.5" />
                             <span>Approved</span>
                           </span>
                         )}
 
                         {task.status === "completed" && (
-                          <span className="flex items-center gap-1 text-[var(--sd-success)] font-semibold text-[11px]">
+                          <span className="flex items-center gap-1 text-[var(--sd-success)] font-medium text-[11px]">
                             <ShieldCheck className="h-3.5 w-3.5" />
                             <span>Executed</span>
                           </span>

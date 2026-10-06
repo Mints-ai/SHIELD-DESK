@@ -56,6 +56,7 @@ export default function SOCDashboardPage() {
   const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<IncidentDetail | null>(null);
   const [isLoadingList, setIsLoadingList] = useState(false);
+  const [incidentListError, setIncidentListError] = useState<string | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
 
@@ -78,6 +79,7 @@ export default function SOCDashboardPage() {
       })
       .then((data) => {
         if (!isMounted) return;
+        setIncidentListError(null);
         const list = data?.incidents || [];
         setIncidents(list);
         if (list.length > 0) {
@@ -97,7 +99,10 @@ export default function SOCDashboardPage() {
       })
       .catch((err) => {
         console.error("Incidents fetch error:", err);
-        if (isMounted) setIncidents([]);
+        if (isMounted) {
+          setIncidents([]);
+          setIncidentListError("Incident data is currently unavailable. Please try again.");
+        }
       })
       .finally(() => {
         if (isMounted) setIsLoadingList(false);
@@ -106,7 +111,7 @@ export default function SOCDashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, [activeUserId, filterSeverity, activeIncidentId, setActiveIncidentId]);
+  }, [activeUserId, filterSeverity]);
 
   // Fetch incident detail when activeIncidentId changes
   useEffect(() => {
@@ -146,135 +151,47 @@ export default function SOCDashboardPage() {
     const s = severity.toUpperCase();
     if (s === "CRITICAL") {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
           <ShieldAlert className="h-3 w-3 text-[var(--sd-danger)]" /> CRITICAL
         </span>
       );
     }
     if (s === "HIGH") {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]">
           <AlertTriangle className="h-3 w-3 text-[var(--sd-warning)]" /> HIGH
         </span>
       );
     }
     if (s === "MEDIUM") {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-[var(--sd-panel-raised)] text-[var(--sd-beige-dim)] border border-[var(--sd-border)]">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-[var(--sd-panel-raised)] text-[var(--sd-beige-dim)] border border-[var(--sd-border)]">
           MEDIUM
         </span>
       );
     }
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-[var(--sd-success-dim)] text-[var(--sd-success)] border border-[var(--sd-success-border)]">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-[var(--sd-success-dim)] text-[var(--sd-success)] border border-[var(--sd-success-border)]">
         <CheckCircle className="h-3 w-3 text-[var(--sd-success)]" /> {s}
       </span>
     );
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-[var(--sd-bg)] text-[var(--sd-text)] min-h-screen">
+    <div className="sd-app-shell flex-1 flex flex-col bg-[var(--sd-bg)] text-[var(--sd-text)] min-h-screen">
       {/* Global Top Navbar */}
       <TopNavBar />
 
-      {/* Main Workspace Layout */}
-      <div className="sd-dashboard-content flex-1 flex overflow-hidden">
-        {/* Left Sidebar: Incident Feed */}
-        <aside className="w-[380px] shrink-0 border-r border-[var(--sd-border)] bg-[var(--sd-panel)] flex flex-col">
-          {/* Feed Header & Filters */}
-          <div className="p-4 border-b border-[var(--sd-border)] space-y-3 bg-[var(--sd-bg-alt)]/40">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
-                  Incident Queue
-                </h2>
-                <span className="text-[11px] text-[var(--sd-text-muted)]">
-                  Tenant: <strong className="text-[var(--sd-text)]">{activeUser.tenantName}</strong>
-                </span>
-              </div>
-              <span className="rounded-md bg-white border border-[var(--sd-border)] px-2 py-0.5 text-[11px] font-mono font-semibold text-[var(--sd-pine)] shadow-xs">
-                {incidents.length} Active
-              </span>
-            </div>
+      {/* Main Workspace Layout: detail panel left, incident queue right */}
+      <div className="sd-dashboard-content flex-1">
 
-            {/* Severity Filter Pills */}
-            <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-              {["all", "critical", "high", "medium"].map((sev) => (
-                <button
-                  key={sev}
-                  onClick={() => setFilterSeverity(sev)}
-                  className={cn(
-                    "px-2.5 py-1 rounded-md text-[10.5px] uppercase font-semibold tracking-wider transition-all duration-150 cursor-pointer",
-                    filterSeverity === sev
-                      ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs"
-                      : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
-                  )}
-                >
-                  {sev}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Incident List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-[var(--sd-panel)]">
-            {isLoadingList ? (
-              <div className="py-12 text-center text-xs text-[var(--sd-text-muted)] flex flex-col items-center gap-2">
-                <RefreshCw className="h-4 w-4 animate-spin text-[var(--sd-pine)]" />
-                <span>Loading tenant telemetry...</span>
-              </div>
-            ) : incidents.length === 0 ? (
-              <div className="py-16 text-center px-4 rounded-xl border border-dashed border-[var(--sd-border)] bg-[var(--sd-panel-raised)] my-4">
-                <CheckCircle className="h-8 w-8 text-[var(--sd-pine-bright)]/40 mx-auto mb-2" />
-                <h4 className="text-xs font-semibold text-[var(--sd-pine)]">Zero Incidents Reported</h4>
-                <p className="text-[11px] text-[var(--sd-text-muted)] mt-1 max-w-[220px] mx-auto leading-relaxed">
-                  Tenant <span className="font-mono text-[var(--sd-pine)] font-medium">{activeUser.tenantId}</span> has no active incidents
-                  matching your filter. Multi-tenant isolation verified!
-                </p>
-              </div>
-            ) : (
-              incidents.map((inc) => {
-                const isSelected = activeIncidentId === inc.incident_code;
-                return (
-                  <motion.div
-                    key={inc.incident_code}
-                    onClick={() => setActiveIncidentId(inc.incident_code)}
-                    whileHover={{ scale: 1.005 }}
-                    className={cn(
-                      "p-3 rounded-xl border transition-all duration-150 cursor-pointer flex flex-col gap-1.5",
-                      isSelected
-                        ? "border-[var(--sd-pine)] bg-[var(--sd-bg-alt)]/60 shadow-xs ring-1 ring-[var(--sd-pine)]/20"
-                        : "border-[var(--sd-border)] bg-white hover:border-[var(--sd-border-strong)] hover:bg-[var(--sd-panel-hover)]/40"
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className={cn(
-                        "font-mono text-xs font-bold tracking-tight",
-                        isSelected ? "text-[var(--sd-pine)]" : "text-[var(--sd-text)]"
-                      )}>
-                        {inc.incident_code}
-                      </span>
-                      {getSeverityBadge(inc.severity)}
-                    </div>
-                    <h3 className="text-xs font-semibold text-[var(--sd-text)] line-clamp-1 leading-snug">
-                      {inc.title}
-                    </h3>
-                    <div className="flex items-center justify-between text-[10.5px] text-[var(--sd-text-muted)] mt-0.5">
-                      <span className="capitalize font-mono font-medium">{inc.status}</span>
-                      <span className="flex items-center gap-1 font-mono">
-                        <Clock className="h-2.5 w-2.5" />
-                        {new Date(inc.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                    </div>
-                  </motion.div>
-                );
-              })
-            )}
-          </div>
-        </aside>
-
-        {/* Center / Right: Incident Detail Investigation & AI Co-Pilot Console */}
-        <main className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 bg-[var(--sd-bg)]">
+        <div className="sd-overview-heading"><div><span className="sd-eyebrow">{activeUser.tenantName} · Incident workspace</span><h1>Security operations</h1><p>Investigate the signal. Understand the impact. Coordinate your response.</p></div><Link href="/dashboard/scanner" className="sd-button"><Shield size={16} />Security scanner<ArrowRight size={14} /></Link></div>
+        <div className="sd-overview-metrics">
+          {[{ label: "Incidents in view", value: incidents.length, icon: Layers, caption: "Current severity filter" }, { label: "Critical incidents", value: incidents.filter((item) => item.severity === "critical").length, icon: ShieldAlert, caption: "In the current queue" }, { label: "Under investigation", value: incidents.filter((item) => item.status === "investigating").length, icon: Activity, caption: "In the current queue" }, { label: "Affected assets", value: selectedIncident?.affectedAssets.length ?? 0, icon: Server, caption: "Selected incident scope" }].map(({ label, value, icon: Icon, caption }) => <div className="sd-glass sd-metric" key={label}><div className="sd-metric-label">{label}<Icon size={17} strokeWidth={1.4} /></div><div className="sd-metric-value">{isLoadingList || isLoadingDetail ? "—" : String(value).padStart(2,"0")}</div><p className="sd-metric-caption">{caption}</p></div>)}
+        </div>
+        <div className="sd-incident-layout">
+        {/* ── Detail Panel ── */}
+        <main className="sd-incident-detail">
           {isLoadingDetail ? (
             <div className="flex-1 flex items-center justify-center text-xs text-[var(--sd-text-muted)] gap-2">
               <RefreshCw className="h-5 w-5 animate-spin text-[var(--sd-pine)]" />
@@ -283,10 +200,10 @@ export default function SOCDashboardPage() {
           ) : selectedIncident ? (
             <>
               {/* Incident Header Card */}
-              <div className="rounded-2xl border border-[var(--sd-border)] bg-white p-6 shadow-xs space-y-4">
+              <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-6 shadow-xs space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <span className="rounded-lg bg-[var(--sd-bg-alt)] px-2.5 py-1 font-mono text-sm font-bold text-[var(--sd-pine)] border border-[var(--sd-border)]">
+                    <span className="rounded-lg bg-[var(--sd-bg-alt)] px-2.5 py-1 font-mono text-sm font-medium text-[var(--sd-pine)] border border-[var(--sd-border)]">
                       {selectedIncident.incident.incidentCode}
                     </span>
                     {getSeverityBadge(selectedIncident.incident.severity)}
@@ -297,16 +214,6 @@ export default function SOCDashboardPage() {
 
                   {/* AI & Governance Action Trigger Buttons */}
                   <div className="flex items-center gap-2 flex-wrap">
-                    {selectedIncident.incident.incidentCode === "INC-1042" && (
-                      <Link
-                        href="/dashboard/plans/p1111111-1111-1111-1111-111111111111"
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg-alt)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-pine)] transition-all cursor-pointer shadow-xs"
-                      >
-                        <Layers className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
-                        <span>Inspect Mitigation Plan</span>
-                      </Link>
-                    )}
-
                     <button
                       onClick={() =>
                         openChatWithPrompt(
@@ -314,9 +221,9 @@ export default function SOCDashboardPage() {
                           selectedIncident.incident.incidentCode
                         )
                       }
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] text-xs font-semibold text-[#f7f4ed] transition-all cursor-pointer shadow-xs"
+                      className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl sd-button-primary text-xs font-semibold text-[var(--sd-on-accent)] transition-all cursor-pointer shadow-xs"
                     >
-                      <Sparkles className="h-3.5 w-3.5 text-[#e6dbbf]" />
+                      <Sparkles className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
                       Investigate with AI
                     </button>
                     <button
@@ -326,14 +233,14 @@ export default function SOCDashboardPage() {
                           selectedIncident.incident.incidentCode
                         )
                       }
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition-all cursor-pointer shadow-xs"
+                      className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] sd-surface hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition-all cursor-pointer shadow-xs"
                     >
                       <Sparkles className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
                       Plan Mitigation
                     </button>
                     <Link
                       href="/dashboard/plans"
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition-all cursor-pointer shadow-xs"
+                      className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] sd-surface hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition-all cursor-pointer shadow-xs"
                       title="View all 3-Horizon Mitigation Plans"
                     >
                       <FileText className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
@@ -343,7 +250,7 @@ export default function SOCDashboardPage() {
                 </div>
 
                 <div>
-                  <h2 className="text-xl font-bold tracking-tight text-[var(--sd-text)]">
+                  <h2 className="text-xl font-medium tracking-tight text-[var(--sd-text)]">
                     {selectedIncident.incident.title}
                   </h2>
                   <p className="text-xs text-[var(--sd-text-muted)] mt-1.5 leading-relaxed max-w-4xl">
@@ -355,11 +262,11 @@ export default function SOCDashboardPage() {
               {/* Grid: Assets + Timeline */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Affected Assets Card */}
-                <div className="rounded-2xl border border-[var(--sd-border)] bg-white p-5 shadow-xs flex flex-col">
+                <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">
                       <Server className="h-4 w-4 text-[var(--sd-pine)]" />
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                      <h3 className="text-xs font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
                         Impacted Assets ({selectedIncident.affectedAssets.length})
                       </h3>
                     </div>
@@ -375,15 +282,15 @@ export default function SOCDashboardPage() {
                           className="flex items-center justify-between p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-xs"
                         >
                           <div className="flex items-center gap-2.5">
-                            <div className="h-7 w-7 rounded-lg bg-white border border-[var(--sd-border)] flex items-center justify-center">
+                            <div className="h-7 w-7 rounded-lg sd-surface border border-[var(--sd-border)] flex items-center justify-center">
                               <Terminal className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
                             </div>
                             <div>
                               <div className="font-mono font-semibold text-[var(--sd-text)]">{asset.hostname}</div>
-                              <div className="text-[10.5px] text-[var(--sd-text-muted)] capitalize">{asset.asset_type}</div>
+                              <div className="text-[11px] text-[var(--sd-text-muted)] capitalize">{asset.asset_type}</div>
                             </div>
                           </div>
-                          <span className="rounded bg-[var(--sd-danger-dim)] border border-[var(--sd-danger-border)] text-[var(--sd-danger)] text-[10px] px-2 py-0.5 font-semibold">
+                          <span className="rounded bg-[var(--sd-danger-dim)] border border-[var(--sd-danger-border)] text-[var(--sd-danger)] text-[11px] px-2 py-0.5 font-semibold">
                             Compromised Scope
                           </span>
                         </div>
@@ -393,11 +300,11 @@ export default function SOCDashboardPage() {
                 </div>
 
                 {/* Chronological Event Timeline */}
-                <div className="rounded-2xl border border-[var(--sd-border)] bg-white p-5 shadow-xs flex flex-col">
+                <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs flex flex-col">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">
                       <Clock className="h-4 w-4 text-[var(--sd-pine)]" />
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                      <h3 className="text-xs font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
                         Attack Timeline ({selectedIncident.events.length})
                       </h3>
                     </div>
@@ -409,9 +316,9 @@ export default function SOCDashboardPage() {
                     ) : (
                       selectedIncident.events.map((event, idx) => (
                         <div key={idx} className="relative text-xs group">
-                          <div className="absolute -left-8 top-1.5 h-2.5 w-2.5 rounded-full bg-[var(--sd-pine)] ring-4 ring-white" />
+                          <div className="absolute -left-8 top-1.5 h-2.5 w-2.5 rounded-full bg-[var(--sd-pine)] ring-4 ring-[var(--sd-bg-alt)]" />
                           <div className="p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] group-hover:bg-[var(--sd-panel-hover)]/50 transition-colors">
-                            <span className="font-mono text-[10px] font-semibold text-[var(--sd-pine)] block mb-0.5">
+                            <span className="font-mono text-[11px] font-semibold text-[var(--sd-pine)] block mb-0.5">
                               {new Date(event.occurred_at).toLocaleTimeString([], {
                                 hour: "2-digit",
                                 minute: "2-digit",
@@ -428,12 +335,12 @@ export default function SOCDashboardPage() {
               </div>
 
               {/* Threat Intelligence / CVE Correlation Bar */}
-              <div className="rounded-2xl border border-[var(--sd-border)] bg-white p-5 shadow-xs">
+              <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <Layers className="h-4 w-4 text-[var(--sd-pine)]" />
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
-                      Linked Threat Intelligence (CVE-2020-6240)
+                    <h3 className="text-xs font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                      Sample Threat Intelligence (CVE-2020-6240)
                     </h3>
                   </div>
                   <button
@@ -445,20 +352,20 @@ export default function SOCDashboardPage() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
                   <div className="p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)]">
-                    <div className="text-[10px] text-[var(--sd-text-muted)] uppercase tracking-wider font-medium">CVSS Score</div>
-                    <div className="text-sm font-bold text-[var(--sd-warning)] mt-0.5 font-mono">7.5 (HIGH)</div>
+                    <div className="text-[11px] text-[var(--sd-text-muted)] uppercase tracking-wider font-medium">CVSS Score</div>
+                    <div className="text-sm font-medium text-[var(--sd-warning)] mt-0.5 font-mono">7.5 (HIGH)</div>
                   </div>
                   <div className="p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)]">
-                    <div className="text-[10px] text-[var(--sd-text-muted)] uppercase tracking-wider font-medium">Autonomy Gate</div>
-                    <div className="text-sm font-bold text-[var(--sd-pine)] mt-0.5">Tier 2 (Human Sign-off)</div>
+                    <div className="text-[11px] text-[var(--sd-text-muted)] uppercase tracking-wider font-medium">Autonomy Gate</div>
+                    <div className="text-sm font-medium text-[var(--sd-pine)] mt-0.5">Tier 2 (Human Sign-off)</div>
                   </div>
                   <div className="p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)]">
-                    <div className="text-[10px] text-[var(--sd-text-muted)] uppercase tracking-wider font-medium">CWE Classification</div>
-                    <div className="text-sm font-bold text-[var(--sd-text)] mt-0.5">CWE-400 (Resource Exhaustion)</div>
+                    <div className="text-[11px] text-[var(--sd-text-muted)] uppercase tracking-wider font-medium">CWE Classification</div>
+                    <div className="text-sm font-medium text-[var(--sd-text)] mt-0.5">CWE-400 (Resource Exhaustion)</div>
                   </div>
                   <div className="p-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)]">
-                    <div className="text-[10px] text-[var(--sd-text-muted)] uppercase tracking-wider font-medium">Remediation SLA</div>
-                    <div className="text-sm font-bold text-[var(--sd-text)] mt-0.5 font-mono">Within 7 Days</div>
+                    <div className="text-[11px] text-[var(--sd-text-muted)] uppercase tracking-wider font-medium">Remediation SLA</div>
+                    <div className="text-sm font-medium text-[var(--sd-text)] mt-0.5 font-mono">Within 7 Days</div>
                   </div>
                 </div>
               </div>
@@ -466,14 +373,116 @@ export default function SOCDashboardPage() {
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-12">
               <ShieldAlert className="h-10 w-10 text-[var(--sd-border-strong)] mb-3" />
-              <h3 className="text-sm font-bold text-[var(--sd-pine)]">No Incident Selected</h3>
+              <h3 className="text-sm font-medium text-[var(--sd-pine)]">No Incident Selected</h3>
               <p className="text-xs text-[var(--sd-text-muted)] mt-1 max-w-sm">
-                Select an incident from the queue on the left to review its timeline, affected assets, and correlated
+                Select an incident from the queue on the right to review its timeline, affected assets, and correlated
                 threat intelligence.
               </p>
             </div>
           )}
         </main>
+
+        {/* ── Right Sidebar: Incident Queue ── */}
+        <aside className="sd-glass sd-incident-queue flex flex-col">
+
+          {/* Sidebar Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/30 shrink-0">
+            <div>
+              <h2 className="text-xs font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono leading-none">
+                Incident Queue
+              </h2>
+              <span className="text-[11px] text-[var(--sd-text-muted)]">
+                Tenant: <strong className="text-[var(--sd-text)]">{activeUser.tenantName}</strong>
+              </span>
+            </div>
+            <span className="rounded-md bg-[var(--sd-bg)] border border-[var(--sd-border)] px-2 py-0.5 text-[11px] font-mono font-semibold text-[var(--sd-pine)]">
+              {incidents.length} shown
+            </span>
+          </div>
+
+          {/* Severity Filter Pills */}
+          <div className="flex gap-1 px-3 py-2 border-b border-[var(--sd-border)] shrink-0">
+            {["all", "critical", "high", "medium"].map((sev) => (
+              <button
+                key={sev}
+                onClick={() => setFilterSeverity(sev)}
+                aria-pressed={filterSeverity === sev}
+                className={cn(
+                  "px-2.5 py-1 rounded-md text-[11px] uppercase font-semibold tracking-wider transition-all duration-150 cursor-pointer flex-1 text-center",
+                  filterSeverity === sev
+                    ? "bg-[var(--sd-pine)] text-[var(--sd-on-accent)] shadow-xs"
+                    : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)]"
+                )}
+              >
+                {sev}
+              </button>
+            ))}
+          </div>
+
+          {/* Vertical Incident Card List */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+            {isLoadingList ? (
+              <div className="flex flex-col items-center gap-2 py-12 text-xs text-[var(--sd-text-muted)]">
+                <RefreshCw className="h-4 w-4 animate-spin text-[var(--sd-pine)]" />
+                <span>Loading tenant telemetry...</span>
+              </div>
+            ) : incidentListError ? (
+              <div className="mx-1 mt-4 p-4 rounded-2xl border border-dashed border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-center">
+                <h4 className="text-xs font-semibold text-[var(--sd-pine)]">Incident Queue Unavailable</h4>
+                <p className="text-[11px] text-[var(--sd-text-muted)] mt-1 leading-relaxed">
+                  {incidentListError}
+                </p>
+              </div>
+            ) : incidents.length === 0 ? (
+              <div className="mx-1 mt-4 p-4 rounded-2xl border border-dashed border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-center">
+                <CheckCircle className="h-6 w-6 text-[var(--sd-pine-bright)]/40 mx-auto mb-2" />
+                <h4 className="text-xs font-semibold text-[var(--sd-pine)]">Zero Incidents</h4>
+                <p className="text-[11px] text-[var(--sd-text-muted)] mt-1 leading-relaxed">
+                  No active incidents for <span className="font-mono text-[var(--sd-pine)] font-medium">{activeUser.tenantId}</span>.
+                </p>
+              </div>
+            ) : (
+              incidents.map((inc) => {
+                const isSelected = activeIncidentId === inc.incident_code;
+                return (
+                  <motion.button
+                    type="button"
+                    aria-pressed={isSelected}
+                    key={inc.incident_code}
+                    onClick={() => setActiveIncidentId(inc.incident_code)}
+
+                    className="sd-incident-choice"
+                  >
+                    {/* Top: code + severity badge */}
+                    <div className="flex items-center justify-between">
+                      <span className={cn(
+                        "font-mono text-xs font-medium tracking-tight",
+                        isSelected ? "text-[var(--sd-pine)]" : "text-[var(--sd-text)]"
+                      )}>
+                        {inc.incident_code}
+                      </span>
+                      {getSeverityBadge(inc.severity)}
+                    </div>
+                    {/* Mid: title */}
+                    <h3 className="text-xs font-semibold text-[var(--sd-text)] line-clamp-2 leading-snug">
+                      {inc.title}
+                    </h3>
+                    {/* Bottom: status + time */}
+                    <div className="flex items-center justify-between text-[11px] text-[var(--sd-text-muted)] pt-2 border-t border-[var(--sd-border)]">
+                      <span className="capitalize font-mono font-medium">{inc.status}</span>
+                      <span className="flex items-center gap-1 font-mono">
+                        <Clock className="h-2.5 w-2.5" />
+                        {new Date(inc.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                  </motion.button>
+                );
+              })
+            )}
+          </div>
+        </aside>
+
+        </div>
       </div>
     </div>
   );

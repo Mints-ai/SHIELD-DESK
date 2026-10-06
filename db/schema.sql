@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS agent_commands (
   tier          text NOT NULL CHECK (tier IN ('Tier 0', 'Tier 1', 'Tier 2', 'Tier 3')),
   token_id      uuid REFERENCES approval_tokens(id),
   signature     text NOT NULL,
+  nonce         text,
   status        text NOT NULL DEFAULT 'queued'
                 CHECK (status IN ('queued', 'delivered', 'executed', 'failed', 'rolled_back')),
   result        jsonb,
@@ -236,8 +237,42 @@ CREATE TABLE IF NOT EXISTS agent_commands (
   delivered_at  timestamptz,
   completed_at  timestamptz
 );
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS nonce text;
 CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_status ON agent_commands (agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_agent_commands_tenant_created ON agent_commands (tenant_id, created_at);
+
+-- ---------------------------------------------------------------------------
+-- Endpoint Enrollment Tokens
+-- Short-lived, single-use, tenant-bound tokens for endpoint provisioning.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS endpoint_enrollment_tokens (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id     text NOT NULL,
+  token_hash    text NOT NULL UNIQUE,
+  label         text,
+  expires_at    timestamptz NOT NULL,
+  max_uses      integer NOT NULL DEFAULT 1,
+  used_count    integer NOT NULL DEFAULT 0,
+  created_by    text NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  revoked_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_enrollment_tokens_tenant ON endpoint_enrollment_tokens (tenant_id);
+
+-- ---------------------------------------------------------------------------
+-- Endpoint High-Frequency Telemetry Ingestion
+-- Stores streaming telemetry batches from enrolled endpoint agents.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS endpoint_telemetry (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id      uuid NOT NULL REFERENCES endpoint_agents(id) ON DELETE CASCADE,
+  tenant_id     text NOT NULL,
+  event_type    text NOT NULL,
+  payload       jsonb NOT NULL,
+  timestamp     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_telemetry_agent_time ON endpoint_telemetry (agent_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_telemetry_tenant_time ON endpoint_telemetry (tenant_id, timestamp DESC);
 
 -- ---------------------------------------------------------------------------
 -- Layer 3/4: Hash-Chained Tamper-Proof Audit Vault
@@ -257,6 +292,59 @@ CREATE TABLE IF NOT EXISTS hash_chain_audit (
 CREATE INDEX IF NOT EXISTS idx_hash_chain_tenant ON hash_chain_audit (tenant_id);
 
 -- ---------------------------------------------------------------------------
+-- Endpoint Certificates & mTLS Identity Vault (SD-008, SD-009)
+-- Tracks issued X.509 client certificates, serials, fingerprints, and revocations.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS endpoint_certificates (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id           uuid NOT NULL REFERENCES endpoint_agents(id) ON DELETE CASCADE,
+  tenant_id          text NOT NULL,
+  serial_number      text NOT NULL UNIQUE,
+  certificate_pem    text NOT NULL,
+  fingerprint_sha256 text NOT NULL,
+  issued_at          timestamptz NOT NULL DEFAULT now(),
+  expires_at         timestamptz NOT NULL,
+  revoked_at         timestamptz,
+  revocation_reason  text
+);
+CREATE INDEX IF NOT EXISTS idx_endpoint_certs_agent ON endpoint_certificates (agent_id);
+CREATE INDEX IF NOT EXISTS idx_endpoint_certs_tenant ON endpoint_certificates (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_endpoint_certs_serial ON endpoint_certificates (serial_number);
+
+-- ---------------------------------------------------------------------------
+-- Endpoint Safety Snapshots (SD-024)
+-- Tracks pre-flight restore points (LVM, Shadow Copy, or process/net states).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS endpoint_snapshots (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id           uuid NOT NULL REFERENCES endpoint_agents(id) ON DELETE CASCADE,
+  tenant_id          text NOT NULL,
+  snapshot_ref       text NOT NULL,
+  hostname           text NOT NULL,
+  snapshot_type      text NOT NULL DEFAULT 'pre_remediation',
+  metadata           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_endpoint_snapshots_agent ON endpoint_snapshots (agent_id);
+CREATE INDEX IF NOT EXISTS idx_endpoint_snapshots_tenant ON endpoint_snapshots (tenant_id);
+
+-- ---------------------------------------------------------------------------
+-- Endpoint Emergency Kill Switches (SD-025)
+-- Historical and active tenant-wide or agent-scoped emergency freeze ledger.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS endpoint_kill_switches (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id          text NOT NULL,
+  agent_id           uuid REFERENCES endpoint_agents(id) ON DELETE CASCADE,
+  reason             text NOT NULL,
+  triggered_by       text NOT NULL,
+  status             text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deactivated')),
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  deactivated_at     timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_kill_switches_tenant ON endpoint_kill_switches (tenant_id);
+
+-- ---------------------------------------------------------------------------
 -- Defense-in-Depth: Postgres Row-Level Security (RLS) Policies
 -- Ensures tenant data cannot cross boundaries even if application filters fail.
 -- ---------------------------------------------------------------------------
@@ -270,6 +358,11 @@ ALTER TABLE endpoint_agents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_command_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_commands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE hash_chain_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE endpoint_certificates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE endpoint_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE endpoint_kill_switches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE endpoint_enrollment_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE endpoint_telemetry ENABLE ROW LEVEL SECURITY;
 
 -- Tenant Isolation Policies (enforced when app.current_tenant session variable is set)
 DO $$
@@ -304,8 +397,118 @@ BEGIN
       );
   END IF;
 
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_mitigation_tasks') THEN
+    CREATE POLICY tenant_isolation_mitigation_tasks ON mitigation_tasks
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_approval_tokens') THEN
+    CREATE POLICY tenant_isolation_approval_tokens ON approval_tokens
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_agents') THEN
     CREATE POLICY tenant_isolation_endpoint_agents ON endpoint_agents
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_agent_commands') THEN
+    CREATE POLICY tenant_isolation_agent_commands ON agent_commands
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_agent_command_logs') THEN
+    CREATE POLICY tenant_isolation_agent_command_logs ON agent_command_logs
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_hash_chain_audit') THEN
+    CREATE POLICY tenant_isolation_hash_chain_audit ON hash_chain_audit
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_certificates') THEN
+    CREATE POLICY tenant_isolation_endpoint_certificates ON endpoint_certificates
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_snapshots') THEN
+    CREATE POLICY tenant_isolation_endpoint_snapshots ON endpoint_snapshots
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_kill_switches') THEN
+    CREATE POLICY tenant_isolation_endpoint_kill_switches ON endpoint_kill_switches
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_chat_audit_log') THEN
+    CREATE POLICY tenant_isolation_chat_audit_log ON chat_audit_log
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_enrollment_tokens') THEN
+    CREATE POLICY tenant_isolation_endpoint_enrollment_tokens ON endpoint_enrollment_tokens
+      USING (
+        current_setting('app.current_tenant', true) IS NULL OR
+        current_setting('app.current_tenant', true) = '' OR
+        current_setting('app.user_role', true) IN ('system_admin', 'super_admin') OR
+        tenant_id = current_setting('app.current_tenant', true)
+      );
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'tenant_isolation_endpoint_telemetry') THEN
+    CREATE POLICY tenant_isolation_endpoint_telemetry ON endpoint_telemetry
       USING (
         current_setting('app.current_tenant', true) IS NULL OR
         current_setting('app.current_tenant', true) = '' OR

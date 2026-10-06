@@ -1,3 +1,7 @@
+# ARCHIVE / ENTERPRISE REFERENCE ONLY
+# ShieldDesk routes and authenticates directly via Next.js App Router (src/app/api).
+# The standalone iam-service on port 4000 has been replaced by native App Router session handling.
+# This Kong configuration is preserved as an architecture blueprint for external edge reverse-proxy topologies.
 _format_version: "3.0"
 
 services:

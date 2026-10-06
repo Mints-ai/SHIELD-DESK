@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { GlassDialog } from "@/components/ui/GlassDialog";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
 import {
   Scan,
@@ -19,20 +20,43 @@ import {
   Globe,
   FileCode,
   Lock,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Wrench,
+  Copy,
+  Check,
+  GitCommit,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+function getPaginationRange(current: number, total: number): (number | "...")[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, "...", total];
+  }
+  if (current >= total - 3) {
+    return [1, "...", total - 4, total - 3, total - 2, total - 1, total];
+  }
+  return [1, "...", current - 1, current, current + 1, "...", total];
+}
 
 interface CveFinding {
   cve_id: string;
   package_name: string;
   installed_version: string;
   fixed_version: string;
-  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-  cvss_score: number;
-  epss_score: number;
-  asset_id: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+  cvss_score?: number;
+  epss_score?: number;
+  asset_id?: string;
+  target?: string;
   description: string;
-  remediation: string;
+  remediation?: string;
 }
 
 interface SecretFinding {
@@ -43,6 +67,15 @@ interface SecretFinding {
   secret_hash: string;
   risk_level: string;
   action_available: string;
+  // Real Gitleaks fields
+  rule_id?: string;
+  commit?: string;
+  author?: string;
+  date?: string;
+  line_number?: number;
+  fingerprint?: string;
+  tags?: string[];
+  message?: string;
 }
 
 import { useChat } from "@/lib/context/ChatContext";
@@ -51,10 +84,64 @@ export default function ScannerDashboardPage() {
   const { activeUserId } = useChat();
   const [activeTab, setActiveTab] = useState<"cve" | "secrets" | "patch" | "intel">("cve");
   const [loading, setLoading] = useState(false);
+  const [secretScanLoading, setSecretScanLoading] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [cves, setCves] = useState<CveFinding[]>([]);
   const [secrets, setSecrets] = useState<SecretFinding[]>([]);
   const [serviceConnected, setServiceConnected] = useState(false);
+  const [mitigatingId, setMitigatingId] = useState<string | null>(null);
+  const [mitigatedIds, setMitigatedIds] = useState<Set<string>>(new Set());
+
+  // Review & Remediation modal state
+  const [reviewingSecret, setReviewingSecret] = useState<SecretFinding | null>(null);
+  const [remediationFeedback, setRemediationFeedback] = useState<{
+    findingKey: string;
+    success: boolean;
+    status: string;
+    message: string;
+    newKeyId?: string;
+  } | null>(null);
+  const [copiedGitCmd, setCopiedGitCmd] = useState(false);
+
+  const criticalCvesCount = useMemo(
+    () => cves.filter((c) => c.severity?.toUpperCase() === "CRITICAL").length,
+    [cves]
+  );
+  const highCvesCount = useMemo(
+    () => cves.filter((c) => c.severity?.toUpperCase() === "HIGH").length,
+    [cves]
+  );
+
+  const [severityFilter, setSeverityFilter] = useState<"ALL" | "CRITICAL" | "HIGH" | "MEDIUM" | "LOW">("ALL");
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 3;
+
+  const filteredCves = useMemo(() => {
+    if (severityFilter === "ALL") return cves;
+    return cves.filter((c) => c.severity?.toUpperCase() === severityFilter);
+  }, [cves, severityFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCves.length / PAGE_SIZE));
+
+  const paginatedCves = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredCves.slice(start, start + PAGE_SIZE);
+  }, [filteredCves, currentPage]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(1);
+    }
+  }, [totalPages, currentPage]);
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    const el = document.getElementById("findings-tabs");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
 
   // Patching state
   const [patchHost, setPatchHost] = useState("10.0.4.12 (srv-prod-api-01)");
@@ -75,7 +162,25 @@ export default function ScannerDashboardPage() {
         headers: { "X-ShieldDesk-User": activeUserId },
       });
       const data = await res.json();
-      if (data.cveFindings) setCves(data.cveFindings);
+
+      // If redirected from chatbot with ?view=latest, immediately display the scan findings
+      const isViewLatest = typeof window !== "undefined" && window.location.search.includes("view=latest");
+      if (isViewLatest) {
+        if (data.cveFindings && data.cveFindings.length > 0) {
+          setCves(data.cveFindings);
+          setCurrentPage(1);
+          setScanResult(`Scan Completed: Loaded ${data.cveFindings.length} vulnerabilities from Trivy scan.`);
+          setActiveTab("cve");
+          setTimeout(() => {
+            const el = document.getElementById("findings-tabs");
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 150);
+        } else {
+          // If no cached scan findings in memory yet, automatically trigger scan
+          triggerTrivyScan();
+        }
+      }
+
       if (data.secretFindings) setSecrets(data.secretFindings);
       setServiceConnected(Boolean(data.serviceConnected));
     } catch (err) {
@@ -99,56 +204,118 @@ export default function ScannerDashboardPage() {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "cve_scan", target_path: "/app", scan_type: "full" }),
+        body: JSON.stringify({ action: "cve_scan", target_path: ".", scan_type: "full" }),
       });
       const data = await res.json();
-      setScanResult(`Scan Completed: ${data.message || "4 vulnerabilities verified."}`);
-    } catch {
-      setScanResult("Scan finished with local cached signatures.");
+      if (!res.ok) {
+        setScanResult(`Scan Failed (${res.status}): ${data.error || "Unable to complete scan"}`);
+        return;
+      }
+      if (data.findings && Array.isArray(data.findings)) {
+        setCves(data.findings);
+        setCurrentPage(1);
+      }
+      setActiveTab("cve");
+      setScanResult(`Scan Completed: ${data.message || `Found ${data.findings?.length || 0} vulnerabilities.`}`);
+      setTimeout(() => {
+        const el = document.getElementById("findings-tabs");
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 100);
+    } catch (err: any) {
+      setScanResult(`Scan network error: ${err.message || "Failed to reach scan API"}`);
     } finally {
       setLoading(false);
     }
   };
 
   const triggerSecretsScan = async () => {
-    setLoading(true);
+    setSecretScanLoading(true);
+    setScanProgress(0);
+    // Animate progress bar during scan
+    const progressTimer = setInterval(() => {
+      setScanProgress((p) => (p < 85 ? p + Math.random() * 12 : p));
+    }, 400);
     try {
-      const res = await fetch("/api/scans", {
+      const res = await fetch("/api/gitleaks/scan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "secrets_scan", source: "git_repo" }),
+        body: JSON.stringify({ target_path: ".", scan_type: "git" }),
       });
       const data = await res.json();
-      setScanResult(data.message || "Gitleaks scan complete. 2 credentials checked.");
+      if (data.secretFindings && Array.isArray(data.secretFindings)) {
+        setSecrets(data.secretFindings);
+      }
+      setScanResult(data.message || `Gitleaks scan complete. ${data.findings?.length ?? 0} finding(s) detected.`);
     } catch {
-      setScanResult("Gitleaks check finished.");
+      setScanResult("Gitleaks scan error: could not reach the scan API.");
     } finally {
-      setLoading(false);
+      clearInterval(progressTimer);
+      setScanProgress(100);
+      setTimeout(() => { setScanProgress(0); setSecretScanLoading(false); }, 800);
     }
   };
 
-  const rotateKey = async (keyType: string) => {
-    setLoading(true);
+  const executeRemediation = async (finding: SecretFinding, actionOverride?: string) => {
+    const findingKey = finding.fingerprint || finding.secret_hash || `${finding.location}:${finding.line_number}`;
+    setMitigatingId(findingKey);
     try {
-      const res = await fetch("/api/scans", {
+      const chosenAction =
+        actionOverride ||
+        (finding.rule_id?.includes("github")
+          ? "revoke_pat"
+          : finding.rule_id?.includes("aws")
+          ? "rotate_key"
+          : "rotate_key");
+
+      const res = await fetch("/api/gitleaks/mitigate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "rotate_key", key_id: "AKIA1234567890ABCDEF" }),
+        body: JSON.stringify({
+          action: chosenAction,
+          finding_id: finding.fingerprint || finding.secret_hash,
+          rule_id: finding.rule_id || "",
+          key_id: "AKIA1234567890ABCDEF",
+        }),
       });
       const data = await res.json();
-      setScanResult(`Key Revoked & Rotated: ${data.message}`);
-    } catch {
-      setScanResult("Key rotation signal sent.");
+      if (data.success) {
+        setMitigatedIds((prev) => new Set(prev).add(findingKey));
+        setRemediationFeedback({
+          findingKey,
+          success: true,
+          status: data.status || "remediated",
+          message: data.message || "Remediation action completed successfully.",
+          newKeyId: data.new_key_id,
+        });
+      } else {
+        setRemediationFeedback({
+          findingKey,
+          success: false,
+          status: "failed",
+          message: data.error || "Remediation action failed.",
+        });
+      }
+    } catch (err: any) {
+      setRemediationFeedback({
+        findingKey,
+        success: false,
+        status: "error",
+        message: err.message || "Network error while connecting to remediation API.",
+      });
     } finally {
-      setLoading(false);
+      setMitigatingId(null);
     }
   };
+
+  const rotateKey = (finding: SecretFinding) => executeRemediation(finding);
 
   const executePatch = async (dryRun: boolean) => {
     setLoading(true);
@@ -192,9 +359,23 @@ export default function ScannerDashboardPage() {
     ]);
   };
 
+  const handleDismissScan = () => {
+    setScanResult(null);
+  };
+
+  const handleViewVulnerabilities = () => {
+    setActiveTab("cve");
+    setTimeout(() => {
+      const el = document.getElementById("findings-tabs");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 50);
+  };
+
   const runBlastRadius = async (cve: CveFinding) => {
     setLoading(true);
-    setAdvisorTitle(`Blast Radius Simulation: ${cve.cve_id} (${cve.package_name})`);
+    setAdvisorTitle(`Impact Analysis: ${cve.cve_id} (${cve.package_name})`);
     try {
       const res = await fetch("/api/ai/advisor", {
         method: "POST",
@@ -212,7 +393,7 @@ export default function ScannerDashboardPage() {
           ? br.downstream_dependencies.map((d: string) => `  • ${d}`).join("\n")
           : "  • No downstream dependencies recorded.";
 
-        const formatted = `Simulated Blast Radius Assessment for ${data.cve_id || cve.cve_id}:
+        const formatted = `Impact Assessment for ${data.cve_id || cve.cve_id}:
 
 1. Target Asset & Scope: ${data.host_id || cve.asset_id}
 2. Direct Assets at Risk: ${br.direct_assets_at_risk ?? "N/A"}
@@ -223,14 +404,14 @@ ${deps}
 6. Remediation Urgency: ${br.remediation_urgency ?? "N/A"}
 7. Recommended Containment: ${br.automated_mitigation ?? "N/A"}
 
-Governance Note: Blast radius simulations are predictive models. Tier 2 host isolation requires human analyst authorization.`;
+Governance Note: Impact analysis simulations are predictive models. Tier 2 host isolation requires human analyst authorization.`;
 
         setAdvisorContent(formatted);
       } else {
-        setAdvisorContent("Blast radius simulation returned no data. The AI Advisor service may be offline — check that it is running on port 8002.");
+        setAdvisorContent("Impact analysis returned no data. The AI Advisor service may be offline — check that it is running on port 8002.");
       }
     } catch {
-      setAdvisorContent("Failed to simulate blast radius. Please ensure the application server is running and try again.");
+      setAdvisorContent("Failed to perform impact analysis. Please ensure the application server is running and try again.");
     } finally {
       setLoading(false);
     }
@@ -239,7 +420,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
   const generateRunbook = async (cve: CveFinding) => {
     setLoading(true);
-    setAdvisorTitle(`Remediation Runbook: ${cve.cve_id}`);
+    setAdvisorTitle(`Recovery Runbook: ${cve.cve_id}`);
     try {
       const res = await fetch("/api/ai/advisor", {
         method: "POST",
@@ -250,7 +431,9 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         body: JSON.stringify({ action: "generate_runbook", cve_id: cve.cve_id, host_id: cve.asset_id }),
       });
       const data = await res.json();
-      setAdvisorContent(data.runbook || "No runbook returned.");
+      const raw = data.runbook || "No runbook returned.";
+      const clean = raw.split("\n").map((l: string) => l.replace(/^[#*\s]+/, "").replace(/[`*]/g, "")).filter((l: string) => !l.startsWith("```")).join("\n");
+      setAdvisorContent(clean);
     } catch {
       setAdvisorContent("Failed to generate runbook.");
     } finally {
@@ -259,43 +442,36 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
   };
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="sd-dashboard-content flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         {/* Header Bar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[var(--sd-border)] pb-5">
           <div>
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed]">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="p-2 shrink-0 rounded-xl sd-surface border border-[var(--sd-border)] text-[var(--sd-wheat)]">
                 <Scan className="h-5 w-5" />
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--sd-text)]">
-                Security Scanner &amp; Remediation Center
+              <h1 className="tracking-tight text-[var(--sd-text)] text-3xl font-light leading-tight">
+                Security scanner
               </h1>
             </div>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
               Automated Trivy container CVE inspection, Gitleaks secrets detection, and SSH snapshot patching.
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span
-              className={cn(
-                "px-2.5 py-1 rounded-md text-[11px] font-semibold border flex items-center gap-1.5",
-                serviceConnected
-                  ? "bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] border-[var(--sd-pine-border)]"
-                  : "bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
-              )}
-            >
-              <Cpu className="h-3 w-3" />
-              {serviceConnected ? "Scan Microservice: Live" : "FastAPI Scanner: Ready"}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="px-2.5 py-1 rounded-md text-[11px] font-medium border border-[var(--sd-border)] sd-surface text-[var(--sd-text-muted)] flex items-center gap-1.5 shadow-xs">
+              <Cpu className="h-3 w-3 text-[var(--sd-text-muted)]" />
+              <span>FastAPI Scanner: Ready</span>
             </span>
 
             <button
               onClick={triggerTrivyScan}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
+              className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
               <span>Trigger Trivy Scan</span>
@@ -305,240 +481,486 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
         {/* Scan Status Toast Banner */}
         {scanResult && (
-          <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-xs text-[var(--sd-pine-bright)] flex items-center justify-between">
-            <span>{scanResult}</span>
-            <button
-              onClick={() => setScanResult(null)}
-              className="text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono text-xs cursor-pointer"
-            >
-              Dismiss
-            </button>
+          <div className="p-3 rounded-lg border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[13px] text-[var(--sd-danger)] flex items-center justify-between gap-4 font-medium shadow-xs">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)] shrink-0" />
+              <span>{scanResult}</span>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                onClick={handleViewVulnerabilities}
+                className="text-[var(--sd-danger)] hover:underline font-medium text-[13px] cursor-pointer"
+              >
+                View Vulnerabilities →
+              </button>
+              <button
+                onClick={handleDismissScan}
+                className="text-[var(--sd-danger)]/70 hover:text-[var(--sd-danger)] font-mono text-[13px] cursor-pointer font-medium"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
 
         {/* Metric Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">Critical CVEs</span>
+              <span className="text-[13px] font-medium">Critical CVEs</span>
               <ShieldAlert className="h-4 w-4 text-[var(--sd-danger)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-danger)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">CVSS &gt;= 9.0 (RCE &amp; Auth Bypass)</p>
+            <div className="text-2xl font-medium text-[var(--sd-danger)] font-mono">{criticalCvesCount}</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">
+              {criticalCvesCount === 0 ? "0 critical severity issues" : `${criticalCvesCount} critical issues detected`}
+            </p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">High Severity</span>
+              <span className="text-[13px] font-medium">High Severity</span>
               <AlertTriangle className="h-4 w-4 text-[var(--sd-warning)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-warning)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">runc &amp; libwebp heap overflows</p>
+            <div className="text-2xl font-medium text-[var(--sd-warning)] font-mono">{highCvesCount}</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">
+              {highCvesCount === 0 ? "0 high severity issues" : `${highCvesCount} high severity vulnerabilities`}
+            </p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">Secrets Leaked</span>
+              <span className="text-[13px] font-medium">Secrets Leaked</span>
               <Key className="h-4 w-4 text-[var(--sd-danger)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-text)] font-mono">2</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">AWS IAM key &amp; GitHub token</p>
+            <div className={cn("text-2xl font-medium font-mono", secrets.length > 0 ? "text-[var(--sd-danger)]" : "text-[var(--sd-text)]")}>
+              {secrets.length}
+            </div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">
+              {secrets.length === 0
+                ? "No secrets detected"
+                : secrets.some((s) => s.risk_level === "CRITICAL")
+                ? `${secrets.filter((s) => s.risk_level === "CRITICAL").length} critical credential${secrets.filter((s) => s.risk_level === "CRITICAL").length !== 1 ? "s" : ""} exposed`
+                : `${secrets.length} credential${secrets.length !== 1 ? "s" : ""} detected`}
+            </p>
           </div>
 
-          <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xs">
+          <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-xs font-medium">LVM Snapshots</span>
+              <span className="text-[13px] font-medium">LVM Snapshots</span>
               <HardDrive className="h-4 w-4 text-[var(--sd-pine-bright)]" />
             </div>
-            <div className="text-2xl font-bold text-[var(--sd-pine-bright)] font-mono">14</div>
-            <p className="text-[10.5px] text-[var(--sd-text-muted)] mt-1">Pre-patch rollback restore points</p>
+            <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">14</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Pre-patch rollback restore points</p>
+            <span className="sd-sample-label mt-2 w-fit">Sample metric</span>
           </div>
         </div>
 
         {/* Tab Controls */}
-        <div className="flex items-center gap-2 border-b border-[var(--sd-border)]">
-          <button
-            onClick={() => setActiveTab("cve")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "cve"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+        <div id="findings-tabs" className="sd-tabs scroll-mt-6" role="group" aria-label="Scanner views">
+          <button type="button" aria-pressed={activeTab === "cve"} onClick={() => setActiveTab("cve")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Scan className="h-3.5 w-3.5" />
-            <span>Trivy CVE Findings ({cves.length})</span>
+            <span>Vulnerabilities ({cves.length})</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("secrets")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "secrets"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "secrets"} onClick={() => setActiveTab("secrets")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Key className="h-3.5 w-3.5" />
-            <span>Gitleaks Secret Detection ({secrets.length})</span>
+            <span>Secret detection ({secrets.length})</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("patch")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "patch"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "patch"} onClick={() => setActiveTab("patch")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Terminal className="h-3.5 w-3.5" />
-            <span>SSH Patch Orchestrator &amp; LVM Rollback</span>
+            <span>Patch &amp; rollback</span>
           </button>
 
-          <button
-            onClick={() => setActiveTab("intel")}
-            className={cn(
-              "px-4 py-2.5 text-xs font-semibold border-b-2 transition cursor-pointer flex items-center gap-2",
-              activeTab === "intel"
-                ? "border-[var(--sd-pine)] text-[var(--sd-pine)]"
-                : "border-transparent text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-            )}
-          >
+          <button type="button" aria-pressed={activeTab === "intel"} onClick={() => setActiveTab("intel")} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             <Globe className="h-3.5 w-3.5" />
-            <span>External Attack Surface (Shodan / HIBP)</span>
+            <span>External intelligence</span>
           </button>
         </div>
 
         {/* Tab 1: Trivy Vulnerability Findings */}
         {activeTab === "cve" && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-3.5">
-              {cves.map((cve) => (
-                <div
-                  key={cve.cve_id}
-                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
+            {cves.length === 0 ? (
+              <div className="p-12 text-center rounded-xl border border-[var(--sd-border)] sd-surface space-y-3">
+                <Scan className="h-8 w-8 text-[var(--sd-text-muted)] mx-auto opacity-60" />
+                <h3 className="text-sm font-medium text-[var(--sd-text)]">No Vulnerabilities Displayed</h3>
+                <p className="text-[13px] text-[var(--sd-text-muted)] max-w-md mx-auto">
+                  Click &quot;Trigger Trivy Scan&quot; to execute a live scan across workspace packages and display vulnerabilities.
+                </p>
+                <button
+                  onClick={triggerTrivyScan}
+                  disabled={loading}
+                  className="sd-button sd-button-primary mt-2 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer disabled:opacity-50 transition shadow-xs"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className={cn(
-                          "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider font-mono",
-                          cve.severity === "CRITICAL"
-                            ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
-                            : "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
-                        )}
-                      >
-                        {cve.severity}
-                      </span>
-                      <span className="font-mono text-sm font-bold text-[var(--sd-text)]">
-                        {cve.cve_id}
-                      </span>
-                      <span className="text-xs text-[var(--sd-text-muted)]">
-                        Target: <code className="text-[var(--sd-text)] font-semibold">{cve.asset_id}</code>
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-3 text-xs font-mono">
-                      <span className="text-[var(--sd-danger)] font-bold">
-                        CVSS {cve.cvss_score}
-                      </span>
-                      <span className="text-[var(--sd-warning)]">
-                        EPSS {(cve.epss_score * 100).toFixed(0)}% Exploit Prob
-                      </span>
-                    </div>
+                  <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                  <span>Trigger Trivy Scan</span>
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Severity Filter Controls */}
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-[var(--sd-border)] sd-surface">
+                  <div className="flex items-center gap-2 overflow-x-auto">
+                    <span className="text-[13px] font-medium text-[var(--sd-text-muted)]">Filter:</span>
+                    {(["ALL", "CRITICAL", "HIGH", "MEDIUM", "LOW"] as const).map((sev) => {
+                      const count =
+                        sev === "ALL"
+                          ? cves.length
+                          : cves.filter((c) => c.severity?.toUpperCase() === sev).length;
+                      return (
+                        <button
+                          key={sev}
+                          onClick={() => {
+                            setSeverityFilter(sev);
+                            setCurrentPage(1);
+                          }}
+                          className={cn(
+                            "sd-button px-2.5 py-1 rounded-full text-[13px] font-medium font-mono transition cursor-pointer flex items-center gap-1.5",
+                            severityFilter === sev
+                              ? "sd-button-primary text-[var(--sd-on-accent)]"
+                              : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] border border-[var(--sd-border)]"
+                          )}
+                        >
+                          <span>{sev}</span>
+                          <span className="opacity-80 font-normal">({count})</span>
+                        </button>
+                      );
+                    })}
                   </div>
-
-                  <p className="text-xs text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
-
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-xs">
-                    <div className="flex items-center gap-3 text-[var(--sd-text-muted)]">
-                      <span>Package: <strong className="text-[var(--sd-text)]">{cve.package_name}</strong></span>
-                      <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
-                      <span>Fixed in: <code className="bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] px-1.5 py-0.5 rounded border border-[var(--sd-pine-border)]">{cve.fixed_version}</code></span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => runBlastRadius(cve)}
-                        className="px-2.5 py-1 rounded-md border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
-                        <span>Simulate Blast Radius</span>
-                      </button>
-
-                      <button
-                        onClick={() => generateRunbook(cve)}
-                        className="px-2.5 py-1 rounded-md bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
-                      >
-                        <FileCode className="h-3 w-3" />
-                        <span>Claude Runbook</span>
-                      </button>
-                    </div>
+                  <div className="text-[13px] text-[var(--sd-text-muted)]">
+                    {filteredCves.length > 0 ? (
+                      <>
+                        Showing <strong className="text-[var(--sd-text)]">{(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredCves.length)}</strong> of <strong className="text-[var(--sd-text)]">{filteredCves.length}</strong> findings
+                        {severityFilter !== "ALL" && <span> (filtered from {cves.length})</span>}
+                      </>
+                    ) : (
+                      <span>No matching findings</span>
+                    )}
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
+
+                <div className="grid grid-cols-1 gap-3.5">
+                  {paginatedCves.map((cve, index) => (
+                    <div
+                      key={`${cve.cve_id}-${index}`}
+                      className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
+                    >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span
+                          className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider font-mono",
+                            cve.severity === "CRITICAL"
+                              ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
+                              : cve.severity === "HIGH"
+                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                              : cve.severity === "MEDIUM"
+                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                              : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]"
+                          )}
+                        >
+                          {cve.severity}
+                        </span>
+                        <span className="font-mono text-sm font-medium text-[var(--sd-text)]">
+                          {cve.cve_id}
+                        </span>
+                        {(cve.target || cve.asset_id) && (
+                          <span className="text-[13px] text-[var(--sd-text-muted)]">
+                            Target: <code className="text-[var(--sd-text)] font-medium">{cve.target || cve.asset_id}</code>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="text-[13px] text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-[13px]">
+                      <div className="flex items-center gap-3 text-[var(--sd-text-muted)] flex-wrap">
+                        <span>Package: <code className="text-[var(--sd-text)] font-medium">{cve.package_name}</code></span>
+                        {cve.installed_version && (
+                          <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
+                        )}
+                        {cve.fixed_version && cve.fixed_version !== "N/A" && (
+                          <span>Fixed in: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)] text-[var(--sd-success)] font-medium">{cve.fixed_version}</code></span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => runBlastRadius(cve)}
+                          disabled={loading}
+                          className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-text)] border border-[var(--sd-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
+                          <span>Impact Analysis</span>
+                        </button>
+                        <button
+                          onClick={() => generateRunbook(cve)}
+                          disabled={loading}
+                          className="sd-button sd-button-primary px-2.5 py-1 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
+                        >
+                          <FileCode className="h-3 w-3" />
+                          <span>Recovery Runbook</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface">
+                  <div className="text-[13px] text-[var(--sd-text-muted)] font-mono">
+                    Page <strong className="text-[var(--sd-text)]">{currentPage}</strong> of <strong className="text-[var(--sd-text)]">{totalPages}</strong>
+                    <span className="hidden sm:inline text-[var(--sd-text-muted)] ml-2">
+                      ({filteredCves.length} total findings · 3 per page)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      onClick={() => handlePageChange(1)}
+                      disabled={currentPage === 1}
+                      className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                      title="First Page"
+                      aria-label="First page"
+                    >
+                      <ChevronsLeft className="h-3.5 w-3.5" />
+                      <span className="hidden md:inline">First</span>
+                    </button>
+
+                    <button
+                      onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                      title="Previous Page"
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      <span>Prev</span>
+                    </button>
+
+                    {/* Numeric Page Buttons */}
+                    <div className="flex items-center gap-1 px-1">
+                      {getPaginationRange(currentPage, totalPages).map((p, idx) =>
+                        p === "..." ? (
+                          <span key={`ellipsis-${idx}`} className="px-1 text-[12px] text-[var(--sd-text-muted)] font-mono">
+                            …
+                          </span>
+                        ) : (
+                          <button
+                            key={p}
+                            onClick={() => handlePageChange(Number(p))}
+                            className={cn(
+                              "min-w-8 h-8 px-2 rounded-lg text-[12px] font-mono font-medium transition cursor-pointer flex items-center justify-center",
+                              currentPage === p
+                                ? "sd-button-primary text-[var(--sd-on-accent)] shadow-xs"
+                                : "border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:sd-surface"
+                            )}
+                            aria-label={`Go to page ${p}`}
+                            aria-current={currentPage === p ? "page" : undefined}
+                          >
+                            {p}
+                          </button>
+                        )
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage === totalPages}
+                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                      title="Next Page"
+                      aria-label="Next page"
+                    >
+                      <span>Next</span>
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+
+                    <button
+                      onClick={() => handlePageChange(totalPages)}
+                      disabled={currentPage === totalPages}
+                      className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                      title="Last Page"
+                      aria-label="Last page"
+                    >
+                      <span className="hidden md:inline">Last</span>
+                      <ChevronsRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
         )}
 
         {/* Tab 2: Gitleaks Secrets Detection */}
         {activeTab === "secrets" && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-[var(--sd-text-muted)]">
-                Automated regex and high-entropy secret detection scanning git commits and environment variables.
-              </p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-[13px] text-[var(--sd-text-muted)]">
+                  Automated regex and high-entropy secret detection scanning git commits and environment variables.
+                </p>
+                {secrets.length > 0 && (
+                  <p className="text-[11px] text-[var(--sd-text-muted)] mt-0.5">
+                    {secrets.filter((s) => s.source === "git_history").length} from git history ·{" "}
+                    {secrets.filter((s) => s.source !== "git_history").length} from filesystem/env
+                    {mitigatedIds.size > 0 && (
+                      <span className="ml-2 font-medium text-[var(--sd-pine-bright)]">
+                        · {mitigatedIds.size} of {secrets.length} remediated
+                      </span>
+                    )}
+                  </p>
+                )}
+              </div>
               <button
+                id="gitleaks-scan-btn"
                 onClick={triggerSecretsScan}
-                className="px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] text-[#f7f4ed] text-xs font-semibold hover:bg-[var(--sd-pine-hover)] transition cursor-pointer"
+                disabled={secretScanLoading}
+                className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium hover:bg-[var(--sd-pine-hover)] transition cursor-pointer disabled:opacity-60 shadow-xs"
               >
-                Scan Repository Now
+                <RefreshCw className={cn("h-3.5 w-3.5", secretScanLoading && "animate-spin")} />
+                {secretScanLoading ? "Scanning…" : "Scan Repository Now"}
               </button>
             </div>
 
-            <div className="rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs">
+            {/* Real-time Progress Bar */}
+            {secretScanLoading && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] text-[var(--sd-text-muted)]">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--sd-pine)] animate-pulse" />
+                    Gitleaks scanning git history and filesystem…
+                  </span>
+                  <span>{Math.round(scanProgress)}%</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-[var(--sd-border)] overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-[var(--sd-pine)] transition-all duration-300"
+                    style={{ width: `${scanProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-[var(--sd-border)] sd-surface overflow-x-auto shadow-xs">
+              <table className="min-w-[760px] w-full text-left text-[13px]">
                 <thead className="bg-[var(--sd-bg)] border-b border-[var(--sd-border)] text-[var(--sd-text-muted)] font-medium">
                   <tr>
                     <th className="p-3">Secret Type</th>
-                    <th className="p-3">Source &amp; Location</th>
+                    <th className="p-3">File Path</th>
+                    <th className="p-3">Commit / Line</th>
                     <th className="p-3">Masked Value</th>
-                    <th className="p-3">Risk Level</th>
-                    <th className="p-3 text-right">Automated Mitigation</th>
+                    <th className="p-3">Risk</th>
+                    <th className="p-3 text-right">Mitigation</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--sd-border)]">
+                  {secrets.length === 0 && !secretScanLoading && (
+                    <tr>
+                      <td colSpan={6} className="p-8 text-center text-[var(--sd-text-muted)]">
+                        <div className="flex flex-col items-center gap-2">
+                          <Key className="h-8 w-8 opacity-30" />
+                          <span className="font-medium text-[var(--sd-text)]">No secrets loaded yet</span>
+                          <span className="text-[11px]">
+                            Click &quot;Scan Repository Now&quot; to run Gitleaks against the codebase.
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   {secrets.map((sec, i) => (
-                    <tr key={i} className="hover:bg-[var(--sd-panel-hover)] transition">
-                      <td className="p-3 font-semibold text-[var(--sd-text)] flex items-center gap-2">
-                        <Key className="h-3.5 w-3.5 text-[var(--sd-danger)]" />
-                        {sec.type}
+                    <tr key={sec.fingerprint || i} className="hover:bg-[var(--sd-panel-hover)] transition">
+                      <td className="p-3">
+                        <div className="flex items-center gap-2 font-medium text-[var(--sd-text)]">
+                          <Key className="h-3.5 w-3.5 text-[var(--sd-danger)] shrink-0" />
+                          <span>{sec.type}</span>
+                        </div>
+                        {sec.author && (
+                          <div className="text-[10px] text-[var(--sd-text-muted)] mt-0.5 pl-5">
+                            by {sec.author}
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-3 font-mono text-[var(--sd-text-muted)] max-w-[180px]">
+                        <div className="truncate" title={sec.location}>{sec.location}</div>
+                        <div className="text-[10px] opacity-70 mt-0.5">{sec.source}</div>
                       </td>
                       <td className="p-3 font-mono text-[var(--sd-text-muted)]">
-                        {sec.source} / {sec.location}
+                        {sec.commit ? (
+                          <span
+                            className="inline-block px-1.5 py-0.5 rounded text-[10px] bg-[var(--sd-panel-hover)] text-[var(--sd-pine-bright)] border border-[var(--sd-border)] font-mono"
+                            title={sec.commit}
+                          >
+                            {sec.commit.substring(0, 7)}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] opacity-50">—</span>
+                        )}
+                        {sec.line_number !== undefined && (
+                          <span className="ml-1.5 text-[10px] opacity-60">L{sec.line_number}</span>
+                        )}
                       </td>
-                      <td className="p-3 font-mono text-[var(--sd-text)]">
-                        <code>{sec.snippet_masked}</code>
+                      <td className="p-3 font-mono text-[var(--sd-text)] max-w-[200px]">
+                        <code className="text-[11px] truncate block" title={sec.snippet_masked}>
+                          {sec.snippet_masked}
+                        </code>
                       </td>
                       <td className="p-3">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
+                        <span
+                          className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider border",
+                            sec.risk_level === "CRITICAL"
+                              ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
+                              : sec.risk_level === "HIGH"
+                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                              : "bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
+                          )}
+                        >
                           {sec.risk_level}
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        <button
-                          onClick={() => rotateKey(sec.type)}
-                          className="px-2.5 py-1 rounded bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-white font-semibold text-xs transition cursor-pointer shadow-xs"
-                        >
-                          {sec.action_available}
-                        </button>
+                        {(() => {
+                          const fKey = sec.fingerprint || sec.secret_hash || `${sec.location}:${sec.line_number}`;
+                          const isMitigated = mitigatedIds.has(fKey);
+                          return isMitigated ? (
+                            <button
+                              onClick={() => {
+                                setReviewingSecret(sec);
+                                setRemediationFeedback(null);
+                              }}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[12px] font-medium text-[var(--sd-pine-bright)] bg-[var(--sd-pine)]/15 border border-[var(--sd-pine)]/30 hover:bg-[var(--sd-pine)]/25 transition cursor-pointer shadow-xs ml-auto"
+                              title="Click to view remediation details"
+                            >
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              <span>Remediated · Details</span>
+                            </button>
+                          ) : (
+                            <button
+                              id={`mitigate-${sec.fingerprint || i}`}
+                              onClick={() => {
+                                setReviewingSecret(sec);
+                                setRemediationFeedback(null);
+                              }}
+                              className="sd-button px-2.5 py-1 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-[var(--sd-on-accent)] font-medium text-[12px] transition cursor-pointer shadow-xs flex items-center gap-1.5 ml-auto"
+                            >
+                              <Wrench className="h-3.5 w-3.5" />
+                              <span>{sec.action_available || "Review & Remediate"}</span>
+                            </button>
+                          );
+                        })()}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+
           </div>
         )}
 
@@ -546,18 +968,18 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         {activeTab === "patch" && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-4 shadow-xs">
-                <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+              <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
+                <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                   <Terminal className="h-4 w-4 text-[var(--sd-pine)]" />
                   Patch Configuration
                 </h3>
 
                 <div>
-                  <label className="text-xs text-[var(--sd-text-muted)] block mb-1">Target Host</label>
+                  <label className="text-[13px] text-[var(--sd-text-muted)] block mb-1">Target Host</label>
                   <select
                     value={patchHost}
                     onChange={(e) => setPatchHost(e.target.value)}
-                    className="w-full p-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-xs text-[var(--sd-text)] font-mono"
+                    className="sd-input w-full p-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[13px] text-[var(--sd-text)] font-mono"
                   >
                     <option value="10.0.4.12 (srv-prod-api-01)">10.0.4.12 (srv-prod-api-01 - Ubuntu 22.04)</option>
                     <option value="10.0.4.15 (srv-app-worker-02)">10.0.4.15 (srv-app-worker-02 - Debian 11)</option>
@@ -565,8 +987,8 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                   </select>
                 </div>
 
-                <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-xs text-[var(--sd-pine-bright)] space-y-1">
-                  <div className="font-semibold flex items-center gap-1.5">
+                <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-[13px] text-[var(--sd-pine-bright)] space-y-1">
+                  <div className="font-medium flex items-center gap-1.5">
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     LVM Snapshot Guard Verified
                   </div>
@@ -583,7 +1005,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                     onChange={(e) => setIsDryRun(e.target.checked)}
                     className="rounded border-[var(--sd-border)]"
                   />
-                  <label htmlFor="dryrun" className="text-xs text-[var(--sd-text)] cursor-pointer">
+                  <label htmlFor="dryrun" className="text-[13px] text-[var(--sd-text)] cursor-pointer">
                     Dry Run Mode (Simulate without applying changes)
                   </label>
                 </div>
@@ -592,7 +1014,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                   <button
                     onClick={() => executePatch(isDryRun)}
                     disabled={loading}
-                    className="flex-1 px-3 py-2 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                    className="sd-button sd-button-primary flex-1 px-3 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
                   >
                     <Play className="h-3.5 w-3.5" />
                     <span>{isDryRun ? "Execute Dry Run" : "Apply Security Patch"}</span>
@@ -600,7 +1022,7 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
                   <button
                     onClick={rollbackSnapshot}
-                    className="px-3 py-2 rounded-lg border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] hover:bg-[var(--sd-warning-dim)]/80 text-[var(--sd-warning)] text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                    className="sd-button px-3 py-2 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] hover:bg-[var(--sd-warning-dim)]/80 text-[var(--sd-warning)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
                     title="Rollback target host to pre-patch snapshot"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
@@ -610,11 +1032,11 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
               </div>
 
               {/* Terminal Logs */}
-              <div className="lg:col-span-2 p-4 rounded-xl border border-[var(--sd-border)] bg-[#121417] text-[#a9b7c6] font-mono text-xs flex flex-col h-80 shadow-xs">
-                <div className="flex items-center justify-between border-b border-[#2d3239] pb-2 mb-2 text-[#7f8a9a]">
+              <div className="lg:col-span-2 p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[13px] flex flex-col h-80 shadow-xs">
+                <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-2 mb-2 text-[var(--sd-text-dim)]">
                   <span className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-[#10b981]" />
-                    SSH Patching Console &amp; LVM Attestation
+                    <span className="h-2 w-2 rounded-full bg-[var(--sd-success)]" />
+                    SSH Patching Console &amp; LVM Attestation · Sample baseline
                   </span>
                   <span>port 22 / mTLS</span>
                 </div>
@@ -622,13 +1044,13 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
                   {patchLogs.map((log, index) => (
                     <div key={index} className="leading-relaxed">
                       {log.startsWith("[SNAPSHOT]") ? (
-                        <span className="text-[#38bdf8]">{log}</span>
+                        <span className="text-[var(--sd-wheat)]">{log}</span>
                       ) : log.startsWith("[STATUS]") ? (
-                        <span className="text-[#4ade80]">{log}</span>
+                        <span className="text-[var(--sd-success)]">{log}</span>
                       ) : log.startsWith("[ROLLBACK") ? (
-                        <span className="text-[#f59e0b] font-bold">{log}</span>
+                        <span className="text-[var(--sd-warning)] font-medium">{log}</span>
                       ) : log.startsWith("[RESTORE") ? (
-                        <span className="text-[#10b981] font-bold">{log}</span>
+                        <span className="text-[var(--sd-success)] font-medium">{log}</span>
                       ) : (
                         log
                       )}
@@ -643,32 +1065,32 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
         {/* Tab 4: Attack Surface & Threat Intel (OSINT) */}
         {activeTab === "intel" && (
           <div className="space-y-4">
-            <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel)] space-y-4 shadow-xs">
-              <h3 className="text-sm font-bold text-[var(--sd-text)] flex items-center gap-2">
+            <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
+              <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                 <Globe className="h-4 w-4 text-[var(--sd-pine)]" />
-                External Attack Surface Management (Shodan &amp; HIBP)
+                External Attack Surface Management (Shodan &amp; HIBP) · Sample overview
               </h3>
-              <p className="text-xs text-[var(--sd-text-muted)]">
+              <p className="text-[13px] text-[var(--sd-text-muted)]">
                 Inspect public internet perimeter exposure, open ports, and corporate credential breach disclosures.
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[var(--sd-text)]">Shodan Perimeter Inspection</span>
-                    <span className="text-[10px] font-mono text-[var(--sd-pine-bright)]">24 Hosts Monitored</span>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-[13px] font-medium text-[var(--sd-text)]">Shodan Perimeter Inspection</span>
+                    <span className="text-[11px] font-mono text-[var(--sd-pine-bright)]">24 Hosts Monitored</span>
                   </div>
-                  <p className="text-xs text-[var(--sd-text-muted)]">
-                    Detected Ports: <code className="text-[var(--sd-text)] font-semibold">80, 443, 22 (SSH Restrict)</code>. No unauthorized RDP (3389) or Elasticsearch (9200) exposed to WAN.
+                  <p className="text-[13px] text-[var(--sd-text-muted)]">
+                    Detected Ports: <code className="text-[var(--sd-text)] font-medium">80, 443, 22 (SSH Restrict)</code>. No unauthorized RDP (3389) or Elasticsearch (9200) exposed to WAN.
                   </p>
                 </div>
 
                 <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[var(--sd-text)]">HaveIBeenPwned Domain Check</span>
-                    <span className="text-[10px] font-mono text-[var(--sd-warning)]">1 Domain Flagged</span>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-[13px] font-medium text-[var(--sd-text)]">HaveIBeenPwned Domain Check</span>
+                    <span className="text-[11px] font-mono text-[var(--sd-warning)]">1 Domain Flagged</span>
                   </div>
-                  <p className="text-xs text-[var(--sd-text-muted)]">
+                  <p className="text-[13px] text-[var(--sd-text-muted)]">
                     0 active corporate credentials leaked in paste sites within the last 30 days. Forced TOTP MFA enabled on all IAM accounts.
                   </p>
                 </div>
@@ -679,33 +1101,327 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
 
         {/* Advisor Output Modal */}
         {advisorContent && (
-          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="w-full max-w-2xl rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] p-6 space-y-4 shadow-xl">
+          <GlassDialog open onClose={() => setAdvisorContent(null)} labelledBy="scanner-advisor-title" className="max-w-2xl">
+            <div className="p-6 space-y-4">
               <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
-                <h3 className="text-sm font-bold text-[var(--sd-text)]">{advisorTitle}</h3>
+                <h3 id="scanner-advisor-title" className="text-lg font-normal text-[var(--sd-text)]">{advisorTitle}</h3>
                 <button
                   onClick={() => setAdvisorContent(null)}
-                  className="text-xs text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer"
+                  className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer"
                 >
                   ✕ Close
                 </button>
               </div>
 
-              <pre className="p-4 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs font-mono text-[var(--sd-text)] overflow-x-auto max-h-96 whitespace-pre-wrap leading-relaxed">
+              <pre className="p-4 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[13px] font-mono text-[var(--sd-text)] overflow-x-auto max-h-96 whitespace-pre-wrap leading-relaxed">
                 {advisorContent}
               </pre>
 
               <div className="flex justify-end pt-2">
                 <button
                   onClick={() => setAdvisorContent(null)}
-                  className="px-4 py-2 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-hover)] text-[#f7f4ed] text-xs font-semibold cursor-pointer"
+                  className="sd-button sd-button-primary px-4 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer"
                 >
                   Done
                 </button>
               </div>
             </div>
-          </div>
+          </GlassDialog>
         )}
+        {/* Secret Finding Review & Remediate Modal */}
+        {reviewingSecret && (() => {
+          const findingKey = reviewingSecret.fingerprint || reviewingSecret.secret_hash || `${reviewingSecret.location}:${reviewingSecret.line_number}`;
+          const isMitigated = mitigatedIds.has(findingKey);
+          const isMitigating = mitigatingId === findingKey;
+          const purgeCmd = `git filter-repo --path "${reviewingSecret.location}" --invert-paths`;
+
+          return (
+            <GlassDialog
+              open
+              onClose={() => {
+                setReviewingSecret(null);
+                setRemediationFeedback(null);
+                setCopiedGitCmd(false);
+              }}
+              labelledBy="secret-review-title"
+              className="max-w-2xl w-full"
+            >
+              <div className="p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+                {/* Header */}
+                <div className="flex items-start justify-between border-b border-[var(--sd-border)] pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-[var(--sd-danger)]/10 text-[var(--sd-danger)] border border-[var(--sd-danger)]/20">
+                      <Key className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 id="secret-review-title" className="text-base font-semibold text-[var(--sd-text)] flex items-center gap-2">
+                        Review & Remediate Finding
+                        {isMitigated && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-[var(--sd-pine-bright)] bg-[var(--sd-pine)]/15 border border-[var(--sd-pine)]/30">
+                            <CheckCircle2 className="h-3 w-3" /> Remediated
+                          </span>
+                        )}
+                      </h3>
+                      <p className="text-[12px] text-[var(--sd-text-muted)] font-mono mt-0.5">
+                        Rule: <span className="text-[var(--sd-text)]">{reviewingSecret.rule_id || "generic-api-key"}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setReviewingSecret(null);
+                      setRemediationFeedback(null);
+                      setCopiedGitCmd(false);
+                    }}
+                    className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer px-2 py-1"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+
+                {/* Finding Context & Metadata Card */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[12px]">
+                  <div>
+                    <span className="text-[var(--sd-text-muted)] block text-[11px] uppercase tracking-wider">File Location</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium break-all">
+                      {reviewingSecret.location}
+                      {reviewingSecret.line_number !== undefined && (
+                        <span className="text-[var(--sd-pine-bright)] ml-1">#L{reviewingSecret.line_number}</span>
+                      )}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[var(--sd-text-muted)] block text-[11px] uppercase tracking-wider">Detection Source</span>
+                    <span className="font-mono text-[var(--sd-text)] flex items-center gap-1.5 mt-0.5">
+                      {reviewingSecret.source === "git_history" ? (
+                        <>
+                          <GitCommit className="h-3.5 w-3.5 text-[var(--sd-warning)]" />
+                          <span>Git History Commit</span>
+                        </>
+                      ) : (
+                        <>
+                          <HardDrive className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                          <span>Active Working Directory</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[var(--sd-text-muted)] block text-[11px] uppercase tracking-wider">Risk Level</span>
+                    <span
+                      className={cn(
+                        "inline-block px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider border mt-0.5",
+                        reviewingSecret.risk_level === "CRITICAL"
+                          ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
+                          : reviewingSecret.risk_level === "HIGH"
+                          ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                          : "bg-[var(--sd-panel-hover)] text-[var(--sd-text)] border-[var(--sd-border)]"
+                      )}
+                    >
+                      {reviewingSecret.risk_level}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[var(--sd-text-muted)] block text-[11px] uppercase tracking-wider">Finding Hash</span>
+                    <span className="font-mono text-[11px] text-[var(--sd-text-muted)] truncate block" title={reviewingSecret.fingerprint || reviewingSecret.secret_hash}>
+                      {reviewingSecret.fingerprint || reviewingSecret.secret_hash || "Calculated by Gitleaks"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Git Commit Information if applicable */}
+                {reviewingSecret.commit && (
+                  <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-hover)]/40 space-y-2 text-[12px]">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium text-[var(--sd-text)] flex items-center gap-1.5">
+                        <GitCommit className="h-3.5 w-3.5 text-[var(--sd-pine-bright)]" />
+                        Commit Context
+                      </span>
+                      <span className="font-mono text-[11px] text-[var(--sd-text-muted)]">
+                        SHA: {reviewingSecret.commit.substring(0, 10)}
+                      </span>
+                    </div>
+                    {reviewingSecret.message && (
+                      <p className="text-[12px] text-[var(--sd-text)] italic bg-[var(--sd-bg)]/80 p-2 rounded border border-[var(--sd-border)]">
+                        &quot;{reviewingSecret.message}&quot;
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-4 text-[11px] text-[var(--sd-text-muted)] pt-1">
+                      {reviewingSecret.author && (
+                        <span>Author: <strong className="text-[var(--sd-text)]">{reviewingSecret.author}</strong></span>
+                      )}
+                      {reviewingSecret.date && (
+                        <span>Date: <strong className="text-[var(--sd-text)]">{new Date(reviewingSecret.date).toUTCString()}</strong></span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Redacted Snippet Box */}
+                <div className="space-y-1.5">
+                  <label className="text-[12px] font-medium text-[var(--sd-text-muted)] flex items-center justify-between">
+                    <span>Detected Secret Content (Masked)</span>
+                    <span className="text-[10px] text-[var(--sd-pine-bright)]">Protected by Gitleaks Redaction</span>
+                  </label>
+                  <pre className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[12px] font-mono text-[var(--sd-danger)] overflow-x-auto">
+                    {reviewingSecret.snippet_masked || "[REDACTED SECRET VALUE]"}
+                  </pre>
+                </div>
+
+                {/* Live Remediation Feedback Banner */}
+                {remediationFeedback && (
+                  <div
+                    className={cn(
+                      "p-3 rounded-xl border text-[13px] space-y-1",
+                      remediationFeedback.success
+                        ? "bg-[var(--sd-pine)]/10 border-[var(--sd-pine)]/30 text-[var(--sd-pine-bright)]"
+                        : "bg-[var(--sd-danger-dim)] border-[var(--sd-danger-border)] text-[var(--sd-danger)]"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 font-medium">
+                      {remediationFeedback.success ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4" />
+                      )}
+                      <span>{remediationFeedback.message}</span>
+                    </div>
+                    {remediationFeedback.newKeyId && (
+                      <div className="font-mono text-[11px] opacity-90 pl-6">
+                        New Replacement Credential ID: <span className="underline font-bold">{remediationFeedback.newKeyId}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Remediation Action Plans */}
+                <div className="space-y-3 pt-1">
+                  <h4 className="text-[13px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
+                    <Wrench className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                    Available Remediation Actions
+                  </h4>
+
+                  {/* Action 1: Automated Key Invalidation */}
+                  <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] space-y-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-[13px] text-[var(--sd-text)]">
+                          1. Automated Credential Revocation & Rotation
+                        </div>
+                        <p className="text-[11px] text-[var(--sd-text-muted)] mt-0.5">
+                          Immediately issue a revocation call to invalidate this token and provision an updated credential via the ShieldDesk rotation orchestrator.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => executeRemediation(reviewingSecret, "rotate_key")}
+                        disabled={isMitigating}
+                        className="sd-button sd-button-primary shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium text-[var(--sd-on-accent)] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        {isMitigating ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            <span>Revoking…</span>
+                          </>
+                        ) : (
+                          <>
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            <span>Revoke / Rotate Key</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Action 2: Purge from Git History if git commit */}
+                  {reviewingSecret.source === "git_history" && (
+                    <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] space-y-2.5">
+                      <div>
+                        <div className="font-medium text-[13px] text-[var(--sd-text)] flex items-center gap-1.5">
+                          <AlertTriangle className="h-3.5 w-3.5 text-[var(--sd-warning)]" />
+                          <span>2. Scrub Secret from Git Repository History</span>
+                        </div>
+                        <p className="text-[11px] text-[var(--sd-text-muted)] mt-0.5">
+                          Because this secret exists in committed git objects, simply editing the file leaves history exposed. Run this command to rewrite git history:
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <code className="p-2 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[11px] font-mono text-[var(--sd-text)] flex-1 overflow-x-auto">
+                          {purgeCmd}
+                        </code>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(purgeCmd);
+                            setCopiedGitCmd(true);
+                            setTimeout(() => setCopiedGitCmd(false), 2000);
+                          }}
+                          className="sd-button px-3 py-2 rounded border border-[var(--sd-border)] bg-[var(--sd-panel-hover)] hover:bg-[var(--sd-panel)] text-[12px] text-[var(--sd-text)] shrink-0 flex items-center gap-1 cursor-pointer font-medium"
+                        >
+                          {copiedGitCmd ? (
+                            <>
+                              <Check className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                              <span className="text-[var(--sd-pine)]">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5" />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action 3: Filesystem Best Practices if active working directory */}
+                  {reviewingSecret.source !== "git_history" && (
+                    <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] space-y-2">
+                      <div className="font-medium text-[13px] text-[var(--sd-text)] flex items-center gap-1.5">
+                        <HardDrive className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                        <span>2. Filesystem & Environment Hygiene</span>
+                      </div>
+                      <p className="text-[11px] text-[var(--sd-text-muted)]">
+                        Ensure <code className="text-[var(--sd-pine-bright)]">{reviewingSecret.location}</code> is added to <code className="text-[var(--sd-text)]">.gitignore</code> so credentials are never checked into remote repositories. Migrate production secrets into a cloud secret manager (Supabase Vault or AWS KMS).
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Action 4: Mark Resolved / Whitelist */}
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[11px] text-[var(--sd-text-muted)]">
+                      Analyst verified key is inactive or non-sensitive test token:
+                    </span>
+                    <button
+                      onClick={() => executeRemediation(reviewingSecret, "mark_resolved")}
+                      disabled={isMitigating || isMitigated}
+                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel-hover)] hover:bg-[var(--sd-panel)] text-[12px] text-[var(--sd-text)] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                      <span>{isMitigated ? "Already Resolved" : "Mark as Resolved"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-between pt-3 border-t border-[var(--sd-border)]">
+                  <div className="text-[11px] text-[var(--sd-text-muted)]">
+                    Audit trail logs all remediation actions to SIEM.
+                  </div>
+                  <button
+                    onClick={() => {
+                      setReviewingSecret(null);
+                      setRemediationFeedback(null);
+                      setCopiedGitCmd(false);
+                    }}
+                    className="sd-button sd-button-primary px-4 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </GlassDialog>
+          );
+        })()}
       </main>
     </div>
   );

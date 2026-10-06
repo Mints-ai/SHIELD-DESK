@@ -1,5 +1,6 @@
 import "server-only";
 import { Pool, type QueryResultRow } from "pg";
+import { MetricsRegistry } from "@/lib/observability/metrics";
 
 /**
  * ShieldDesk PostgreSQL connection.
@@ -44,7 +45,62 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   text: string,
   params?: unknown[]
 ) {
-  return getPool().query<T>(text, params);
+  const startedAt = Date.now();
+  const operation = /^\s*(SELECT|INSERT|UPDATE|DELETE|WITH)/i.exec(text)?.[1]?.toLowerCase() || "other";
+  try {
+    return await getPool().query<T>(text, params);
+  } catch (error) {
+    MetricsRegistry.increment("shielddesk_db_query_errors_total", 1, { operation });
+    throw error;
+  } finally {
+    MetricsRegistry.observe("shielddesk_db_query_duration_ms", Date.now() - startedAt, { operation });
+  }
+}
+
+/**
+ * Executes a callback within a connection where `app.current_tenant` and `app.user_role`
+ * are strictly set via `set_config(...)`, activating Postgres Row-Level Security (RLS).
+ */
+export async function withTenantContext<T>(
+  tenantId: string,
+  role: string,
+  fn: (clientQuery: <R extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]) => Promise<{ rows: R[]; rowCount: number | null }>) => Promise<T>
+): Promise<T> {
+  const pool = getPool();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN;");
+    await client.query("SELECT set_config('app.current_tenant', $1, true);", [tenantId]);
+    await client.query("SELECT set_config('app.user_role', $2, true);", [role]);
+
+    const scopedQuery = async <R extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]) => {
+      const res = await client.query<R>(text, params);
+      return { rows: res.rows, rowCount: res.rowCount };
+    };
+
+    const result = await fn(scopedQuery);
+    await client.query("COMMIT;");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK;").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Issues a single query scoped under PostgreSQL Row-Level Security (RLS) for the specified tenant.
+ */
+export async function tenantQuery<T extends QueryResultRow = QueryResultRow>(
+  tenantId: string,
+  role: string,
+  text: string,
+  params?: unknown[]
+) {
+  return withTenantContext(tenantId, role, async (scopedQuery) => {
+    return scopedQuery<T>(text, params);
+  });
 }
 
 export async function checkDatabaseConnection(): Promise<boolean> {

@@ -2,23 +2,27 @@ import { getIncidents } from "@/lib/tools/shieldDeskChatTools";
 import { listApprovalTokens } from "@/lib/governance/approvalTokens";
 import { listEndpointAgents } from "@/lib/fleet/fleet";
 import type { SessionUser } from "@/lib/auth/session";
+import { type MetricStatus, type MetricValue, createMetric } from "@/lib/types/metrics";
 
 export interface RiskScorecardData {
   tenantId: string;
   postureScore: number;
   postureGrade: "A+" | "A" | "B+" | "B" | "C" | "D" | "F";
+  postureScoreMetric: MetricValue<number>;
   mttdMinutes: {
     beforeShieldDesk: number;
     withShieldDesk: number;
     reductionPct: number;
     /** True: figures are industry-average estimates, not measured from this tenant's environment. */
     isEstimated: boolean;
+    metric: MetricValue<number>;
   };
   mttrMinutes: {
     beforeShieldDesk: number;
     withShieldDesk: number;
     reductionPct: number;
     isEstimated: boolean;
+    metric: MetricValue<number>;
   };
   autonomousActionRatio: {
     tier1AutoContained: number;
@@ -35,12 +39,15 @@ export interface RiskScorecardData {
    * incident-cost records for this tenant.
    */
   estimatedLossAvoidedUsd: string;
+  estimatedLossAvoidedMetric: MetricValue<string>;
   estimatedLossIsEstimated: boolean;
   threatDistribution: Array<{
     category: string;
     count: number;
     percentage: number;
   }>;
+  /** Transparent metrics catalog with explicit status for every reported figure */
+  metrics: Record<string, MetricValue>;
   /** Disclaimer that must be surfaced whenever estimated figures are presented externally. */
   dataDisclaimer: string;
 }
@@ -86,21 +93,52 @@ export async function getExecutiveRiskScorecard(caller: SessionUser): Promise<Ri
   const tier1Count = 18; // auto-contained low-risk actions
   const totalActions = tier1Count + tokens.length;
 
+  const postureMetric = createMetric(
+    score,
+    "ESTIMATED",
+    "ShieldDesk Incident & Fleet Assessment",
+    "Derived from critical incidents, fleet health, and kill-switch states"
+  );
+
+  const mttdMetric = createMetric(
+    1.8,
+    "BENCHMARK",
+    "Industry Average Benchmark (SANS/Ponemon)",
+    "Benchmark estimation: 54 min baseline vs 1.8 min platform correlation"
+  );
+
+  const mttrMetric = createMetric(
+    6.4,
+    "BENCHMARK",
+    "Industry Average Benchmark (Ponemon)",
+    "Benchmark estimation: 252 min baseline vs 6.4 min platform containment"
+  );
+
+  const lossMetric = createMetric(
+    "~$1,450,000 (estimated)",
+    "BENCHMARK",
+    "IBM Cost of a Data Breach Report 2024",
+    "Benchmark estimation derived from avoided incident severity distribution"
+  );
+
   return {
     tenantId: caller.tenant_id,
     postureScore: score,
     postureGrade: grade,
+    postureScoreMetric: postureMetric,
     mttdMinutes: {
       beforeShieldDesk: 54,
       withShieldDesk: 1.8,
       reductionPct: 96.6,
-      isEstimated: true, // industry-average benchmark, not measured from this tenant
+      isEstimated: true,
+      metric: mttdMetric,
     },
     mttrMinutes: {
-      beforeShieldDesk: 252, // 4.2 hours
+      beforeShieldDesk: 252,
       withShieldDesk: 6.4,
       reductionPct: 97.4,
       isEstimated: true,
+      metric: mttrMetric,
     },
     autonomousActionRatio: {
       tier1AutoContained: tier1Count,
@@ -112,6 +150,7 @@ export async function getExecutiveRiskScorecard(caller: SessionUser): Promise<Ri
     endpointsProtected: agents.length,
     complianceAssurancePct: 96,
     estimatedLossAvoidedUsd: "~$1,450,000 (estimated)",
+    estimatedLossAvoidedMetric: lossMetric,
     estimatedLossIsEstimated: true,
     threatDistribution: [
       { category: "Lateral Movement & SMB Recon", count: 4, percentage: 38 },
@@ -119,6 +158,12 @@ export async function getExecutiveRiskScorecard(caller: SessionUser): Promise<Ri
       { category: "Credential Stuffing & Brute Force", count: 2, percentage: 19 },
       { category: "Suspicious C2 Egress", count: 1, percentage: 14 },
     ],
+    metrics: {
+      posture_score: postureMetric,
+      mttd_minutes: mttdMetric,
+      mttr_minutes: mttrMetric,
+      estimated_loss_avoided: lossMetric,
+    },
     dataDisclaimer: "⚠ MTTD/MTTR reduction figures and estimated loss avoided are based on industry-average benchmarks (IBM Cost of a Data Breach 2024), not measured from this tenant's environment. Do not present as tenant-specific metrics without empirical validation.",
   };
 }

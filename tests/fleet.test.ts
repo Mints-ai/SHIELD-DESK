@@ -13,7 +13,45 @@ import {
 import { requestApprovalToken, approveActionToken } from "../src/lib/governance/approvalTokens";
 import { resetMockThrottle } from "../src/lib/governance/blastRadiusThrottle";
 import { signCommand, verifyCommandSignature } from "../src/lib/fleet/commandSigning";
+import {
+  getObservedEndpointIp,
+  normalizeEndpointIp,
+  resolveEndpointIp,
+} from "../src/lib/fleet/ipAddress";
 import type { SessionUser } from "../src/lib/auth/session";
+
+test("endpoint IP normalization preserves real addresses and rejects loopback values", () => {
+  assert.equal(normalizeEndpointIp(" 192.168.1.24 "), "192.168.1.24");
+  assert.equal(normalizeEndpointIp("::ffff:10.0.0.8"), "10.0.0.8");
+  assert.equal(normalizeEndpointIp("127.0.0.1"), null);
+  assert.equal(normalizeEndpointIp("::1"), null);
+  assert.equal(normalizeEndpointIp("not-an-ip"), null);
+});
+
+test("observed endpoint IP prefers a public proxy IP over the agent's local IP", () => {
+  const headers = new Headers({
+    "x-forwarded-for": "8.8.8.8, 10.0.0.10",
+  });
+
+  assert.equal(getObservedEndpointIp(headers), "8.8.8.8");
+  assert.equal(getObservedEndpointIp(new Headers()), null);
+  assert.equal(
+    getObservedEndpointIp(new Headers({ "x-forwarded-for": "192.168.1.20" })),
+    null
+  );
+  assert.equal(
+    getObservedEndpointIp(new Headers({ "x-forwarded-for": "198.51.100.42" })),
+    null
+  );
+  assert.equal(
+    resolveEndpointIp(new Headers({ "x-forwarded-for": "10.0.0.10" }), "8.8.4.4"),
+    "8.8.4.4"
+  );
+  assert.equal(
+    resolveEndpointIp(new Headers({ "x-forwarded-for": "8.8.8.8" }), "10.0.0.10"),
+    "8.8.8.8"
+  );
+});
 
 test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) => {
   const acmeAnalyst: SessionUser = {
@@ -242,11 +280,22 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
     );
     assert.ok(queuedAudit, "AGENT_COMMAND_QUEUED audit event must be recorded before execution");
 
+    // Verify Section 3 (P0 Audit Truthfulness): AGENT_COMMAND_EXECUTED must NOT be fabricated at queue time
+    const prematureExecutionAudit = MOCK_HASH_CHAINS.find(
+      (e) => e.event_type === "AGENT_COMMAND_EXECUTED" && (e.payload as any)?.commandId === res.commandId
+    );
+    assert.equal(
+      prematureExecutionAudit,
+      undefined,
+      "Audit trail must NEVER record AGENT_COMMAND_EXECUTED before the remote agent reports back"
+    );
+
     // 2. Agent polls for pending commands
     const polled = await getQueuedCommandsForAgent("ea111111-1111-1111-1111-111111111111");
     const matchingCmd = polled.find((c) => c.id === res.commandId);
     assert.ok(matchingCmd, "Command must be delivered to polling agent");
     assert.equal(matchingCmd.status, "delivered");
+    assert.ok(matchingCmd.signature, "Command must contain cryptographic signature");
 
     // 3. Agent reports execution result
     await recordCommandResult({
@@ -256,11 +305,21 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
       snapshotId: "snap-finws042-test",
     });
 
-    // 4. Verify AGENT_COMMAND_EXECUTED event is logged
+    // 4. Verify AGENT_COMMAND_EXECUTED event is logged exclusively upon real execution
     const executedAudit = MOCK_HASH_CHAINS.find(
       (e) => e.event_type === "AGENT_COMMAND_EXECUTED" && (e.payload as any)?.commandId === res.commandId
     );
     assert.ok(executedAudit, "AGENT_COMMAND_EXECUTED audit event must be recorded upon agent result");
+    assert.equal((executedAudit.payload as any)?.status, "executed");
+  });
+
+  await t.test("API: GET /api/fleet/public-key returns control plane RSA-2048 public key", async () => {
+    const { GET: publicKeyGET } = await import("../src/app/api/fleet/public-key/route");
+    const res = await publicKeyGET();
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.algorithm, "RSA-SHA256");
+    assert.equal(body.keySize, 2048);
+    assert.ok(body.publicKey.includes("BEGIN PUBLIC KEY"), "Must return valid PEM public key");
   });
 });
-

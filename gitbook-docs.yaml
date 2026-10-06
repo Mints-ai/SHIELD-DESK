@@ -1,0 +1,11 @@
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+site:
+  title: "ShieldDesk Documentation"
+  structure:
+    - type: space
+      key: shielddesk-docs
+      title: "ShieldDesk Documentation"
+      path: docs
+      default: true
+      content:
+        directory: "./docs"

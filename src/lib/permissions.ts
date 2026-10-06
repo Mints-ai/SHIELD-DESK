@@ -13,7 +13,7 @@ import "server-only";
  * boundaries at all; every other check is tenant isolation, applied
  * uniformly to every query in lib/tools/shieldDeskChatTools.ts.
  */
-export type ShieldDeskRole = "system_admin" | "super_admin" | "analyst" | "responder" | "viewer" | "user";
+export type ShieldDeskRole = "system_admin" | "super_admin" | "analyst" | "responder" | "viewer" | "auditor" | "user";
 
 export type Permission =
   | "VIEW_CROSS_TENANT"
@@ -22,6 +22,7 @@ export type Permission =
   | "incident.investigate"
   | "cve.read"
   | "incident.mitigate"
+  | "task.assign"     // create / assign remediation tasks
   // Approval tier gates — additive. Each role can approve up to its highest tier.
   | "approve.tier1"  // low-risk reversible (Tier 1)
   | "approve.tier2"  // host isolation / patching (Tier 2) — requires responder+
@@ -35,6 +36,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
+    "task.assign",
     "approve.tier1",
     "approve.tier2",
     "approve.tier3",
@@ -69,6 +71,11 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "cve.read",
     // Viewers have READ only — they cannot approve any action.
   ],
+  auditor: [
+    "incident.read",
+    "cve.read",
+    // Auditors have read-only access to audit logs, evidence packages, and compliance reports.
+  ],
   user: [
     "incident.read",
     "incident.investigate",
@@ -91,11 +98,22 @@ export const TOOL_PERMISSIONS: Record<string, Permission> = {
   analyzeCve: "cve.read",
   generateMitigationPlan: "incident.mitigate",
   simulateBlastRadius: "cve.read",
+  triggerTrivyScan: "cve.read",
 };
 
 export function canAccess(role: string, permission: Permission): boolean {
   const perms = ROLE_PERMISSIONS[role as ShieldDeskRole];
   return Boolean(perms?.includes(permission));
+}
+
+export const hasPermission = canAccess;
+
+/**
+ * Returns true if the session is allowed to create / assign tasks.
+ * Rules: System Admin (any tenant) OR any user from globex-tenant.
+ */
+export function canAssignTask(role: string, tenantId: string): boolean {
+  return role === "system_admin" || tenantId === "globex-tenant";
 }
 
 export function canExecuteTool(role: string, toolName: string): boolean {

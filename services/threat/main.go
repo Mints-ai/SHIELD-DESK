@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -154,7 +155,10 @@ func main() {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgresql://postgres:postgres@localhost:5432/shielddesk"
+		if os.Getenv("APP_ENV") == "production" {
+			log.Fatal().Msg("FATAL: DATABASE_URL environment variable is required in production")
+		}
+		dbURL = "postgresql://localhost:5432/shielddesk?sslmode=disable"
 	}
 
 	log.Info().Msg("[ShieldDesk-Threat] Initializing Go Threat Detection & Anomaly Service...")
@@ -167,6 +171,20 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	httpPort := 8003
+	if p := os.Getenv("PORT"); p != "" {
+		fmt.Sscanf(p, "%d", &httpPort)
+	} else if p := os.Getenv("HTTP_PORT"); p != "" {
+		fmt.Sscanf(p, "%d", &httpPort)
+	}
+
+	httpSrv := NewHTTPServer(httpPort, engine)
+	go func() {
+		if err := httpSrv.Start(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("[ThreatEngine] HTTP server stopped")
+		}
+	}()
 
 	go func() {
 		if err := engine.Start(ctx); err != nil {
