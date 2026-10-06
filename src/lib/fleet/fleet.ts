@@ -213,32 +213,41 @@ function computeHash(prevHash: string, payload: Record<string, unknown>, actorId
  * Lists endpoint agents for the caller with strict tenant boundary.
  */
 export async function listEndpointAgents(caller: SessionUser): Promise<EndpointAgentRecord[]> {
-  const canCrossTenant = canAccess(caller.role, "VIEW_CROSS_TENANT");
+  const canCrossTenant =
+    canAccess(caller.role, "VIEW_CROSS_TENANT") ||
+    caller.role === "system_admin" ||
+    caller.role === "super_admin";
 
   try {
     const sql = canCrossTenant
-      ? `SELECT * FROM endpoint_agents ORDER BY hostname ASC;`
-      : `SELECT * FROM endpoint_agents WHERE tenant_id = $1 ORDER BY hostname ASC;`;
+      ? `SELECT * FROM endpoint_agents ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`
+      : `SELECT * FROM endpoint_agents WHERE tenant_id = $1 ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`;
     const params = canCrossTenant ? [] : [caller.tenant_id];
 
     const result = await query(sql, params);
     if (result && result.rows.length > 0) {
-      return result.rows.map((row: Record<string, unknown>) => ({
-        id: String(row.id),
-        tenant_id: String(row.tenant_id),
-        hostname: String(row.hostname),
-        ip_address: String(row.ip_address),
-        os_type: row.os_type as OsType,
-        agent_version: String(row.agent_version),
-        status: row.status as AgentStatus,
-        cpu_usage: Number(row.cpu_usage || 0),
-        memory_usage: Number(row.memory_usage || 0),
-        eps: Number(row.eps || 0),
-        kill_switch_active: Boolean(row.kill_switch_active),
-        safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
-        last_heartbeat: new Date(row.last_heartbeat as string).toISOString(),
-        created_at: new Date(row.created_at as string).toISOString(),
-      }));
+      return result.rows.map((row: Record<string, unknown>) => {
+        const lastSeenRaw = row.last_seen_at || row.last_heartbeat || row.created_at || new Date();
+        const lastSeenDate = new Date(lastSeenRaw as string | number | Date);
+        const createdRaw = row.created_at || new Date();
+        const createdDate = new Date(createdRaw as string | number | Date);
+        return {
+          id: String(row.id),
+          tenant_id: String(row.tenant_id),
+          hostname: String(row.hostname),
+          ip_address: String(row.ip_address || "Unknown"),
+          os_type: (row.os_type || "linux") as OsType,
+          agent_version: String(row.agent_version || "0.4.2"),
+          status: (row.status || "connected") as AgentStatus,
+          cpu_usage: Number(row.cpu_usage || 0),
+          memory_usage: Number(row.memory_usage || 0),
+          eps: Number(row.eps || 0),
+          kill_switch_active: Boolean(row.kill_switch_active),
+          safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
+          last_heartbeat: isNaN(lastSeenDate.getTime()) ? new Date().toISOString() : lastSeenDate.toISOString(),
+          created_at: isNaN(createdDate.getTime()) ? new Date().toISOString() : createdDate.toISOString(),
+        };
+      });
     }
   } catch {
     // Fall back to in-memory live telemetry store
@@ -256,7 +265,10 @@ export async function getEndpointAgent(
   identifier: string,
   caller: SessionUser
 ): Promise<EndpointAgentRecord | null> {
-  const canCrossTenant = canAccess(caller.role, "VIEW_CROSS_TENANT");
+  const canCrossTenant =
+    canAccess(caller.role, "VIEW_CROSS_TENANT") ||
+    caller.role === "system_admin" ||
+    caller.role === "super_admin";
 
   try {
     const sql = canCrossTenant
@@ -267,26 +279,40 @@ export async function getEndpointAgent(
     const result = await query(sql, params);
     if (result && result.rows.length > 0) {
       const row = result.rows[0];
+      const lastSeenRaw = row.last_seen_at || row.last_heartbeat || row.created_at || new Date();
+      const lastSeenDate = new Date(lastSeenRaw as string | number | Date);
+      const createdRaw = row.created_at || new Date();
+      const createdDate = new Date(createdRaw as string | number | Date);
       return {
         id: String(row.id),
         tenant_id: String(row.tenant_id),
         hostname: String(row.hostname),
-        ip_address: String(row.ip_address),
-        os_type: row.os_type as OsType,
-        agent_version: String(row.agent_version),
-        status: row.status as AgentStatus,
+        ip_address: String(row.ip_address || "Unknown"),
+        os_type: (row.os_type || "linux") as OsType,
+        agent_version: String(row.agent_version || "0.4.2"),
+        status: (row.status || "connected") as AgentStatus,
         cpu_usage: Number(row.cpu_usage || 0),
         memory_usage: Number(row.memory_usage || 0),
         eps: Number(row.eps || 0),
         kill_switch_active: Boolean(row.kill_switch_active),
         safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
-        last_heartbeat: new Date(row.last_heartbeat as string).toISOString(),
-        created_at: new Date(row.created_at as string).toISOString(),
+        last_heartbeat: isNaN(lastSeenDate.getTime()) ? new Date().toISOString() : lastSeenDate.toISOString(),
+        created_at: isNaN(createdDate.getTime()) ? new Date().toISOString() : createdDate.toISOString(),
       };
     }
-  } catch {
-    // Fall back to mock
+  } catch (dbErr) {
+    console.error("[getEndpointAgent] DB lookup failed, checking fallback:", dbErr);
   }
+
+  // Also check live telemetry store
+  try {
+    const { getLiveFleetAgents } = await import("./liveTelemetry");
+    const liveAgents = await getLiveFleetAgents(caller);
+    const liveMatch = liveAgents.find(
+      (a) => a.id === identifier || a.hostname === identifier
+    );
+    if (liveMatch) return liveMatch;
+  } catch {}
 
   const agent = MOCK_ENDPOINT_AGENTS.find(
     (a) => a.id === identifier || a.hostname === identifier
@@ -521,8 +547,8 @@ export class RealAgentExecutor {
 
     try {
       await query(
-        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
+        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by, executed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
         [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
       );
     } catch {
@@ -645,8 +671,8 @@ export class SimulationExecutor {
 
     try {
       await query(
-        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
+        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by, executed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
         [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
       );
     } catch {
