@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,6 +18,16 @@ type WebhookService struct {
 	nc         *nats.Conn
 	js         nats.JetStreamContext
 	dispatcher *WebhookDispatcher
+	httpServer *http.Server
+}
+
+// InboundDispatchReq matches the payload sent from the Next.js app
+type InboundDispatchReq struct {
+	TargetURL string                 `json:"target_url"`
+	SecretKey string                 `json:"secret_key,omitempty"`
+	Event     string                 `json:"event"`
+	TenantID  string                 `json:"tenant_id"`
+	Data      map[string]interface{} `json:"data"`
 }
 
 func NewWebhookService(natsURL string) (*WebhookService, error) {
@@ -39,51 +50,139 @@ func NewWebhookService(natsURL string) (*WebhookService, error) {
 	}, nil
 }
 
-func (s *WebhookService) Start(ctx context.Context) error {
-	if s.js == nil {
-		log.Warn().Msg("[Webhooks] Standalone loop ready (NATS not bound)")
-		<-ctx.Done()
-		return nil
-	}
+func (s *WebhookService) setupHTTP(port string) *http.Server {
+	mux := http.NewServeMux()
 
-	sub, err := s.js.Subscribe("alerts.*", func(msg *nats.Msg) {
-		var rawAlert map[string]interface{}
-		if err := json.Unmarshal(msg.Data, &rawAlert); err != nil {
-			_ = msg.Ack()
+	// Health check endpoint
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "healthy",
+			"service": "shielddesk-webhooks",
+			"engine":  "Go 1.22 HMAC Dispatcher",
+		})
+	})
+
+	// Fire-and-forget HTTP dispatch endpoint
+	mux.HandleFunc("POST /dispatch", func(w http.ResponseWriter, r *http.Request) {
+		var req InboundDispatchReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid json body"}`, http.StatusBadRequest)
 			return
 		}
 
-		tenantID, _ := rawAlert["tenant_id"].(string)
+		if req.TargetURL == "" {
+			http.Error(w, `{"error":"missing target_url"}`, http.StatusBadRequest)
+			return
+		}
+
+		secret := req.SecretKey
+		if secret == "" {
+			secret = os.Getenv("CUSTOMER_WEBHOOK_SECRET")
+			if secret == "" {
+				secret = "sd_webhook_dev_secret"
+			}
+		}
+
+		tenantID := req.TenantID
 		if tenantID == "" {
-			tenantID = "unknown_tenant"
+			tenantID = "default_tenant"
+		}
+
+		event := req.Event
+		if event == "" {
+			event = "alert.dispatched"
 		}
 
 		payload := &WebhookPayload{
-			Event:     "alert.created",
+			Event:     event,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			TenantID:  tenantID,
-			Data:      rawAlert,
+			Data:      req.Data,
 		}
 
-		// Example customer target URL and secret (in production loaded from PostgreSQL customer settings)
-		customerURL := os.Getenv("CUSTOMER_WEBHOOK_URL")
-		secretKey := os.Getenv("CUSTOMER_WEBHOOK_SECRET")
-		if customerURL != "" && secretKey != "" {
-			go func() {
-				_ = s.dispatcher.DispatchWithRetry(context.Background(), customerURL, secretKey, payload)
-			}()
-		}
+		// Fire-and-forget asynchronous dispatch with 3x retry and backoff in Go
+		go func(target, sec string, p *WebhookPayload) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := s.dispatcher.DispatchWithRetry(ctx, target, sec, p); err != nil {
+				log.Error().Err(err).Str("url", target).Msg("[Webhooks] Async dispatch failed after retries")
+			}
+		}(req.TargetURL, secret, payload)
 
-		_ = msg.Ack()
-	}, nats.Durable("webhooks-dispatcher-worker"), nats.ManualAck())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":   "queued",
+			"queued":   true,
+			"target":   req.TargetURL,
+			"tenant":   tenantID,
+			"event":    event,
+			"retry":    "3 attempts (500ms, 1s, 2s)",
+			"signed":   true,
+		})
+	})
 
-	if err != nil {
-		return err
+	return &http.Server{
+		Addr:    ":" + port,
+		Handler: mux,
+	}
+}
+
+func (s *WebhookService) Start(ctx context.Context) error {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
 
-	log.Info().Msg("[Webhooks] Subscribed to NATS alerts.* and active")
+	s.httpServer = s.setupHTTP(port)
+	go func() {
+		log.Info().Str("port", port).Msg("[Webhooks] HTTP dispatcher API listening on :" + port)
+		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("[Webhooks] HTTP server error")
+		}
+	}()
+
+	if s.js != nil {
+		sub, err := s.js.Subscribe("alerts.*", func(msg *nats.Msg) {
+			var rawAlert map[string]interface{}
+			if err := json.Unmarshal(msg.Data, &rawAlert); err != nil {
+				_ = msg.Ack()
+				return
+			}
+
+			tenantID, _ := rawAlert["tenant_id"].(string)
+			if tenantID == "" {
+				tenantID = "unknown_tenant"
+			}
+
+			payload := &WebhookPayload{
+				Event:     "alert.created",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+				TenantID:  tenantID,
+				Data:      rawAlert,
+			}
+
+			customerURL := os.Getenv("CUSTOMER_WEBHOOK_URL")
+			secretKey := os.Getenv("CUSTOMER_WEBHOOK_SECRET")
+			if customerURL != "" && secretKey != "" {
+				go func() {
+					_ = s.dispatcher.DispatchWithRetry(context.Background(), customerURL, secretKey, payload)
+				}()
+			}
+
+			_ = msg.Ack()
+		}, nats.Durable("webhooks-dispatcher-worker"), nats.ManualAck())
+
+		if err == nil {
+			log.Info().Msg("[Webhooks] Subscribed to NATS alerts.* and active")
+			defer sub.Unsubscribe()
+		}
+	} else {
+		log.Warn().Msg("[Webhooks] Standalone loop ready (NATS not bound)")
+	}
+
 	<-ctx.Done()
-	_ = sub.Unsubscribe()
 	return nil
 }
 
@@ -116,6 +215,11 @@ func main() {
 	<-sigChan
 	log.Info().Msg("[Webhooks-Shutdown] Gracefully terminating Webhook Service...")
 	cancel()
+	if svc.httpServer != nil {
+		shutdownCtx, sCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer sCancel()
+		svc.httpServer.Shutdown(shutdownCtx)
+	}
 	if svc.nc != nil {
 		svc.nc.Drain()
 	}
