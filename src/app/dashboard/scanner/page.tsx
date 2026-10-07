@@ -1068,7 +1068,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
             <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
               <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                 <Globe className="h-4 w-4 text-[var(--sd-pine)]" />
-                External Attack Surface Management (Shodan &amp; HIBP) · Sample overview
+                External Attack Surface Management (Shodan &amp; HIBP)
               </h3>
               <p className="text-[13px] text-[var(--sd-text-muted)]">
                 Inspect public internet perimeter exposure, open ports, and corporate credential breach disclosures.
@@ -1078,20 +1078,20 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-[13px] font-medium text-[var(--sd-text)]">Shodan Perimeter Inspection</span>
-                    <span className="text-[11px] font-mono text-[var(--sd-pine-bright)]">24 Hosts Monitored</span>
+                    <span className="text-[11px] font-mono text-[var(--sd-text-muted)] bg-[var(--sd-surface)] px-2 py-0.5 rounded border border-[var(--sd-border)]">Not Configured</span>
                   </div>
                   <p className="text-[13px] text-[var(--sd-text-muted)]">
-                    Detected Ports: <code className="text-[var(--sd-text)] font-medium">80, 443, 22 (SSH Restrict)</code>. No unauthorized RDP (3389) or Elasticsearch (9200) exposed to WAN.
+                    No active perimeter monitoring. Add <code className="text-[var(--sd-text)] font-mono text-xs">SHODAN_API_KEY</code> to your environment file to inspect public internet exposure and open ports.
                   </p>
                 </div>
 
                 <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <span className="text-[13px] font-medium text-[var(--sd-text)]">HaveIBeenPwned Domain Check</span>
-                    <span className="text-[11px] font-mono text-[var(--sd-warning)]">1 Domain Flagged</span>
+                    <span className="text-[11px] font-mono text-[var(--sd-text-muted)] bg-[var(--sd-surface)] px-2 py-0.5 rounded border border-[var(--sd-border)]">Not Configured</span>
                   </div>
                   <p className="text-[13px] text-[var(--sd-text-muted)]">
-                    0 active corporate credentials leaked in paste sites within the last 30 days. Forced TOTP MFA enabled on all IAM accounts.
+                    No active domain breach monitoring. Add <code className="text-[var(--sd-text)] font-mono text-xs">HIBP_API_KEY</code> to your environment file to inspect corporate credential breach disclosures.
                   </p>
                 </div>
               </div>

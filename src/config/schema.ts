@@ -45,6 +45,10 @@ export const RawEnvironmentSchema = z.object({
   SENTRY_DSN: z.string().optional().or(z.literal("")),
   NEXT_PUBLIC_SENTRY_DSN: z.string().optional().or(z.literal("")),
 
+  // External Attack Surface & Threat Intelligence (Optional)
+  SHODAN_API_KEY: z.string().optional(),
+  HIBP_API_KEY: z.string().optional(),
+
   // SaaS & Billing
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
