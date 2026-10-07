@@ -6,6 +6,7 @@ export const revalidate = 0;
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
 import { getActiveDetectionRules, toggleDetectionRule } from "@/lib/detection/engine";
+import { getYaraRules } from "@/lib/detection/yara/store";
 import { query } from "@/lib/db";
 import {
   getThreatAlertsForUser,
@@ -353,6 +354,27 @@ export async function GET(req: NextRequest) {
       events_per_minute: liveEventRate,
     };
 
+    let liveYaraRules = YARA_RULES;
+    try {
+      const dynamicYara = await getYaraRules(session.tenantId);
+      if (dynamicYara && dynamicYara.length > 0) {
+        liveYaraRules = dynamicYara.map((r) => ({
+          id: r.rule_id,
+          name: r.name,
+          category: r.category,
+          severity: r.severity.toUpperCase(),
+          matches_today: r.matches_today || 0,
+          status: r.enabled ? "ACTIVE" : "DISABLED",
+          target: r.target,
+          description: r.description,
+          raw_content: r.raw_content,
+          is_system: r.is_system,
+        }));
+      }
+    } catch {
+      // Non-fatal
+    }
+
     return NextResponse.json({
       status: "ok",
       engine: goThreatState ? "go-threat-service" : "typescript-in-memory",
@@ -364,7 +386,7 @@ export async function GET(req: NextRequest) {
         : null,
       tenantId: session.tenantId,
       detection_rules: engineRules,
-      yara_rules: goThreatState?.yara_rules || YARA_RULES,
+      yara_rules: liveYaraRules.length > 0 ? liveYaraRules : (goThreatState?.yara_rules || YARA_RULES),
       sigma_rules: goThreatState?.sigma_rules || SIGMA_RULES,
       anomaly_baselines: goThreatState?.anomaly_baselines || anomalyBaselines,
       ingest_telemetry: mergedTelemetry,
