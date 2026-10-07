@@ -36,11 +36,20 @@ export async function POST(req: NextRequest) {
     let hostname: string = "UNKNOWN-HOST";
 
     try {
-      const { rows } = await query<{ tenant_id: string; hostname: string }>(
-        "SELECT tenant_id, hostname FROM endpoint_agents WHERE id = $1 LIMIT 1",
+      const { rows } = await query<{ tenant_id: string; hostname: string; status: string }>(
+        "SELECT tenant_id, hostname, status FROM endpoint_agents WHERE id = $1 LIMIT 1",
         [agentId]
       );
       if (rows.length > 0) {
+        if (rows[0].status === "disconnected") {
+          return NextResponse.json({
+            success: true,
+            ingested: 0,
+            status: "disconnected",
+            message: "Endpoint is disconnected. Telemetry dropped.",
+            detections: [],
+          });
+        }
         tenantId = rows[0].tenant_id;
         hostname = rows[0].hostname;
       }
@@ -51,6 +60,15 @@ export async function POST(req: NextRequest) {
     if (!tenantId) {
       const agent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
       if (agent) {
+        if (agent.status === "disconnected") {
+          return NextResponse.json({
+            success: true,
+            ingested: 0,
+            status: "disconnected",
+            message: "Endpoint is disconnected. Telemetry dropped.",
+            detections: [],
+          });
+        }
         tenantId = agent.tenant_id;
         hostname = agent.hostname;
       }

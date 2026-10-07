@@ -47,6 +47,9 @@ export async function getLiveFleetAgents(
       ).catch(() => {});
     }
 
+    const isStale = msSinceHeartbeat > 8000;
+    const isOfflineOrStale = computedStatus === "disconnected" || isTimedOut || isStale;
+
     const cleanIp = normalizeEndpointIp(row.ip_address) || "Unknown";
 
     return {
@@ -57,9 +60,9 @@ export async function getLiveFleetAgents(
       os_type: (row.os_type || (row.os_info ? String(row.os_info).split(" ")[0].toLowerCase() : "linux")) as import("./fleet").OsType,
       agent_version: String(row.agent_version || "0.4.2"),
       status: computedStatus,
-      cpu_usage: isTimedOut ? 0 : Number(row.cpu_usage || 0),
-      memory_usage: isTimedOut ? 0 : Number(row.memory_usage || 0),
-      eps: isTimedOut ? 0 : Number(row.eps || 0),
+      cpu_usage: isOfflineOrStale ? 0 : Number(row.cpu_usage || 0),
+      memory_usage: isOfflineOrStale ? 0 : Number(row.memory_usage || 0),
+      eps: isOfflineOrStale ? 0 : Number(row.eps || 0),
       kill_switch_active: Boolean(row.kill_switch_active),
       safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
       last_heartbeat: lastSeenDate.toISOString(),

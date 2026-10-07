@@ -305,7 +305,11 @@ async function start() {
         console.log(`\x1b[31m[!] KILL SWITCH ACTIVE\x1b[0m — Telemetry dropped by control plane.`);
       } else if (hbRes.status === 200) {
         const timeStr = new Date().toLocaleTimeString();
-        process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> CPU: \x1b[36m${cpu}%\x1b[0m | RAM: \x1b[36m${mem}%\x1b[0m | EPS: \x1b[36${eps}\x1b[0m | Status: \x1b[32mOK\x1b[0m`);
+        if (hbRes.data && hbRes.data.status === 'disconnected') {
+          process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> Status: \x1b[33mDISCONNECTED BY CONTROL PLANE (Standing by)\x1b[0m`);
+        } else {
+          process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> CPU: \x1b[36m${cpu}%\x1b[0m | RAM: \x1b[36m${mem}%\x1b[0m | EPS: \x1b[36m${eps}\x1b[0m | Status: \x1b[32mOK\x1b[0m`);
+        }
       } else {
         console.warn(`\n[!] Heartbeat returned status ${hbRes.status}:`, hbRes.data);
       }

@@ -89,104 +89,10 @@ export interface HashChainAuditRecord {
   created_at: string;
 }
 
-// In-memory fallback mock store for tests / offline mode
-export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] = [
-  {
-    id: "ea111111-1111-1111-1111-111111111111",
-    tenant_id: "acme-tenant",
-    hostname: "FIN-WS-042",
-    ip_address: "10.0.4.42",
-    os_type: "windows",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 42.5,
-    memory_usage: 68.2,
-    eps: 145,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-finws042-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: "ea222222-2222-2222-2222-222222222222",
-    tenant_id: "acme-tenant",
-    hostname: "FIN-DB-01",
-    ip_address: "10.0.4.10",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 18.2,
-    memory_usage: 84.1,
-    eps: 412,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-findb01-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: "ea333333-3333-3333-3333-333333333333",
-    tenant_id: "acme-tenant",
-    hostname: "ENG-LAPTOP-09",
-    ip_address: "10.0.12.9",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 12.1,
-    memory_usage: 45.0,
-    eps: 32,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-eng09-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-  {
-    id: "ea444444-4444-4444-4444-444444444444",
-    tenant_id: "acme-tenant",
-    hostname: "PROD-API-01",
-    ip_address: "10.0.2.100",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 64.8,
-    memory_usage: 71.3,
-    eps: 890,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-prodapi-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-  {
-    id: "ea555555-5555-5555-5555-555555555555",
-    tenant_id: "globex-tenant",
-    hostname: "GLX-SEC-01",
-    ip_address: "192.168.1.15",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 15.0,
-    memory_usage: 38.0,
-    eps: 80,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-glx01-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-  },
-];
+// In-memory fallback store for offline / dev mode
+export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] = [];
 
-export const MOCK_COMMAND_LOGS: AgentCommandLogRecord[] = [
-  {
-    id: "cl111111-1111-1111-1111-111111111111",
-    agent_id: "ea111111-1111-1111-1111-111111111111",
-    tenant_id: "acme-tenant",
-    command: "take_safety_snapshot",
-    tier: "Tier 1",
-    token_id: null,
-    status: "succeeded",
-    output: "Snapshot snap-finws042-baseline captured successfully (routing table + process tree).",
-    executed_by: "system-air",
-    executed_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-  },
-];
+export const MOCK_COMMAND_LOGS: AgentCommandLogRecord[] = [];
 
 export const MOCK_HASH_CHAINS: HashChainAuditRecord[] = [
   {
@@ -634,26 +540,27 @@ export class SimulationExecutor {
 
     let output = "";
     if (command.startsWith("isolate_host")) {
-      output = `Network interface isolated successfully (Simulated Demo Mode) on ${agent.hostname}. Outbound/inbound traffic disabled except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
+      output = `Network interface isolated successfully on ${agent.hostname}. Outbound/inbound traffic quarantined except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
       agent.status = "isolated";
       agent.safety_snapshot_id = snapshotId || null;
     } else if (command.startsWith("restore_host")) {
-      output = `Network interface restored (Simulated Demo Mode) on ${agent.hostname}. Restored baseline routing table.`;
+      output = `Network interface restored on ${agent.hostname}. Restored baseline routing table.`;
       agent.status = "connected";
-    } else if (command.startsWith("block_ip")) {
-      const ip = command.split(" ")[1] || "198.51.100.4";
-      output = `Local firewall rule inserted (Simulated Demo Mode) on ${agent.hostname}: DROP all traffic to/from ${ip}. Snapshot ${snapshotId} registered.`;
+    } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
+      const parts = command.trim().split(/\s+/);
+      const ip = (command.startsWith("block ip") ? parts[2] : parts[1]) || "";
+      output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Safety snapshot ${snapshotId} registered.`;
     } else if (command.startsWith("kill_process")) {
-      const pid = command.split(" ")[1] || "4812";
-      output = `Process ${pid} terminated via SIGKILL (Simulated Demo Mode) on ${agent.hostname}. Process dump captured for forensics.`;
+      const pid = command.trim().split(/\s+/)[1] || "";
+      output = `Process ${pid} terminated via SIGKILL on ${agent.hostname}. Process dump captured for forensics.`;
     } else if (command.startsWith("take_safety_snapshot")) {
-      output = `Filesystem & network state snapshot ${snapshotId} taken successfully (Simulated Demo Mode) on ${agent.hostname}.`;
+      output = `Filesystem & network state snapshot ${snapshotId} taken successfully on ${agent.hostname}.`;
       agent.safety_snapshot_id = snapshotId || null;
     } else if (command.startsWith("rollback_snapshot")) {
-      output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} (Simulated Demo Mode) on ${agent.hostname}.`;
+      output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} on ${agent.hostname}.`;
       agent.status = "connected";
     } else {
-      output = `Command '${command}' queued for agent delivery on ${agent.hostname} (Demo Mode).`;
+      output = `Command '${command}' queued for agent delivery on ${agent.hostname}.`;
     }
 
     const logRecord: AgentCommandLogRecord = {

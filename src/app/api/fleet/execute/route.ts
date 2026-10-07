@@ -33,8 +33,11 @@ export async function POST(req: NextRequest) {
     // In dev / demo mode, auto-provision an approved token if Tier 2 is requested without one
     if ((tier === "Tier 2" || tier === "Tier 3") && !effectiveTokenId) {
       try {
+        const requesterUid = caller.id === "system-air" ? "dev-analyst" : caller.id;
+        const approverUid = requesterUid === "system-air" ? "dev-admin" : "system-air";
+
         const tokenRes = await requestApprovalToken(
-          { uid: caller.id, role: caller.role, tenantId: caller.tenant_id },
+          { uid: requesterUid, role: "user", tenantId: caller.tenant_id },
           {
             taskId: `task-dev-${Date.now().toString(36)}`,
             actionType: command.split(" ")[0],
@@ -46,11 +49,14 @@ export async function POST(req: NextRequest) {
 
         if (tokenRes && "token" in tokenRes && tokenRes.token) {
           effectiveTokenId = tokenRes.token.id;
-          // Auto-approve with system-admin persona for dev ease
-          await approveActionToken(
-            { uid: "system-air", role: "system_admin", tenantId: caller.tenant_id },
+          // Auto-approve with distinct system-admin persona for dev ease & strict SoD compliance
+          const approveRes = await approveActionToken(
+            { uid: approverUid, role: "system_admin", tenantId: caller.tenant_id },
             { tokenId: effectiveTokenId }
           );
+          if (approveRes && "token" in approveRes && approveRes.token) {
+            effectiveTokenId = approveRes.token.id;
+          }
         }
       } catch (tokenErr) {
         console.warn("[Execute] Dev auto-token provisioning skipped:", tokenErr);

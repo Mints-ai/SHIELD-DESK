@@ -35,13 +35,14 @@ export async function POST(req: NextRequest) {
         status: string;
       }>(
         `UPDATE endpoint_agents
-         SET last_seen_at = now(),
-             cpu_usage = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($1, cpu_usage) END,
-             memory_usage = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($2, memory_usage) END,
-             eps = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($3, eps) END,
+         SET last_seen_at = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN last_seen_at ELSE now() END,
+             cpu_usage = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN 0 ELSE COALESCE($1, cpu_usage) END,
+             memory_usage = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN 0 ELSE COALESCE($2, memory_usage) END,
+             eps = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN 0 ELSE COALESCE($3, eps) END,
              ip_address = COALESCE($5, ip_address),
              status = CASE
                WHEN status = 'isolated' THEN 'isolated'
+               WHEN status = 'disconnected' THEN 'disconnected'
                WHEN $6::text = 'disconnected' THEN 'disconnected'
                ELSE 'connected'
              END
@@ -89,11 +90,19 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      agent.last_heartbeat = new Date().toISOString();
-      if (ipAddress) agent.ip_address = ipAddress;
-      if (cpuUsage !== null) agent.cpu_usage = cpuUsage;
-      if (memoryUsage !== null) agent.memory_usage = memoryUsage;
-      if (eps !== null) agent.eps = eps;
+      if (agent.status === "disconnected" || requestedStatus === "disconnected") {
+        agent.status = "disconnected";
+        agent.cpu_usage = 0;
+        agent.memory_usage = 0;
+        agent.eps = 0;
+      } else {
+        agent.last_heartbeat = new Date().toISOString();
+        if (ipAddress) agent.ip_address = ipAddress;
+        if (cpuUsage !== null) agent.cpu_usage = cpuUsage;
+        if (memoryUsage !== null) agent.memory_usage = memoryUsage;
+        if (eps !== null) agent.eps = eps;
+        agent.status = "connected";
+      }
 
       MetricsRegistry.increment("shielddesk_agent_heartbeats_total");
       MetricsRegistry.observe("shielddesk_agent_heartbeat_processing_ms", Date.now() - startedAt);

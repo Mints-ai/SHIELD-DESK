@@ -54,11 +54,12 @@ interface EnrollResult {
 // Maps each command value to its required autonomy tier
 const COMMAND_TIERS: Record<string, "Tier 1" | "Tier 2"> = {
   take_safety_snapshot: "Tier 1",
-  "block_ip 198.51.100.4": "Tier 1",
+  block_ip: "Tier 1",
   isolate_host: "Tier 2",
   restore_host: "Tier 2",
-  "kill_process 4812": "Tier 2",
+  kill_process: "Tier 2",
   rollback_snapshot: "Tier 2",
+  custom: "Tier 1",
 };
 
 export default function FleetPage() {
@@ -73,7 +74,10 @@ export default function FleetPage() {
   const [loading, setLoading] = useState(true);
   const [isStreaming, setIsStreaming] = useState(true);
   const [lastHeartbeatTime, setLastHeartbeatTime] = useState<Date>(new Date());
-  const [commandInput, setCommandInput] = useState("take_safety_snapshot");
+  const [selectedAction, setSelectedAction] = useState<string>("take_safety_snapshot");
+  const [targetIp, setTargetIp] = useState<string>("");
+  const [targetPid, setTargetPid] = useState<string>("");
+  const [customCommand, setCustomCommand] = useState<string>("");
   const [selectedTier, setSelectedTier] = useState<"Tier 1" | "Tier 2">("Tier 1");
   const [tokenIdInput, setTokenIdInput] = useState("");
   const [commandLogs, setCommandLogs] = useState<CommandLogEntry[]>([]);
@@ -245,13 +249,46 @@ export default function FleetPage() {
     e.preventDefault();
     if (!selectedAgent || isExecuting) return;
 
+    let cmd = selectedAction;
+    if (selectedAction === "block_ip") {
+      const cleanIp = targetIp.trim();
+      if (!cleanIp) {
+        setDispatchFeedback({
+          type: "error",
+          message: "Please specify an IP address to block (e.g. 203.0.113.15 or 10.0.0.1).",
+        });
+        return;
+      }
+      cmd = `block_ip ${cleanIp}`;
+    } else if (selectedAction === "kill_process") {
+      const cleanPid = targetPid.trim();
+      if (!cleanPid) {
+        setDispatchFeedback({
+          type: "error",
+          message: "Please enter a Process ID (PID) to terminate.",
+        });
+        return;
+      }
+      cmd = `kill_process ${cleanPid}`;
+    } else if (selectedAction === "custom") {
+      const cleanCmd = customCommand.trim();
+      if (!cleanCmd) {
+        setDispatchFeedback({
+          type: "error",
+          message: "Please enter a custom command to execute.",
+        });
+        return;
+      }
+      cmd = cleanCmd;
+    }
+
     setIsExecuting(true);
     setDispatchFeedback(null);
     const newLogId = crypto.randomUUID();
     const newLog: CommandLogEntry = {
       id: newLogId,
       time: new Date().toLocaleTimeString(),
-      command: commandInput,
+      command: cmd,
       tier: selectedTier,
       status: "executing",
       output: `Dispatching ${selectedTier} instruction to ${selectedAgent.hostname}...`,
@@ -269,7 +306,7 @@ export default function FleetPage() {
         },
         body: JSON.stringify({
           agentId: selectedAgent.id,
-          command: commandInput,
+          command: cmd,
           tier: selectedTier,
           approvalTokenId:
             selectedTier === "Tier 2" ? tokenIdInput || undefined : undefined,
@@ -303,7 +340,7 @@ export default function FleetPage() {
       if (res.ok && data.success) {
         setDispatchFeedback({
           type: "success",
-          message: `Successfully executed ${commandInput} on ${selectedAgent.hostname}. Live telemetry updated.`,
+          message: `Successfully executed ${cmd} on ${selectedAgent.hostname}. Live telemetry updated.`,
         });
       } else {
         setDispatchFeedback({
@@ -324,6 +361,24 @@ export default function FleetPage() {
       setDispatchFeedback({ type: "error", message: msg });
     } finally {
       setIsExecuting(false);
+    }
+  };
+
+  // Clear command audit logs
+  const handleClearLogs = async () => {
+    if (!confirm("Are you sure you want to clear the audit logs?")) return;
+    try {
+      const url =
+        filterAgentId !== "all"
+          ? `/api/fleet/logs?agentId=${filterAgentId}`
+          : "/api/fleet/logs";
+      await fetch(url, {
+        method: "DELETE",
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
+      fetchLogs();
+    } catch (err) {
+      console.error("Failed to clear audit logs:", err);
     }
   };
 
@@ -365,19 +420,16 @@ export default function FleetPage() {
   // Reconnect/refresh a disconnected agent
   const handleReconnectAgent = async (agentId: string) => {
     setReconnectingAgentId(agentId);
-    // Optimistically update last_heartbeat to now so the card immediately
-    // stops showing as disconnected while the API call is in flight.
-    const optimisticNow = new Date().toISOString();
     setAgents((prev) =>
       prev.map((a) =>
         a.id === agentId
-          ? { ...a, status: "connected", last_heartbeat: optimisticNow, cpu_usage: a.cpu_usage || 12, memory_usage: a.memory_usage || 65, eps: a.eps || 18 }
+          ? { ...a, status: "connected", cpu_usage: 0, memory_usage: 0, eps: 0 }
           : a
       )
     );
     setSelectedAgent((prev) =>
       prev?.id === agentId
-        ? { ...prev, status: "connected", last_heartbeat: optimisticNow, cpu_usage: prev.cpu_usage || 12, memory_usage: prev.memory_usage || 65, eps: prev.eps || 18 }
+        ? { ...prev, status: "connected", cpu_usage: 0, memory_usage: 0, eps: 0 }
         : prev
     );
     try {
@@ -528,7 +580,7 @@ export default function FleetPage() {
                   {killSwitchEngaged
                     ? "TELEMETRY SEVERED"
                     : isStreaming
-                    ? "LIVE"
+                    ? "STREAM ACTIVE"
                     : "STREAM PAUSED"}
                 </span>
               </div>
@@ -919,9 +971,9 @@ export default function FleetPage() {
                   ? agent.ip_address
                   : "Unavailable";
 
-              const cpuVal = isDisconnected ? 0 : agent.cpu_usage;
-              const memVal = isDisconnected ? 0 : agent.memory_usage;
-              const epsVal = isDisconnected ? 0 : agent.eps;
+              const cpuVal = isDisconnected || isStale ? 0 : agent.cpu_usage;
+              const memVal = isDisconnected || isStale ? 0 : agent.memory_usage;
+              const epsVal = isDisconnected || isStale ? 0 : agent.eps;
 
               return (
                 <div
@@ -990,7 +1042,7 @@ export default function FleetPage() {
                     </div>
                     <div className="flex justify-between items-center text-[10px] pt-0.5 border-t border-[var(--sd-border)]/40">
                       <span className="text-[var(--sd-text-dim)]">
-                        Last heartbeat:
+                        {isDisconnected ? "State:" : "Last heartbeat:"}
                       </span>
                       <span
                         className={cn(
@@ -1002,7 +1054,9 @@ export default function FleetPage() {
                             : "text-emerald-400"
                         )}
                       >
-                        {secondsAgo < 10
+                        {isDisconnected
+                          ? "Offline / Severed"
+                          : secondsAgo < 10
                           ? "just now"
                           : secondsAgo < 60
                           ? `${secondsAgo}s ago`
@@ -1170,12 +1224,11 @@ export default function FleetPage() {
                     Select Endpoint Command
                   </label>
                   <select
-                    value={commandInput}
+                    value={selectedAction}
                     onChange={(e) => {
-                      const cmd = e.target.value;
-                      setCommandInput(cmd);
-                      // Auto-set the correct tier for the selected command
-                      const requiredTier = COMMAND_TIERS[cmd];
+                      const action = e.target.value;
+                      setSelectedAction(action);
+                      const requiredTier = COMMAND_TIERS[action];
                       if (requiredTier) setSelectedTier(requiredTier);
                     }}
                     className="sd-input w-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2.5 text-[13px] text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
@@ -1183,8 +1236,8 @@ export default function FleetPage() {
                     <option value="take_safety_snapshot">
                       take_safety_snapshot — Capture routing + process baseline [Tier 1 Auto]
                     </option>
-                    <option value="block_ip 198.51.100.4">
-                      block_ip — Block suspicious C2 IP address [Tier 1 Auto]
+                    <option value="block_ip">
+                      block_ip — Block specific IP address via local firewall [Tier 1 Auto]
                     </option>
                     <option value="isolate_host">
                       isolate_host — Quarantine network interface [Tier 2 Gated]
@@ -1192,14 +1245,87 @@ export default function FleetPage() {
                     <option value="restore_host">
                       restore_host — Restore network routing [Tier 2 Gated]
                     </option>
-                    <option value="kill_process 4812">
+                    <option value="kill_process">
                       kill_process — Terminate suspicious executable [Tier 2 Gated]
                     </option>
                     <option value="rollback_snapshot">
                       rollback_snapshot — Revert host to safety snapshot [Tier 2 Gated]
                     </option>
+                    <option value="custom">
+                      custom — Run custom endpoint instruction
+                    </option>
                   </select>
                 </div>
+
+                {selectedAction === "block_ip" && (
+                  <div className="space-y-2 p-3.5 rounded-xl bg-[var(--sd-panel-raised)]/80 border border-[var(--sd-border)]">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-medium text-[var(--sd-pine)] flex items-center gap-1.5">
+                        <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
+                        Target IP Address to Block <span className="text-red-400">*</span>
+                      </label>
+                      {selectedAgent.ip_address && (
+                        <button
+                          type="button"
+                          onClick={() => setTargetIp(selectedAgent.ip_address)}
+                          className="text-[10px] font-mono text-[var(--sd-pine)] hover:underline opacity-80 cursor-pointer"
+                        >
+                          Fill Host IP ({selectedAgent.ip_address})
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Enter target IP, e.g. 203.0.113.15 or 10.0.0.1"
+                      value={targetIp}
+                      onChange={(e) => setTargetIp(e.target.value)}
+                      className="sd-input w-full bg-[var(--sd-panel)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
+                      autoFocus
+                    />
+                    <div className="flex items-center justify-between text-[11px] text-[var(--sd-text-muted)] pt-0.5">
+                      <span>Command to dispatch:</span>
+                      <code className="text-emerald-400 font-mono text-[11px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                        block_ip {targetIp.trim() || "<ip-address>"}
+                      </code>
+                    </div>
+                  </div>
+                )}
+
+                {selectedAction === "kill_process" && (
+                  <div className="space-y-2 p-3.5 rounded-xl bg-[var(--sd-panel-raised)]/80 border border-[var(--sd-border)]">
+                    <label className="text-[11px] font-medium text-[var(--sd-pine)] block">
+                      Target Process ID (PID) <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 1240 or 4096"
+                      value={targetPid}
+                      onChange={(e) => setTargetPid(e.target.value)}
+                      className="sd-input w-full bg-[var(--sd-panel)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
+                    />
+                    <div className="flex items-center justify-between text-[11px] text-[var(--sd-text-muted)] pt-0.5">
+                      <span>Command to dispatch:</span>
+                      <code className="text-emerald-400 font-mono text-[11px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                        kill_process {targetPid.trim() || "<pid>"}
+                      </code>
+                    </div>
+                  </div>
+                )}
+
+                {selectedAction === "custom" && (
+                  <div className="space-y-2 p-3.5 rounded-xl bg-[var(--sd-panel-raised)]/80 border border-[var(--sd-border)]">
+                    <label className="text-[11px] font-medium text-[var(--sd-pine)] block">
+                      Custom Instruction <span className="text-red-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. block_ip 10.0.0.5 or flush_routing"
+                      value={customCommand}
+                      onChange={(e) => setCustomCommand(e.target.value)}
+                      className="sd-input w-full bg-[var(--sd-panel)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
+                    />
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -1229,7 +1355,7 @@ export default function FleetPage() {
                       type="text"
                       placeholder={
                         selectedTier === "Tier 2"
-                          ? "Auto-signed or tok11111-..."
+                          ? "Auto-signed or enter token ID"
                           : "N/A (Tier 1)"
                       }
                       value={tokenIdInput}
@@ -1275,6 +1401,14 @@ export default function FleetPage() {
                   >
                     {filterAgentId === "all" ? "Filter: This Host" : "Show All Hosts"}
                   </button>
+                  {commandLogs.length > 0 && (
+                    <button
+                      onClick={handleClearLogs}
+                      className="text-[11px] font-mono text-red-400/80 hover:text-red-300 transition underline cursor-pointer"
+                    >
+                      Clear Logs
+                    </button>
+                  )}
                   <span className="text-[11px] text-[var(--sd-text-muted)] font-mono hidden sm:inline">
                     &bull; SHA-256 Chained
                   </span>
