@@ -3,7 +3,7 @@ import { query } from "@/lib/db";
 import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
 import { evaluateTelemetryBatch } from "@/lib/detection/engine";
-import { recordSudoExecution, recordNetworkEgress } from "@/lib/alerts/threatAlertStore";
+import { recordSudoExecution, recordNetworkEgress, scrubTelemetryPayload } from "@/lib/alerts/threatAlertStore";
 
 interface TelemetryEventPayload {
   eventType: string;
@@ -63,7 +63,16 @@ export async function POST(req: NextRequest) {
     // 1. Insert batch into endpoint_telemetry
     try {
       for (const evt of events) {
-        const payloadStr = JSON.stringify(evt.payload || {});
+        let cleanedPayload = evt.payload;
+        if (evt.payload && typeof evt.payload === "object") {
+          const stringRecord: Record<string, string> = {};
+          for (const [k, v] of Object.entries(evt.payload)) {
+            stringRecord[k] = typeof v === "string" ? v : JSON.stringify(v);
+          }
+          const { cleaned } = scrubTelemetryPayload(stringRecord);
+          cleanedPayload = cleaned;
+        }
+        const payloadStr = JSON.stringify(cleanedPayload || {});
         if (
           payloadStr.toLowerCase().includes("sudo") ||
           (typeof evt.eventType === "string" && evt.eventType.toLowerCase().includes("sudo"))

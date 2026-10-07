@@ -420,6 +420,19 @@ func main() {
 			"pii_categories":     cat,
 		})
 	})
+	httpMux.HandleFunc("/api/ingest/reset", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ResetPIIStats()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":            true,
+			"pii_redacted_today": 0,
+			"pii_categories":     PIICategoryStats{},
+		})
+	})
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf(":%s", httpPort),

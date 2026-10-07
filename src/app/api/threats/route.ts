@@ -323,18 +323,54 @@ export async function GET(req: NextRequest) {
       // Go Ingest service offline, fallback to local in-memory metrics
     }
 
-    const localPii = getLivePIIMetrics();
-    const livePiiTotal = (liveIngestStats?.pii_redacted_today !== undefined && liveIngestStats.pii_redacted_today > 0)
-      ? liveIngestStats.pii_redacted_today
-      : localPii.totalRedacted;
-
-    const livePiiCategories = {
-      jwt_tokens: (liveIngestStats?.pii_categories?.jwt_tokens ?? 0) + localPii.categories.jwt_tokens,
-      passwords_and_secrets: (liveIngestStats?.pii_categories?.passwords_and_secrets ?? 0) + localPii.categories.passwords_and_secrets,
-      credit_cards: (liveIngestStats?.pii_categories?.credit_cards ?? 0) + localPii.categories.credit_cards,
-      ssn_and_national_ids: (liveIngestStats?.pii_categories?.ssn_and_national_ids ?? 0) + localPii.categories.ssn_and_national_ids,
-      emails: (liveIngestStats?.pii_categories?.emails ?? 0) + localPii.categories.emails,
+    let dbPiiCategories = {
+      jwt_tokens: 0,
+      passwords_and_secrets: 0,
+      credit_cards: 0,
+      ssn_and_national_ids: 0,
+      emails: 0,
     };
+    try {
+      const piiDbRes = await query<{
+        jwt_count: string;
+        pass_count: string;
+        cc_count: string;
+        email_count: string;
+      }>(
+        `SELECT 
+          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_JWT]%') as jwt_count,
+          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_SENSITIVE_KEY]%' OR payload::text ILIKE '%[REDACTED_BEARER]%') as pass_count,
+          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_CREDIT_CARD]%') as cc_count,
+          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_EMAIL]%') as email_count
+         FROM endpoint_telemetry
+         WHERE tenant_id = $1`,
+        [session.tenantId]
+      );
+      if (piiDbRes.rows.length > 0) {
+        dbPiiCategories.jwt_tokens = parseInt(piiDbRes.rows[0].jwt_count || "0", 10) || 0;
+        dbPiiCategories.passwords_and_secrets = parseInt(piiDbRes.rows[0].pass_count || "0", 10) || 0;
+        dbPiiCategories.credit_cards = parseInt(piiDbRes.rows[0].cc_count || "0", 10) || 0;
+        dbPiiCategories.emails = parseInt(piiDbRes.rows[0].email_count || "0", 10) || 0;
+      }
+    } catch {
+      // Telemetry table query fallback
+    }
+
+    const localPii = getLivePIIMetrics();
+    const livePiiCategories = {
+      jwt_tokens: (liveIngestStats?.pii_categories?.jwt_tokens ?? 0) + localPii.categories.jwt_tokens + dbPiiCategories.jwt_tokens,
+      passwords_and_secrets: (liveIngestStats?.pii_categories?.passwords_and_secrets ?? 0) + localPii.categories.passwords_and_secrets + dbPiiCategories.passwords_and_secrets,
+      credit_cards: (liveIngestStats?.pii_categories?.credit_cards ?? 0) + localPii.categories.credit_cards + dbPiiCategories.credit_cards,
+      ssn_and_national_ids: (liveIngestStats?.pii_categories?.ssn_and_national_ids ?? 0) + localPii.categories.ssn_and_national_ids + dbPiiCategories.ssn_and_national_ids,
+      emails: (liveIngestStats?.pii_categories?.emails ?? 0) + localPii.categories.emails + dbPiiCategories.emails,
+    };
+
+    const livePiiTotal =
+      livePiiCategories.jwt_tokens +
+      livePiiCategories.passwords_and_secrets +
+      livePiiCategories.credit_cards +
+      livePiiCategories.ssn_and_national_ids +
+      livePiiCategories.emails;
 
     const liveAgentsTotal = (liveIngestStats?.active_agents_connected && liveIngestStats.active_agents_connected > 0)
       ? liveIngestStats.active_agents_connected
@@ -542,25 +578,6 @@ export async function POST(req: NextRequest) {
         // Go service offline fallback
       }
 
-      // Sync simulation with Go Ingest Service (increments live PII scrubbed count)
-      try {
-        const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8004";
-        await fetch(`${ingestServiceUrl}/api/ingest/simulate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(1000),
-        });
-      } catch {
-        // Go ingest service offline fallback
-      }
-
-      // Scrub synthetic credentials in-flight to simulate real telemetry cleaning
-      scrubTelemetryPayload({
-        auth_header: "Bearer sk-live-test-simulated-token-9921",
-        user_email: "analyst@acme.corp",
-        db_password: "TempPassword123!",
-      });
-
       return NextResponse.json({
         success: true,
         _demo_mode: true,
@@ -576,20 +593,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (action === "scrub_telemetry") {
-      const payload = body.payload || {
-        command: body.command || "curl -H 'Authorization: Bearer sk-live-secret-jwt-token-998877' https://api.corp",
-        user_email: body.email || "security.officer@shielddesk.corp",
-        password: body.password || "SuperSecretPassword123!",
-        cc_number: body.credit_card || "4111 2222 3333 4444",
-      };
+    if (action === "reset_pii" || action === "reset_pii_metrics") {
+      resetPIIMetrics();
 
-      const { cleaned, redactedCount, categories } = scrubTelemetryPayload(payload);
-
-      // Sync with Go Ingest if online
+      // Sync reset with Go Ingest service if running
       try {
         const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8004";
-        await fetch(`${ingestServiceUrl}/api/ingest/simulate`, {
+        await fetch(`${ingestServiceUrl}/api/ingest/reset`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           signal: AbortSignal.timeout(800),
@@ -600,9 +610,38 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        cleaned,
-        redactedCount,
-        categories,
+        message: "Live PII redaction metrics reset successfully.",
+        live_pii: getLivePIIMetrics(),
+        ingest_telemetry: {
+          ...BASELINE_INGEST_POLICY,
+          pii_redacted_today: 0,
+          pii_categories: {
+            jwt_tokens: 0,
+            passwords_and_secrets: 0,
+            credit_cards: 0,
+            ssn_and_national_ids: 0,
+            emails: 0,
+          },
+        },
+      });
+    }
+
+    if (action === "scrub_telemetry") {
+      if (body.payload && typeof body.payload === "object") {
+        const { cleaned, redactedCount, categories } = scrubTelemetryPayload(body.payload);
+        return NextResponse.json({
+          success: true,
+          cleaned,
+          redactedCount,
+          categories,
+          live_pii: getLivePIIMetrics(),
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        redactedCount: 0,
+        categories: {},
         live_pii: getLivePIIMetrics(),
       });
     }

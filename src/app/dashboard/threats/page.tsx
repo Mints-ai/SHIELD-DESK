@@ -431,23 +431,26 @@ export default function ThreatsDashboardPage() {
     }
   };
 
-  const [scrubbingLoading, setScrubbingLoading] = useState(false);
+  const [resettingPii, setResettingPii] = useState(false);
 
-  const handleScrubTestTelemetry = async () => {
-    setScrubbingLoading(true);
+  const handleResetPIIMetrics = async () => {
+    setResettingPii(true);
     try {
       const res = await fetch("/api/threats", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "scrub_telemetry" }),
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({ action: "reset_pii" }),
       });
       if (res.ok) {
         await fetchThreatData(true);
       }
     } catch (e) {
-      console.error("Failed to scrub test telemetry:", e);
+      console.error("Failed to reset PII metrics:", e);
     } finally {
-      setScrubbingLoading(false);
+      setResettingPii(false);
     }
   };
 
@@ -916,13 +919,13 @@ export default function ThreatsDashboardPage() {
                     gRPC Ingest Service &amp; PII Scrubbing
                   </h3>
                   <button
-                    onClick={handleScrubTestTelemetry}
-                    disabled={scrubbingLoading}
+                    onClick={handleResetPIIMetrics}
+                    disabled={resettingPii}
                     className="sd-button sd-button-secondary px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer flex items-center gap-1.5"
-                    title="Stream test payload with secrets to verify live regex redaction"
+                    title="Reset live PII redaction metrics"
                   >
-                    <EyeOff className="h-3 w-3 text-[var(--sd-pine-bright)]" />
-                    {scrubbingLoading ? "Scrubbing..." : "Scrub Test Event"}
+                    <RotateCcw className="h-3 w-3 text-[var(--sd-pine-bright)]" />
+                    {resettingPii ? "Resetting..." : "Reset"}
                   </button>
                 </div>
                 <p className="text-[13px] text-[var(--sd-text-muted)]">
