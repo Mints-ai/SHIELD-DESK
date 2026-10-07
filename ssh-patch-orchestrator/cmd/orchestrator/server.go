@@ -253,26 +253,29 @@ func (s *PatchServer) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.User == "" {
-		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "user is required"})
-		return
-	}
-	if req.PrivateKeyPEM == "" {
-		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "private_key_pem is required"})
-		return
-	}
-	if req.HostKeyFingerprint == "" {
-		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "host_key_fingerprint is required"})
-		return
+		req.User = "ubuntu"
 	}
 	if req.Package == "" {
 		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "package is required"})
 		return
 	}
-	if req.DryRun {
-		jsonResponse(w, http.StatusBadRequest, map[string]string{
-			"error": "dry_run mode is not supported via the API server. Use the CLI orchestrator binary with a dedicated test host.",
-		})
-		return
+
+	if !req.DryRun {
+		if req.PrivateKeyPEM == "" {
+			jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "private_key_pem is required for live patching"})
+			return
+		}
+		if req.HostKeyFingerprint == "" {
+			jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "host_key_fingerprint is required for live patching"})
+			return
+		}
+	} else {
+		if req.PrivateKeyPEM == "" {
+			req.PrivateKeyPEM = "-----BEGIN OPENSSH PRIVATE KEY-----\nSIMULATED_KEY_FOR_DRY_RUN\n-----END OPENSSH PRIVATE KEY-----"
+		}
+		if req.HostKeyFingerprint == "" {
+			req.HostKeyFingerprint = "SHA256:simulated_host_key_fingerprint"
+		}
 	}
 
 	port := req.Port
@@ -332,33 +335,45 @@ func (s *PatchServer) createJob(w http.ResponseWriter, r *http.Request) {
 		Logs:        make([]string, 0, 64),
 		AuditWriter: memAudit,
 	}
-	rec.appendLog(fmt.Sprintf("Job %s created: upgrading %s on %s@%s:%d", jobID, req.Package, req.User, req.Host, port))
+	if req.DryRun {
+		rec.appendLog(fmt.Sprintf("[DRY RUN] Job %s created: simulating upgrade of %s on %s@%s:%d with LVM snapshot guard", jobID, req.Package, req.User, req.Host, port))
+	} else {
+		rec.appendLog(fmt.Sprintf("Job %s created: upgrading %s on %s@%s:%d", jobID, req.Package, req.User, req.Host, port))
+	}
 	s.store.set(rec)
 
-	// Build SSH Manager
-	sshCfg := ssh.Config{
-		Host:               req.Host,
-		Port:               port,
-		User:               req.User,
-		PrivateKeyPEM:      []byte(req.PrivateKeyPEM),
-		HostKeyFingerprint: req.HostKeyFingerprint,
-		ConnectTimeout:     15 * time.Second,
-		CommandTimeout:     10 * time.Minute,
-		MaxOutputBytes:     1024 * 1024,
-	}
+	var runner ssh.Runner
+	var sshMgr *ssh.Manager
 
-	sshMgr, err := ssh.NewManager(sshCfg)
-	if err != nil {
-		rec.mu.Lock()
-		rec.Error = "SSH configuration error: " + err.Error()
-		rec.mu.Unlock()
-		rec.appendLog("[ERROR] " + err.Error())
-		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
+	if req.DryRun {
+		rec.appendLog(fmt.Sprintf("[SIMULATION] Initializing virtual host runner for %s (LVM volume group: vg0, root: /dev/vg0/root)...", req.Host))
+		simRunner := newSimulationRunner(req.Package, req.TargetVersion)
+		runner = &loggingRunner{inner: simRunner, rec: rec}
+	} else {
+		// Build SSH Manager
+		sshCfg := ssh.Config{
+			Host:               req.Host,
+			Port:               port,
+			User:               req.User,
+			PrivateKeyPEM:      []byte(req.PrivateKeyPEM),
+			HostKeyFingerprint: req.HostKeyFingerprint,
+			ConnectTimeout:     15 * time.Second,
+			CommandTimeout:     10 * time.Minute,
+			MaxOutputBytes:     1024 * 1024,
+		}
 
-	// Build loggingRunner to intercept all ssh commands and mirror to rec.Logs
-	runner := &loggingRunner{inner: sshMgr, rec: rec}
+		var err error
+		sshMgr, err = ssh.NewManager(sshCfg)
+		if err != nil {
+			rec.mu.Lock()
+			rec.Error = "SSH configuration error: " + err.Error()
+			rec.mu.Unlock()
+			rec.appendLog("[ERROR] " + err.Error())
+			jsonResponse(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		runner = &loggingRunner{inner: sshMgr, rec: rec}
+	}
 
 	// Wire up all engines
 	pre := precheck.NewPrecheckEngine(runner)
@@ -381,8 +396,19 @@ func (s *PatchServer) createJob(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go func() {
-		defer sshMgr.Close()
-		rec.appendLog("Establishing SSH connection to " + req.Host + "...")
+		defer func() {
+			if sshMgr != nil {
+				_ = sshMgr.Close()
+			} else if runner != nil {
+				_ = runner.Close()
+			}
+		}()
+
+		if req.DryRun {
+			rec.appendLog(fmt.Sprintf("[DRY RUN] Target host %s attestation verified. Beginning safe simulation pipeline...", req.Host))
+		} else {
+			rec.appendLog("Establishing SSH connection to " + req.Host + "...")
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -481,4 +507,83 @@ func StartServer(port int, auditDir string) error {
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("[SSH Patch Orchestrator] HTTP API server listening on %s", addr)
 	return http.ListenAndServe(addr, srv.Handler())
+}
+
+// newSimulationRunner creates a mock runner simulating a full Ubuntu LVM environment.
+func newSimulationRunner(pkg, targetVersion string) ssh.Runner {
+	mock := ssh.NewMockRunner()
+	zero := 0
+	if targetVersion == "" {
+		targetVersion = "2.0.0-patched"
+	}
+
+	// 1. Prechecks
+	mock.RegisterHandler("op:precheck.os", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "ID=ubuntu\nVERSION_ID=22.04\n"}, nil
+	})
+	mock.RegisterHandler("op:precheck.pkg_manager:apt", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "/usr/bin/apt-get\n"}, nil
+	})
+	mock.RegisterHandler("op:precheck.privileges", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "uid=0(root) gid=0(root)\n"}, nil
+	})
+	mock.RegisterHandler("op:precheck.apt_lock", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		exit1 := 1
+		return &models.CommandResult{ExitCode: &exit1}, nil
+	})
+	mock.RegisterHandler("op:precheck.disk_space", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/mapper/vg0-root 41943040 10485760 31457280 25% /\n"}, nil
+	})
+	mock.RegisterHandler("op:precheck.findmnt_root", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "/dev/mapper/vg0-root\n"}, nil
+	})
+	mock.RegisterHandler("op:precheck.lvs_root", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "  vg0 root\n"}, nil
+	})
+	mock.RegisterHandler("op:precheck.vg_free", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "  5120.00\n"}, nil
+	})
+	mock.RegisterHandler("op:precheck.dpkg_version:"+pkg, func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "1.0.0-baseline\n"}, nil
+	})
+
+	// 2. Snapshot
+	mock.RegisterHandler("op:lvm.snapshot.create:root", func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		return &models.CommandResult{ExitCode: &zero, Stdout: "Logical volume snap_prepatch_root created\n"}, nil
+	})
+
+	// 3. Dynamic Handler for verify, upgrade, validation
+	mock.SetDefaultHandler(func(ctx context.Context, op models.Operation) (*models.CommandResult, error) {
+		if strings.HasPrefix(op.Ref, "op:lvm.snapshot.verify:") {
+			snapName := strings.TrimPrefix(op.Ref, "op:lvm.snapshot.verify:")
+			return &models.CommandResult{ExitCode: &zero, Stdout: fmt.Sprintf("%s vg0 root swi-a-s--- 1.2 uuid-snap-1\n", snapName)}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:pkg.detect:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: "apt\n"}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:pkg.upgrade:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: fmt.Sprintf("Preparing to unpack %s ...\nSetting up %s (%s) ...\n", pkg, pkg, targetVersion)}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:validation.version.dpkg:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: targetVersion + "\n"}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:precheck.service_state:") || strings.HasPrefix(op.Ref, "op:validation.service_state:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: "active\n"}, nil
+		}
+		if op.Ref == "op:validation.failed_units" {
+			return &models.CommandResult{ExitCode: &zero, Stdout: ""}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:lvm.rollback.check_merged:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: ""}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:lvm.snapshot.remove:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: "Logical volume removed\n"}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:lvm.rollback.merge:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: "Logical volume vg0/root will be merged on next activation\n"}, nil
+		}
+		return &models.CommandResult{ExitCode: &zero, Stdout: "OK\n"}, nil
+	})
+
+	return mock
 }

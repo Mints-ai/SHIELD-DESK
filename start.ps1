@@ -86,6 +86,11 @@ function Stream-Jobs {
                     "GoScanner"   { "[Go Scanner] " }
                     "GoThreat"    { "[Go Threat ] " }
                     "GoWebhook"   { "[Go Webhook] " }
+<<<<<<< Updated upstream
+=======
+                    "GoIngest"    { "[Go Ingest ] " }
+                    "GoPatch"     { "[SSH Patch ] " }
+>>>>>>> Stashed changes
                     default       { "[Service   ] " }
                 }
                 $col = switch ($job.Name) {
@@ -95,6 +100,11 @@ function Stream-Jobs {
                     "GoScanner"   { "Green"   }
                     "GoThreat"    { "DarkCyan"}
                     "GoWebhook"   { "DarkYellow" }
+<<<<<<< Updated upstream
+=======
+                    "GoIngest"    { "Blue"    }
+                    "GoPatch"     { "Green"   }
+>>>>>>> Stashed changes
                     default       { "White"   }
                 }
                 $lines -split "`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object {
@@ -118,6 +128,14 @@ function Stop-AllServices {
     }
     # Kill any child processes that outlived the jobs
     Get-Process -Name "ollama" -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process -Name "orchestrator" -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process -Name "ingest" -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process -Name "threat" -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Get-Process -Name "webhook" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "  All services stopped. Goodbye!" -ForegroundColor DarkGreen
@@ -153,9 +171,23 @@ $threatJob = Start-Service "GoThreat"    $threatCmd       $threatDir
 $webhookDir = Join-Path $ROOT "services\webhooks"
 $webhookExe = Join-Path $webhookDir "webhook.exe"
 $webhookCmd = if (Test-Path $webhookExe) { ".\webhook.exe" } else { "go run ." }
+<<<<<<< Updated upstream
 $webhookJob = Start-Service "GoWebhook"   $webhookCmd      $webhookDir
 
 $allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob)
+=======
+$webhookJob = Start-Service "GoWebhook"   $webhookCmd      $webhookDir  $envMap
+$ingestDir  = Join-Path $ROOT "services\ingest"
+$ingestExe  = Join-Path $ingestDir "ingest.exe"
+$ingestCmd  = if (Test-Path $ingestExe) { ".\ingest.exe" } else { "go run ." }
+$ingestJob  = Start-Service "GoIngest"    $ingestCmd       $ingestDir   $envMap
+$patchDir   = Join-Path $ROOT "ssh-patch-orchestrator"
+$patchExe   = Join-Path $patchDir "orchestrator.exe"
+$patchCmd   = if (Test-Path $patchExe) { ".\orchestrator.exe server --port 8004" } else { "go run ./cmd/orchestrator server --port 8004" }
+$patchJob   = Start-Service "GoPatch"     $patchCmd        $patchDir    $envMap
+
+$allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob)
+>>>>>>> Stashed changes
 
 Write-Host ""
 Write-Host "  Waiting for all ports to open..." -ForegroundColor DarkGray
@@ -166,9 +198,17 @@ $ok2 = Wait-ForPort 8000  "Python CVE Brain"
 $ok3 = Wait-ForPort 3000  "Next.js UI"
 $ok4 = Wait-ForPort 8003  "Go Threat Engine"
 $ok5 = Wait-ForPort 8080  "Go Webhook Service"
+<<<<<<< Updated upstream
 
 Write-Host ""
 if ($ok1 -and $ok2 -and $ok3 -and $ok4 -and $ok5) {
+=======
+$ok6 = Wait-ForPort 8005  "Go Ingest Telemetry" 60
+$ok7 = Wait-ForPort 8004  "SSH Patch Orchestrator" 30
+
+Write-Host ""
+if ($ok1 -and $ok2 -and $ok3 -and $ok4 -and $ok5 -and $ok6 -and $ok7) {
+>>>>>>> Stashed changes
     Write-Host "  [ALL UP] All services are running!" -ForegroundColor Green
 } else {
     Write-Host "  [WARN] Some services may not have started -- check logs below." -ForegroundColor Yellow
@@ -179,6 +219,11 @@ Write-Host "  +-------------------------------------------------+" -ForegroundCo
 Write-Host "  |  ShieldDesk UI   -->  http://localhost:3000     |" -ForegroundColor Green
 Write-Host "  |  Python AI Brain -->  http://localhost:8000     |" -ForegroundColor Yellow
 Write-Host "  |  Go Threat Engine-->  http://localhost:8003     |" -ForegroundColor Cyan
+<<<<<<< Updated upstream
+=======
+Write-Host "  |  SSH Patch Orch  -->  http://localhost:8004     |" -ForegroundColor Green
+Write-Host "  |  Go Ingest & PII -->  http://localhost:8005     |" -ForegroundColor Blue
+>>>>>>> Stashed changes
 Write-Host "  |  Go Webhook Svc  -->  http://localhost:8080     |" -ForegroundColor DarkYellow
 Write-Host "  |  Trivy Scanner   -->  Embedded (/api/scans)     |" -ForegroundColor Green
 Write-Host "  |  Ollama LLM      -->  http://localhost:11434    |" -ForegroundColor Magenta

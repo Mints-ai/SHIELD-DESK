@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/permissions";
+import { isDevPersonaAllowed } from "@/lib/config/environment";
 
 const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8004";
 
@@ -14,7 +15,15 @@ function corsHeaders() {
 
 /** GET /api/patch/jobs — list all jobs */
 export async function GET(req: NextRequest) {
-  const session = await getSessionFromRequest(req);
+  let session = await getSessionFromRequest(req);
+  if (!session && isDevPersonaAllowed()) {
+    session = {
+      uid: "dev-analyst",
+      role: "analyst",
+      tenantId: "acme-tenant",
+      email: "analyst@acme.corp",
+    };
+  }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasPermission(session.role, "cve.read")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -31,7 +40,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(data, { headers: corsHeaders() });
   } catch (err: any) {
     return NextResponse.json(
-      { error: "SSH Patch Orchestrator is offline. Start it with: orchestrator.exe server", offline: true },
+      { error: "SSH Patch Orchestrator is offline. Start it with: orchestrator.exe server --port 8004", offline: true },
       { status: 503, headers: corsHeaders() }
     );
   }
@@ -39,7 +48,15 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/patch/jobs — create a new patch job */
 export async function POST(req: NextRequest) {
-  const session = await getSessionFromRequest(req);
+  let session = await getSessionFromRequest(req);
+  if (!session && isDevPersonaAllowed()) {
+    session = {
+      uid: "dev-analyst",
+      role: "analyst",
+      tenantId: "acme-tenant",
+      email: "analyst@acme.corp",
+    };
+  }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasPermission(session.role, "cve.read")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

@@ -325,6 +325,84 @@ func main() {
 		log.Fatal().Err(err).Str("port", port).Msg("Failed to bind TCP listener")
 	}
 
+<<<<<<< Updated upstream
+=======
+	// Start lightweight HTTP stats server for dashboard observability (default port 8005)
+	httpPort := os.Getenv("HTTP_PORT")
+	if httpPort == "" {
+		httpPort = "8005"
+	}
+	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":    "ok",
+			"service":   "shielddesk-ingest",
+			"grpc_port": port,
+		})
+	})
+	httpMux.HandleFunc("/api/ingest/stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		totalRedacted, catStats := GetPIIStats()
+		busStatus := "NATS JetStream (Offline - Dev Fallback)"
+		if publisher.js != nil {
+			busStatus = "NATS JetStream (Healthy)"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":                  "ok",
+			"pii_redacted_today":      totalRedacted,
+			"pii_categories":          catStats,
+			"bus_status":              busStatus,
+			"active_agents_connected": ingestServer.GetConnectedAgentCount(),
+			"events_per_minute":       ingestServer.GetCurrentEventRate(),
+			"max_capacity_per_tenant": 10000,
+		})
+	})
+	httpMux.HandleFunc("/api/ingest/simulate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		StripPII(map[string]string{
+			"password":    "simulated_secret_key",
+			"user_email":  "analyst@corp.internal",
+			"jwt_token":   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy.sig",
+			"credit_card": "4111 2222 3333 4444",
+		})
+		total, cat := GetPIIStats()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":            true,
+			"pii_redacted_today": total,
+			"pii_categories":     cat,
+		})
+	})
+	httpMux.HandleFunc("/api/ingest/reset", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		ResetPIIStats()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":            true,
+			"pii_redacted_today": 0,
+			"pii_categories":     PIICategoryStats{},
+		})
+	})
+
+	httpServer := &http.Server{
+		Addr:    fmt.Sprintf(":%s", httpPort),
+		Handler: httpMux,
+	}
+	go func() {
+		log.Info().Str("port", httpPort).Msg("[Ingest-HTTP] Telemetry & PII stats server listening")
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error().Err(err).Msg("Ingest HTTP server stopped")
+		}
+	}()
+
+>>>>>>> Stashed changes
 	// Graceful shutdown handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)

@@ -297,6 +297,124 @@ export async function GET(req: NextRequest) {
       // Go service offline, fallback to in-memory store
     }
 
+<<<<<<< Updated upstream
+=======
+    // Query Go Ingest Service if online (port 8005)
+    const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8005";
+    let liveIngestStats: {
+      pii_redacted_today?: number;
+      pii_categories?: {
+        jwt_tokens?: number;
+        passwords_and_secrets?: number;
+        credit_cards?: number;
+        ssn_and_national_ids?: number;
+        emails?: number;
+      };
+      bus_status?: string;
+      active_agents_connected?: number;
+      events_per_minute?: number;
+    } | null = null;
+
+    try {
+      const ingestRes = await fetch(`${ingestServiceUrl}/api/ingest/stats`, {
+        signal: AbortSignal.timeout(800),
+      });
+      if (ingestRes.ok) {
+        liveIngestStats = await ingestRes.json();
+      }
+    } catch {
+      // Go Ingest service offline, fallback to local in-memory metrics
+    }
+
+    let dbPiiCategories = {
+      jwt_tokens: 0,
+      passwords_and_secrets: 0,
+      credit_cards: 0,
+      ssn_and_national_ids: 0,
+      emails: 0,
+    };
+    try {
+      const piiDbRes = await query<{
+        jwt_count: string;
+        pass_count: string;
+        cc_count: string;
+        email_count: string;
+      }>(
+        `SELECT 
+          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_JWT]%') as jwt_count,
+          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_SENSITIVE_KEY]%' OR payload::text ILIKE '%[REDACTED_BEARER]%') as pass_count,
+          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_CREDIT_CARD]%') as cc_count,
+          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_EMAIL]%') as email_count
+         FROM endpoint_telemetry
+         WHERE tenant_id = $1`,
+        [session.tenantId]
+      );
+      if (piiDbRes.rows.length > 0) {
+        dbPiiCategories.jwt_tokens = parseInt(piiDbRes.rows[0].jwt_count || "0", 10) || 0;
+        dbPiiCategories.passwords_and_secrets = parseInt(piiDbRes.rows[0].pass_count || "0", 10) || 0;
+        dbPiiCategories.credit_cards = parseInt(piiDbRes.rows[0].cc_count || "0", 10) || 0;
+        dbPiiCategories.emails = parseInt(piiDbRes.rows[0].email_count || "0", 10) || 0;
+      }
+    } catch {
+      // Telemetry table query fallback
+    }
+
+    const localPii = getLivePIIMetrics();
+    const livePiiCategories = {
+      jwt_tokens: (liveIngestStats?.pii_categories?.jwt_tokens ?? 0) + localPii.categories.jwt_tokens + dbPiiCategories.jwt_tokens,
+      passwords_and_secrets: (liveIngestStats?.pii_categories?.passwords_and_secrets ?? 0) + localPii.categories.passwords_and_secrets + dbPiiCategories.passwords_and_secrets,
+      credit_cards: (liveIngestStats?.pii_categories?.credit_cards ?? 0) + localPii.categories.credit_cards + dbPiiCategories.credit_cards,
+      ssn_and_national_ids: (liveIngestStats?.pii_categories?.ssn_and_national_ids ?? 0) + localPii.categories.ssn_and_national_ids + dbPiiCategories.ssn_and_national_ids,
+      emails: (liveIngestStats?.pii_categories?.emails ?? 0) + localPii.categories.emails + dbPiiCategories.emails,
+    };
+
+    const livePiiTotal =
+      livePiiCategories.jwt_tokens +
+      livePiiCategories.passwords_and_secrets +
+      livePiiCategories.credit_cards +
+      livePiiCategories.ssn_and_national_ids +
+      livePiiCategories.emails;
+
+    const liveAgentsTotal = (liveIngestStats?.active_agents_connected && liveIngestStats.active_agents_connected > 0)
+      ? liveIngestStats.active_agents_connected
+      : liveConnectedAgents;
+
+    const liveEventRate = (liveIngestStats?.events_per_minute !== undefined && liveIngestStats.events_per_minute > 0)
+      ? liveIngestStats.events_per_minute
+      : Math.round(liveFailureRate + liveSudoRate);
+
+    const mergedTelemetry = {
+      ...BASELINE_INGEST_POLICY,
+      active_agents_connected: liveAgentsTotal,
+      events_persisted_timescaledb: liveEventsCount,
+      pii_redacted_today: livePiiTotal,
+      pii_categories: livePiiCategories,
+      bus_status: liveIngestStats?.bus_status ?? (goThreatState ? "NATS JetStream (Standalone)" : "Active Ingestion Loop"),
+      events_per_minute: liveEventRate,
+    };
+
+    let liveYaraRules = YARA_RULES;
+    try {
+      const dynamicYara = await getYaraRules(session.tenantId);
+      if (dynamicYara && dynamicYara.length > 0) {
+        liveYaraRules = dynamicYara.map((r) => ({
+          id: r.rule_id,
+          name: r.name,
+          category: r.category,
+          severity: r.severity.toUpperCase(),
+          matches_today: r.matches_today || 0,
+          status: r.enabled ? "ACTIVE" : "DISABLED",
+          target: r.target,
+          description: r.description,
+          raw_content: r.raw_content,
+          is_system: r.is_system,
+        }));
+      }
+    } catch {
+      // Non-fatal
+    }
+
+>>>>>>> Stashed changes
     return NextResponse.json({
       status: "ok",
       engine: goThreatState ? "go-threat-service" : "typescript-in-memory",
