@@ -125,6 +125,14 @@ export interface ShieldDeskConfig {
     stripeSecretKey?: string;
     stripeWebhookSecret?: string;
   };
+
+  // External Attack Surface & Threat Intel
+  threatIntel: {
+    shodanApiKey?: string;
+    shodanConfigured: boolean;
+    hibpApiKey?: string;
+    hibpConfigured: boolean;
+  };
 }
 
 /**
@@ -277,6 +285,13 @@ export function validateEnvironment(env: Record<string, string | undefined> = pr
       stripeConfigured: Boolean(raw.STRIPE_SECRET_KEY && raw.STRIPE_WEBHOOK_SECRET),
       stripeSecretKey: raw.STRIPE_SECRET_KEY,
       stripeWebhookSecret: raw.STRIPE_WEBHOOK_SECRET,
+    },
+
+    threatIntel: {
+      shodanApiKey: raw.SHODAN_API_KEY,
+      shodanConfigured: Boolean(raw.SHODAN_API_KEY && raw.SHODAN_API_KEY.trim() !== ""),
+      hibpApiKey: raw.HIBP_API_KEY,
+      hibpConfigured: Boolean(raw.HIBP_API_KEY && raw.HIBP_API_KEY.trim() !== ""),
     },
   };
 }

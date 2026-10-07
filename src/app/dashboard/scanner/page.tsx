@@ -29,6 +29,9 @@ import {
   Check,
   GitCommit,
   ShieldCheck,
+  Search,
+  Server,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -103,6 +106,21 @@ export default function ScannerDashboardPage() {
     newKeyId?: string;
   } | null>(null);
   const [copiedGitCmd, setCopiedGitCmd] = useState(false);
+
+  // Shodan & External Attack Surface Management state
+  const [shodanLoading, setShodanLoading] = useState(false);
+  const [shodanStatus, setShodanStatus] = useState<{
+    configured: boolean;
+    plan?: string;
+    scanCredits?: number;
+    queryCredits?: number;
+    error?: string;
+  } | null>(null);
+  const [detectedMyIp, setDetectedMyIp] = useState<string | null>(null);
+  const [targetHostInput, setTargetHostInput] = useState<string>("");
+  const [hostInspection, setHostInspection] = useState<any | null>(null);
+  const [shodanInspectError, setShodanInspectError] = useState<string | null>(null);
+  const [hibpConfigured, setHibpConfigured] = useState<boolean>(false);
 
   const criticalCvesCount = useMemo(
     () => cves.filter((c) => c.severity?.toUpperCase() === "CRITICAL").length,
@@ -190,9 +208,69 @@ export default function ScannerDashboardPage() {
     }
   };
 
+  const fetchThreatIntel = async () => {
+    try {
+      setShodanLoading(true);
+      const res = await fetch("/api/intel/shodan");
+      const data = await res.json();
+      if (data.configured) {
+        setShodanStatus({
+          configured: true,
+          plan: data.apiInfo?.plan,
+          scanCredits: data.apiInfo?.scanCredits,
+          queryCredits: data.apiInfo?.queryCredits,
+        });
+        if (data.myIp) {
+          setDetectedMyIp(data.myIp);
+          setTargetHostInput((prev) => (prev ? prev : data.myIp));
+        }
+      } else {
+        setShodanStatus({
+          configured: false,
+          error: data.message || data.error,
+        });
+      }
+
+      const hibpRes = await fetch("/api/intel/hibp");
+      const hibpData = await hibpRes.json();
+      setHibpConfigured(Boolean(hibpData.configured));
+    } catch (err: any) {
+      console.error("Failed to load threat intel:", err);
+    } finally {
+      setShodanLoading(false);
+    }
+  };
+
+  const handleInspectTarget = async (overrideTarget?: string) => {
+    const target = (overrideTarget ?? targetHostInput ?? detectedMyIp ?? "").trim();
+    if (!target) return;
+    try {
+      setShodanLoading(true);
+      setShodanInspectError(null);
+      const res = await fetch(`/api/intel/shodan?ip=${encodeURIComponent(target)}`);
+      const data = await res.json();
+      if (data.error) {
+        setShodanInspectError(data.error);
+      } else if (data.hostData) {
+        setHostInspection(data.hostData);
+      }
+    } catch (err: any) {
+      setShodanInspectError(err.message || "Failed to inspect target host on Shodan.");
+    } finally {
+      setShodanLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
+    fetchThreatIntel();
   }, [activeUserId]);
+
+  useEffect(() => {
+    if (activeTab === "intel" && !shodanStatus) {
+      fetchThreatIntel();
+    }
+  }, [activeTab]);
 
   const triggerTrivyScan = async () => {
     setLoading(true);
@@ -1066,35 +1144,308 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
         {activeTab === "intel" && (
           <div className="space-y-4">
             <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
-              <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
-                <Globe className="h-4 w-4 text-[var(--sd-pine)]" />
-                External Attack Surface Management (Shodan &amp; HIBP)
-              </h3>
-              <p className="text-[13px] text-[var(--sd-text-muted)]">
-                Inspect public internet perimeter exposure, open ports, and corporate credential breach disclosures.
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <span className="text-[13px] font-medium text-[var(--sd-text)]">Shodan Perimeter Inspection</span>
-                    <span className="text-[11px] font-mono text-[var(--sd-text-muted)] bg-[var(--sd-surface)] px-2 py-0.5 rounded border border-[var(--sd-border)]">Not Configured</span>
-                  </div>
-                  <p className="text-[13px] text-[var(--sd-text-muted)]">
-                    No active perimeter monitoring. Add <code className="text-[var(--sd-text)] font-mono text-xs">SHODAN_API_KEY</code> to your environment file to inspect public internet exposure and open ports.
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--sd-border)] pb-3">
+                <div>
+                  <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
+                    <Globe className="h-4 w-4 text-[var(--sd-pine)]" />
+                    External Attack Surface Management (Shodan &amp; HIBP)
+                  </h3>
+                  <p className="text-[13px] text-[var(--sd-text-muted)] mt-0.5">
+                    Inspect public internet perimeter exposure, open ports, and corporate credential breach disclosures.
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={fetchThreatIntel}
+                  disabled={shodanLoading}
+                  className="sd-button text-xs px-2.5 py-1 rounded-md border border-[var(--sd-border)] flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
+                >
+                  <RefreshCw className={cn("h-3 w-3", shodanLoading && "animate-spin")} />
+                  Refresh Status
+                </button>
+              </div>
 
-                <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                {/* Shodan Card */}
+                <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <span className="text-[13px] font-medium text-[var(--sd-text)]">HaveIBeenPwned Domain Check</span>
-                    <span className="text-[11px] font-mono text-[var(--sd-text-muted)] bg-[var(--sd-surface)] px-2 py-0.5 rounded border border-[var(--sd-border)]">Not Configured</span>
+                    <span className="text-[13px] font-medium text-[var(--sd-text)] flex items-center gap-1.5">
+                      <Server className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                      Shodan Perimeter Inspection
+                    </span>
+                    {shodanStatus?.configured ? (
+                      <span className="text-[11px] font-mono text-[var(--sd-success)] bg-[var(--sd-success-dim)] px-2 py-0.5 rounded border border-[var(--sd-success-border)] flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Active &bull; {shodanStatus.plan ? shodanStatus.plan.toUpperCase() : "DEV"} Plan ({shodanStatus.queryCredits ?? 0} credits)
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-mono text-[var(--sd-text-muted)] bg-[var(--sd-surface)] px-2 py-0.5 rounded border border-[var(--sd-border)]">
+                        Not Configured
+                      </span>
+                    )}
+                  </div>
+
+                  {!shodanStatus?.configured ? (
+                    <p className="text-[13px] text-[var(--sd-text-muted)]">
+                      No active perimeter monitoring. Add <code className="text-[var(--sd-text)] font-mono text-xs">SHODAN_API_KEY</code> to your environment file to inspect public internet exposure and open ports.
+                    </p>
+                  ) : (
+                    <div className="space-y-3 pt-1">
+                      <p className="text-[13px] text-[var(--sd-text-muted)]">
+                        Shodan engine is connected. Search your public perimeter IP or query internet exposure for any host.
+                      </p>
+
+                      {/* Search Bar */}
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type="text"
+                            placeholder="Enter IP or hostname (e.g. 1.1.1.1, your IP)"
+                            value={targetHostInput}
+                            onChange={(e) => setTargetHostInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleInspectTarget();
+                            }}
+                            className="w-full text-xs font-mono px-3 py-2 rounded-lg bg-[var(--sd-surface)] border border-[var(--sd-border)] text-[var(--sd-text)] placeholder-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)]"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleInspectTarget()}
+                          disabled={shodanLoading}
+                          className="sd-button sd-button-primary px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          {shodanLoading ? (
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Search className="h-3.5 w-3.5" />
+                          )}
+                          <span>Inspect Host</span>
+                        </button>
+                      </div>
+
+                      {/* Quick chips */}
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className="text-[var(--sd-text-muted)]">Quick targets:</span>
+                        {detectedMyIp && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setTargetHostInput(detectedMyIp);
+                              handleInspectTarget(detectedMyIp);
+                            }}
+                            className="px-2 py-0.5 rounded bg-[var(--sd-surface)] border border-[var(--sd-border)] text-[var(--sd-text)] hover:border-[var(--sd-pine)] font-mono cursor-pointer transition"
+                          >
+                            My Public IP ({detectedMyIp.slice(0, 16)}...)
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetHostInput("1.1.1.1");
+                            handleInspectTarget("1.1.1.1");
+                          }}
+                          className="px-2 py-0.5 rounded bg-[var(--sd-surface)] border border-[var(--sd-border)] text-[var(--sd-text)] hover:border-[var(--sd-pine)] font-mono cursor-pointer transition"
+                        >
+                          1.1.1.1 (Cloudflare)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTargetHostInput("8.8.8.8");
+                            handleInspectTarget("8.8.8.8");
+                          }}
+                          className="px-2 py-0.5 rounded bg-[var(--sd-surface)] border border-[var(--sd-border)] text-[var(--sd-text)] hover:border-[var(--sd-pine)] font-mono cursor-pointer transition"
+                        >
+                          8.8.8.8 (Google)
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* HIBP Card */}
+                <div className="p-4 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <span className="text-[13px] font-medium text-[var(--sd-text)] flex items-center gap-1.5">
+                      <Lock className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                      HaveIBeenPwned Domain Check
+                    </span>
+                    {hibpConfigured ? (
+                      <span className="text-[11px] font-mono text-[var(--sd-success)] bg-[var(--sd-success-dim)] px-2 py-0.5 rounded border border-[var(--sd-success-border)] flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Configured
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-mono text-[var(--sd-text-muted)] bg-[var(--sd-surface)] px-2 py-0.5 rounded border border-[var(--sd-border)]">
+                        Not Configured
+                      </span>
+                    )}
                   </div>
                   <p className="text-[13px] text-[var(--sd-text-muted)]">
-                    No active domain breach monitoring. Add <code className="text-[var(--sd-text)] font-mono text-xs">HIBP_API_KEY</code> to your environment file to inspect corporate credential breach disclosures.
+                    {hibpConfigured ? (
+                      "HaveIBeenPwned API key configured. Ready to inspect breach disclosures for corporate domains and identity scopes."
+                    ) : (
+                      <>
+                        No active domain breach monitoring. Add <code className="text-[var(--sd-text)] font-mono text-xs">HIBP_API_KEY</code> to your environment file to inspect corporate credential breach disclosures.
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
+
+              {/* Shodan Inspect Error */}
+              {shodanInspectError && (
+                <div className="p-3 rounded-lg border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-xs text-[var(--sd-danger)] flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  <span>{shodanInspectError}</span>
+                </div>
+              )}
+
+              {/* Shodan Host Inspection Results Section */}
+              {hostInspection && (
+                <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-4 mt-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--sd-border)] pb-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Activity className="h-4 w-4 text-[var(--sd-pine)]" />
+                        <h4 className="text-sm font-medium text-[var(--sd-text)] font-mono">
+                          Perimeter Inspection: {hostInspection.ip}
+                        </h4>
+                      </div>
+                      <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">
+                        {hostInspection.org || hostInspection.isp || "Public Network Endpoint"} &bull;{" "}
+                        {hostInspection.city ? `${hostInspection.city}, ` : ""}
+                        {hostInspection.country || "Global"} {hostInspection.asn ? `(${hostInspection.asn})` : ""}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 text-xs font-mono rounded border border-[var(--sd-border)] bg-[var(--sd-surface)] text-[var(--sd-text)]">
+                        Ports Open: {hostInspection.ports?.length || 0}
+                      </span>
+                      {hostInspection.vulns?.length > 0 ? (
+                        <span className="px-2.5 py-0.5 text-xs font-mono rounded border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)]">
+                          {hostInspection.vulns.length} CVEs Detected
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-0.5 text-xs font-mono rounded border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)]">
+                          0 Known Vulns
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {!hostInspection.found ? (
+                    <div className="p-3 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-surface)] text-xs text-[var(--sd-text-muted)] flex items-start gap-2.5">
+                      <ShieldCheck className="h-4 w-4 text-[var(--sd-success)] shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-medium text-[var(--sd-text)]">Safe Perimeter Posture:</span>{" "}
+                        {hostInspection.message || "No public services indexed by Shodan for this IP."}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Host details grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        <div className="p-2.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-surface)]">
+                          <span className="text-[var(--sd-text-muted)] block">Hostnames</span>
+                          <span className="font-mono text-[var(--sd-text)] font-medium truncate block">
+                            {hostInspection.hostnames?.length ? hostInspection.hostnames.join(", ") : "None"}
+                          </span>
+                        </div>
+                        <div className="p-2.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-surface)]">
+                          <span className="text-[var(--sd-text-muted)] block">ASN / ISP</span>
+                          <span className="font-mono text-[var(--sd-text)] font-medium truncate block">
+                            {hostInspection.asn || "N/A"} - {hostInspection.isp || "N/A"}
+                          </span>
+                        </div>
+                        <div className="p-2.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-surface)]">
+                          <span className="text-[var(--sd-text-muted)] block">Location</span>
+                          <span className="font-mono text-[var(--sd-text)] font-medium truncate block">
+                            {hostInspection.city || hostInspection.region || "N/A"}, {hostInspection.country || "N/A"}
+                          </span>
+                        </div>
+                        <div className="p-2.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-surface)]">
+                          <span className="text-[var(--sd-text-muted)] block">Last Shodan Update</span>
+                          <span className="font-mono text-[var(--sd-text)] font-medium truncate block">
+                            {hostInspection.lastUpdate ? new Date(hostInspection.lastUpdate).toLocaleDateString() : "Recent"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Open Ports Badges */}
+                      {hostInspection.ports?.length > 0 && (
+                        <div className="space-y-2">
+                          <span className="text-xs font-medium text-[var(--sd-text)]">Detected Exposed Ports:</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {hostInspection.ports.map((port: number) => (
+                              <span
+                                key={port}
+                                className="px-2 py-0.5 rounded text-[11px] font-mono border border-[var(--sd-border)] bg-[var(--sd-surface)] text-[var(--sd-text)]"
+                              >
+                                Port {port}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Vulnerabilities */}
+                      {hostInspection.vulns?.length > 0 && (
+                        <div className="space-y-2">
+                          <span className="text-xs font-medium text-[var(--sd-danger)]">Public CVEs on Perimeter:</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {hostInspection.vulns.map((cve: string) => (
+                              <span
+                                key={cve}
+                                className="px-2 py-0.5 rounded text-[11px] font-mono border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)]"
+                              >
+                                {cve}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Services / Banners Table */}
+                      {hostInspection.services?.length > 0 && (
+                        <div className="space-y-2">
+                          <span className="text-xs font-medium text-[var(--sd-text)]">Service Banners &amp; Protocols:</span>
+                          <div className="rounded-lg border border-[var(--sd-border)] overflow-hidden">
+                            <div className="max-h-60 overflow-y-auto">
+                              <table className="w-full text-left text-xs font-mono">
+                                <thead className="bg-[var(--sd-surface)] border-b border-[var(--sd-border)] text-[var(--sd-text-muted)]">
+                                  <tr>
+                                    <th className="p-2">Port</th>
+                                    <th className="p-2">Proto</th>
+                                    <th className="p-2">Product / Version</th>
+                                    <th className="p-2">Banner Snippet</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[var(--sd-border)]">
+                                  {hostInspection.services.map((srv: any, idx: number) => (
+                                    <tr key={idx} className="hover:bg-[var(--sd-surface)]/50">
+                                      <td className="p-2 text-[var(--sd-pine)] font-medium">{srv.port}</td>
+                                      <td className="p-2 text-[var(--sd-text-muted)]">{srv.transport?.toUpperCase() || "TCP"}</td>
+                                      <td className="p-2 text-[var(--sd-text)]">
+                                        {srv.product} {srv.version ? `v${srv.version}` : ""}
+                                      </td>
+                                      <td className="p-2 text-[var(--sd-text-muted)] truncate max-w-xs">
+                                        {srv.banner || "—"}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
