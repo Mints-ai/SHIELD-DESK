@@ -3,7 +3,7 @@ import { getSessionFromRequest } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/permissions";
 import { isDevPersonaAllowed } from "@/lib/config/environment";
 
-const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8004";
+const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8006";
 
 function corsHeaders() {
   return {

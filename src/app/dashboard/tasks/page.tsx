@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useId } from "react";
+import React, { useState, useEffect, useId, useCallback } from "react";
 import {
   CheckSquare,
   Lock,
@@ -33,8 +33,6 @@ interface MitigationTaskItem {
   incident_code?: string;
 }
 
-
-
 export default function SOCTaskBoardPage() {
   const taskDialogId = useId();
   const { activeUserId, activeUser } = useChat();
@@ -53,56 +51,74 @@ export default function SOCTaskBoardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    let isMounted = true;
-    async function loadTasks() {
-      setIsLoading(true);
-      try {
-        const res = await fetch("/api/tasks", {
-          headers: { "X-ShieldDesk-User": activeUserId },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted) {
-            setTasks(data.tasks || []);
-            setIsSampleData(data._source === "demo_fallback");
-          }
-        } else {
-          if (isMounted) {
-            setTasks([]);
-            setIsSampleData(false);
-          }
-        }
-      } catch {
-        if (isMounted) {
-            setTasks([]);
-            setIsSampleData(false);
-          }
-      } finally {
-        if (isMounted) setIsLoading(false);
+  const loadTasks = useCallback(async () => {
+    try {
+      const res = await fetch("/api/tasks", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTasks(data.tasks || []);
+        setIsSampleData(data._source === "demo_fallback");
       }
+    } catch {
+      // fallback
+    } finally {
+      setIsLoading(false);
     }
-    loadTasks();
-    return () => {
-      isMounted = false;
-    };
   }, [activeUserId]);
+
+  useEffect(() => {
+    setIsLoading(true);
+    loadTasks();
+  }, [loadTasks]);
+
+  useEffect(() => {
+    const handleApprovalsChanged = (event: Event) => {
+      const customEvent = event as CustomEvent<{ action?: string; token?: ApprovalTokenRecord }>;
+      if (customEvent.detail?.token) {
+        const updatedToken = customEvent.detail.token;
+        const taskStatus: MitigationTaskItem["status"] =
+          updatedToken.status === "approved"
+            ? "approved"
+            : updatedToken.status === "rejected"
+              ? "rejected"
+              : "pending";
+
+        setTasks((prev) =>
+          prev.map((t) => (t.id === updatedToken.task_id ? { ...t, status: taskStatus } : t))
+        );
+      }
+      loadTasks();
+    };
+
+    window.addEventListener("shielddesk:approvals-changed", handleApprovalsChanged);
+    const interval = setInterval(() => {
+      loadTasks();
+    }, 3000);
+
+    return () => {
+      window.removeEventListener("shielddesk:approvals-changed", handleApprovalsChanged);
+      clearInterval(interval);
+    };
+  }, [loadTasks]);
 
   const handleOpenApproval = async (task: MitigationTaskItem) => {
     try {
-      const res = await fetch(`/api/approvals?taskId=${encodeURIComponent(task.id)}`, {
+      const res = await fetch(`/api/approvals?taskId=${encodeURIComponent(task.id)}&status=pending`, {
         headers: { "X-ShieldDesk-User": activeUserId },
       });
       const body = await res.json();
       let token: ApprovalTokenRecord | null = null;
       if (body.tokens && body.tokens.length > 0) {
-        token = body.tokens[0];
+        token = body.tokens.find((t: ApprovalTokenRecord) => t.status === "pending") || body.tokens[0];
       } else {
+        const requester = activeUserId === "dev-admin" ? "dev-analyst" : "dev-admin";
         const createRes = await fetch("/api/approvals", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-ShieldDesk-User": activeUserId,
+            "X-ShieldDesk-User": requester,
           },
           body: JSON.stringify({
             taskId: task.id,
@@ -134,6 +150,10 @@ export default function SOCTaskBoardPage() {
     setTasks((prev) =>
       prev.map((t) => (t.id === updatedToken.task_id ? { ...t, status: taskStatus } : t))
     );
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("shielddesk:approvals-changed"));
+    }
   };
 
   const handleCreateTask = async (e: React.FormEvent) => {
@@ -161,6 +181,9 @@ export default function SOCTaskBoardPage() {
         const data = await res.json();
         if (data.task) {
           setTasks((prev) => [data.task, ...prev]);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("shielddesk:approvals-changed"));
+          }
         }
       } else {
         const errBody = await res.json().catch(() => null);

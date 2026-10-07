@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,18 +29,48 @@ import (
 
 type IngestServer struct {
 	ingestv1.UnimplementedIngestServiceServer
-	publisher   *EventPublisher
-	rateLimiter *TenantRateLimiter
-	rdb         *redis.Client
+	publisher      *EventPublisher
+	rateLimiter    *TenantRateLimiter
+	rdb            *redis.Client
+	activeAgentsMu sync.RWMutex
+	activeAgents   map[string]time.Time
+	eventsCountMu  sync.Mutex
+	eventsThisMin  int64
+	lastRateReset  time.Time
 }
 
 func NewIngestServer(pub *EventPublisher, rdb *redis.Client) *IngestServer {
 	return &IngestServer{
-		publisher:   pub,
-		rateLimiter: NewTenantRateLimiter(),
-		rdb:         rdb,
+		publisher:     pub,
+		rateLimiter:   NewTenantRateLimiter(),
+		rdb:           rdb,
+		activeAgents:  make(map[string]time.Time),
+		lastRateReset: time.Now(),
 	}
 }
+
+func (s *IngestServer) GetConnectedAgentCount() int {
+	s.activeAgentsMu.Lock()
+	defer s.activeAgentsMu.Unlock()
+	cutoff := time.Now().Add(-60 * time.Second)
+	for id, lastSeen := range s.activeAgents {
+		if lastSeen.Before(cutoff) {
+			delete(s.activeAgents, id)
+		}
+	}
+	return len(s.activeAgents)
+}
+
+func (s *IngestServer) GetCurrentEventRate() int64 {
+	s.eventsCountMu.Lock()
+	defer s.eventsCountMu.Unlock()
+	if time.Since(s.lastRateReset) > time.Minute {
+		s.eventsThisMin = 0
+		s.lastRateReset = time.Now()
+	}
+	return s.eventsThisMin
+}
+
 
 // Handshake authenticates the agent via tenant token and mTLS client certificate.
 func (s *IngestServer) Handshake(ctx context.Context, req *ingestv1.HandshakeRequest) (*ingestv1.HandshakeResponse, error) {
@@ -77,6 +110,10 @@ func (s *IngestServer) Handshake(ctx context.Context, req *ingestv1.HandshakeReq
 		Str("os", req.OsType).
 		Msg("[Ingest-Handshake] Agent successfully authenticated and enrolled")
 
+	s.activeAgentsMu.Lock()
+	s.activeAgents[req.AgentId] = time.Now()
+	s.activeAgentsMu.Unlock()
+
 	return &ingestv1.HandshakeResponse{
 		Authorized:           true,
 		TenantId:             req.TenantId,
@@ -96,6 +133,14 @@ func (s *IngestServer) SendEvents(stream ingestv1.IngestService_SendEventsServer
 			log.Error().Err(err).Msg("[Ingest-Stream] Error receiving event from stream")
 			return err
 		}
+
+		s.activeAgentsMu.Lock()
+		s.activeAgents[event.AssetId] = time.Now()
+		s.activeAgentsMu.Unlock()
+
+		s.eventsCountMu.Lock()
+		s.eventsThisMin++
+		s.eventsCountMu.Unlock()
 
 		// 1. Schema Validation
 		if event.TenantId == "" || event.AssetId == "" || event.EventType == "" {
@@ -325,12 +370,10 @@ func main() {
 		log.Fatal().Err(err).Str("port", port).Msg("Failed to bind TCP listener")
 	}
 
-<<<<<<< Updated upstream
-=======
-	// Start lightweight HTTP stats server for dashboard observability (default port 8005)
+	// Start lightweight HTTP stats server for dashboard observability (default port 8004)
 	httpPort := os.Getenv("HTTP_PORT")
 	if httpPort == "" {
-		httpPort = "8005"
+		httpPort = "8004"
 	}
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -402,7 +445,6 @@ func main() {
 		}
 	}()
 
->>>>>>> Stashed changes
 	// Graceful shutdown handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -416,6 +458,7 @@ func main() {
 
 	<-sigChan
 	log.Info().Msg("[Ingest-Shutdown] Gracefully shutting down Ingest Service...")
+	_ = httpServer.Close()
 	grpcServer.GracefulStop()
 	log.Info().Msg("[Ingest-Shutdown] Clean shutdown completed.")
 }

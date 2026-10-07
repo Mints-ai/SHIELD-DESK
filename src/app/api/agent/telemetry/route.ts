@@ -3,7 +3,7 @@ import { query } from "@/lib/db";
 import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
 import { evaluateTelemetryBatch } from "@/lib/detection/engine";
-import { recordSudoExecution, recordNetworkEgress } from "@/lib/alerts/threatAlertStore";
+import { recordSudoExecution, recordNetworkEgress, scrubTelemetryPayload } from "@/lib/alerts/threatAlertStore";
 
 interface TelemetryEventPayload {
   eventType: string;
@@ -36,11 +36,20 @@ export async function POST(req: NextRequest) {
     let hostname: string = "UNKNOWN-HOST";
 
     try {
-      const { rows } = await query<{ tenant_id: string; hostname: string }>(
-        "SELECT tenant_id, hostname FROM endpoint_agents WHERE id = $1 LIMIT 1",
+      const { rows } = await query<{ tenant_id: string; hostname: string; status: string }>(
+        "SELECT tenant_id, hostname, status FROM endpoint_agents WHERE id = $1 LIMIT 1",
         [agentId]
       );
       if (rows.length > 0) {
+        if (rows[0].status === "disconnected") {
+          return NextResponse.json({
+            success: true,
+            ingested: 0,
+            status: "disconnected",
+            message: "Endpoint is disconnected. Telemetry dropped.",
+            detections: [],
+          });
+        }
         tenantId = rows[0].tenant_id;
         hostname = rows[0].hostname;
       }
@@ -51,6 +60,15 @@ export async function POST(req: NextRequest) {
     if (!tenantId) {
       const agent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
       if (agent) {
+        if (agent.status === "disconnected") {
+          return NextResponse.json({
+            success: true,
+            ingested: 0,
+            status: "disconnected",
+            message: "Endpoint is disconnected. Telemetry dropped.",
+            detections: [],
+          });
+        }
         tenantId = agent.tenant_id;
         hostname = agent.hostname;
       }
@@ -63,7 +81,16 @@ export async function POST(req: NextRequest) {
     // 1. Insert batch into endpoint_telemetry
     try {
       for (const evt of events) {
-        const payloadStr = JSON.stringify(evt.payload || {});
+        let cleanedPayload = evt.payload;
+        if (evt.payload && typeof evt.payload === "object") {
+          const stringRecord: Record<string, string> = {};
+          for (const [k, v] of Object.entries(evt.payload)) {
+            stringRecord[k] = typeof v === "string" ? v : JSON.stringify(v);
+          }
+          const { cleaned } = scrubTelemetryPayload(stringRecord);
+          cleanedPayload = cleaned;
+        }
+        const payloadStr = JSON.stringify(cleanedPayload || {});
         if (
           payloadStr.toLowerCase().includes("sudo") ||
           (typeof evt.eventType === "string" && evt.eventType.toLowerCase().includes("sudo"))

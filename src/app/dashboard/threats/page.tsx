@@ -12,21 +12,27 @@ import {
   EyeOff,
   CheckCircle2,
   AlertTriangle,
-  Play,
   RotateCcw,
   Sparkles,
-  Server,
   Layers,
   Bot,
   Lock,
   Globe,
   Mail,
-  UserCheck,
   Clock,
   Ban,
   Unlock,
+  Plus,
+  Trash2,
+  History,
+  Terminal,
+  Power,
+  Code,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { YaraRuleTesterModal } from "@/components/threats/YaraRuleTesterModal";
+import { YaraRuleCreatorModal } from "@/components/threats/YaraRuleCreatorModal";
+import { YaraMatchHistoryModal } from "@/components/threats/YaraMatchHistoryModal";
 
 interface RuleItem {
   id: string;
@@ -40,6 +46,8 @@ interface RuleItem {
   logsource?: string;
   description?: string;
   detection_logic?: string;
+  raw_content?: string;
+  is_system?: boolean;
 }
 
 interface AnomalyMetric {
@@ -58,6 +66,22 @@ export interface BlockedIpItem {
   blockedAt: string;
   reason: string;
   attempts: number;
+}
+
+export interface IngestTelemetryInfo {
+  agent_handshake_protocol?: string;
+  active_agents_connected?: number;
+  rate_limit_policy?: string;
+  events_persisted_timescaledb?: number;
+  pii_redacted_today?: number;
+  bus_status?: string;
+  events_per_minute?: number;
+  pii_categories?: {
+    jwt_tokens?: number;
+    passwords_and_secrets?: number;
+    credit_cards?: number;
+    emails?: number;
+  };
 }
 
 export interface ThreatSecurityAlert {
@@ -85,11 +109,18 @@ export default function ThreatsDashboardPage() {
   const [yaraRules, setYaraRules] = useState<RuleItem[]>([]);
   const [sigmaRules, setSigmaRules] = useState<RuleItem[]>([]);
   const [anomalies, setAnomalies] = useState<AnomalyMetric[]>([]);
-  const [telemetry, setTelemetry] = useState<any>(null);
+  const [telemetry, setTelemetry] = useState<IngestTelemetryInfo | null>(null);
   const [securityAlerts, setSecurityAlerts] = useState<ThreatSecurityAlert[]>([]);
   const [blockedIps, setBlockedIps] = useState<BlockedIpItem[]>([]);
   const [canViewAuthAlerts, setCanViewAuthAlerts] = useState<boolean>(false);
   const [unblockFeedback, setUnblockFeedback] = useState<string | null>(null);
+
+  // YARA Sandbox, Creator & Match History State
+  const [testerModalOpen, setTesterModalOpen] = useState(false);
+  const [creatorModalOpen, setCreatorModalOpen] = useState(false);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [testingRule, setTestingRule] = useState<{ id: string; name?: string; raw_content?: string } | null>(null);
+  const [yaraFilter, setYaraFilter] = useState("");
 
   // System Admin (Company Admin) is the only one who can monitor, block, and unblock login containment.
   // Globex Analyst is a developer persona and doesn't sync user login alerts (kept blank).
@@ -103,7 +134,7 @@ export default function ThreatsDashboardPage() {
   // Auto-switch to anomaly tab if active persona is not authorized for alerts
   useEffect(() => {
     if (!isAuthorizedForAlerts && activeTab === "alerts") {
-      setActiveTab("anomaly");
+      void Promise.resolve().then(() => setActiveTab("anomaly"));
     }
   }, [isAuthorizedForAlerts, activeTab]);
 
@@ -111,12 +142,12 @@ export default function ThreatsDashboardPage() {
   const [simFeedback, setSimFeedback] = useState<string | null>(null);
 
   // Webhook Test State
-  const [webhookLog, setWebhookLog] = useState<any>(null);
+  const [webhookLog, setWebhookLog] = useState<Record<string, unknown> | null>(null);
 
   const fetchThreatData = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const res = await fetch(`/api/threats?t=${Date.now()}`, {
+      const res = await fetch("/api/threats", {
         headers: {
           "X-ShieldDesk-User": activeUserId,
           "Cache-Control": "no-cache",
@@ -126,6 +157,7 @@ export default function ThreatsDashboardPage() {
       if (data.yara_rules) setYaraRules(data.yara_rules);
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
+      if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
       if (activeUserId === "dev-other" || activeUser?.tenantId === "globex-tenant") {
         setBlockedIps([]);
         setSecurityAlerts([]);
@@ -147,13 +179,48 @@ export default function ThreatsDashboardPage() {
   };
 
   useEffect(() => {
-    fetchThreatData();
-    // Continuous real-time polling so alerts show immediately on the alerts tab
+    let mounted = true;
+    const pollData = async () => {
+      try {
+        const res = await fetch("/api/threats", {
+          headers: {
+            "X-ShieldDesk-User": activeUserId,
+            "Cache-Control": "no-cache",
+          },
+        });
+        const data = await res.json();
+        if (!mounted) return;
+        if (data.yara_rules) setYaraRules(data.yara_rules);
+        if (data.sigma_rules) setSigmaRules(data.sigma_rules);
+        if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
+        if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
+        if (activeUserId === "dev-other" || activeUser?.tenantId === "globex-tenant") {
+          setBlockedIps([]);
+          setSecurityAlerts([]);
+        } else {
+          if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
+          else setBlockedIps([]);
+          if (data.security_alerts && isSystemAdmin) {
+            setSecurityAlerts(data.security_alerts);
+          } else {
+            setSecurityAlerts([]);
+          }
+        }
+        setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
+      } catch (err) {
+        console.error("Failed to load threats in polling:", err);
+      }
+    };
+
+    void pollData();
     const interval = setInterval(() => {
-      fetchThreatData(true);
+      void pollData();
     }, 3000);
-    return () => clearInterval(interval);
-  }, [activeUserId]);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [activeUserId, isSystemAdmin, activeUser?.tenantId]);
 
   const triggerAnomalySimulation = async () => {
     setLoading(true);
@@ -252,6 +319,58 @@ export default function ThreatsDashboardPage() {
     );
   };
 
+  const handleOpenTester = (rule?: RuleItem) => {
+    if (rule) {
+      setTestingRule({
+        id: rule.id,
+        name: rule.name || rule.id,
+        raw_content: rule.raw_content,
+      });
+    } else {
+      setTestingRule(null);
+    }
+    setTesterModalOpen(true);
+  };
+
+  const handleToggleYaraRule = async (rule: RuleItem) => {
+    const nextStatus = rule.status === "ACTIVE" ? "DISABLED" : "ACTIVE";
+    setYaraRules((prev) =>
+      prev.map((r) => (r.id === rule.id ? { ...r, status: nextStatus } : r))
+    );
+
+    try {
+      await fetch(`/api/threats/yara/${rule.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({ enabled: nextStatus === "ACTIVE" }),
+      });
+      fetchThreatData(true);
+    } catch (err) {
+      console.error("Failed to toggle YARA rule:", err);
+      fetchThreatData(true);
+    }
+  };
+
+  const handleDeleteYaraRule = async (rule: RuleItem) => {
+    if (rule.is_system) return;
+    if (!confirm(`Delete custom YARA rule "${rule.name || rule.id}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/threats/yara/${rule.id}`, {
+        method: "DELETE",
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
+      if (res.ok) {
+        setYaraRules((prev) => prev.filter((r) => r.id !== rule.id));
+      }
+    } catch (err) {
+      console.error("Failed to delete YARA rule:", err);
+    }
+  };
+
   const resetAnomaly = async () => {
     setLoading(true);
     try {
@@ -292,7 +411,7 @@ export default function ThreatsDashboardPage() {
     }
   };
 
-  const dispatchTestWebhook = async () => {
+  const dispatchTestWebhook = async (endpointId?: string) => {
     setLoading(true);
     try {
       const res = await fetch("/api/webhooks", {
@@ -301,7 +420,7 @@ export default function ThreatsDashboardPage() {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ endpoint_id: "wh-secops-slack" }),
+        body: JSON.stringify(endpointId ? { endpoint_id: endpointId } : {}),
       });
       const data = await res.json();
       setWebhookLog(data);
@@ -309,6 +428,29 @@ export default function ThreatsDashboardPage() {
       setWebhookLog({ message: "Failed to dispatch test webhook" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [resettingPii, setResettingPii] = useState(false);
+
+  const handleResetPIIMetrics = async () => {
+    setResettingPii(true);
+    try {
+      const res = await fetch("/api/threats", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({ action: "reset_pii" }),
+      });
+      if (res.ok) {
+        await fetchThreatData(true);
+      }
+    } catch (e) {
+      console.error("Failed to reset PII metrics:", e);
+    } finally {
+      setResettingPii(false);
     }
   };
 
@@ -426,18 +568,18 @@ export default function ThreatsDashboardPage() {
               <EyeOff className="h-4 w-4 text-[var(--sd-pine-bright)]" />
             </div>
             <div className="text-2xl font-medium text-[var(--sd-text)] font-mono">
-              {telemetry?.pii_redacted_today || 184}
+              {(telemetry?.pii_redacted_today ?? 0).toLocaleString()}
             </div>
             <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Zero plaintext tokens on bus</p>
           </div>
 
           <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
             <div className="flex items-center justify-between text-[var(--sd-text-muted)] mb-1">
-              <span className="text-[13px] font-medium">NATS Throughput</span>
+              <span className="text-[13px] font-medium">Ingestion Throughput</span>
               <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
             </div>
             <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">
-              {telemetry?.events_per_minute || 4120} / 10k
+              {(telemetry?.events_per_minute ?? 0).toLocaleString()} / 10k
             </div>
             <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Events/min capacity</p>
           </div>
@@ -565,36 +707,172 @@ export default function ThreatsDashboardPage() {
 
         {/* Tab 2: YARA Rules */}
         {activeTab === "yara" && (
-          <div className="space-y-3">
-            {yaraRules.map((rule) => (
-              <div
-                key={rule.id}
-                className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-2.5"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <span className="px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] font-mono">
-                      {rule.severity}
-                    </span>
-                    <span className="font-mono text-[13px] font-medium text-[var(--sd-text)]">
-                      {rule.name}
-                    </span>
-                    <span className="text-[11px] text-[var(--sd-text-muted)]">
-                      Category: {rule.category}
-                    </span>
-                  </div>
-
-                  <span className="text-[13px] font-mono text-[var(--sd-pine-bright)] font-medium">
-                    {rule.matches_today} matches today
-                  </span>
-                </div>
-
-                <p className="text-[13px] text-[var(--sd-text-muted)]">{rule.description}</p>
-                <div className="text-[11px] font-mono text-[var(--sd-text-muted)]">
-                  Target Inspection Zone: <code className="text-[var(--sd-text)]">{rule.target}</code>
-                </div>
+          <div className="space-y-4">
+            {/* YARA Toolbar */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <input
+                  type="text"
+                  value={yaraFilter}
+                  onChange={(e) => setYaraFilter(e.target.value)}
+                  placeholder="Filter rules by name, ID, or category..."
+                  className="w-full sm:w-64 bg-[var(--sd-bg)] text-[var(--sd-text)] border border-[var(--sd-border)] rounded-lg px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[var(--sd-pine)]"
+                />
+                <span className="text-xs text-[var(--sd-text-muted)] whitespace-nowrap">
+                  {yaraRules.filter((r) => r.status === "ACTIVE").length} active / {yaraRules.length} rules
+                </span>
               </div>
-            ))}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenTester()}
+                  className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] hover:bg-[var(--sd-pine-border)] text-[var(--sd-pine-bright)] text-xs font-medium shadow-xs transition cursor-pointer"
+                  title="Open YARA sandbox to scan arbitrary payloads"
+                >
+                  <Terminal className="h-3.5 w-3.5" />
+                  <span>Rule Tester Sandbox</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCreatorModalOpen(true)}
+                  className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-bright)] text-black text-xs font-medium shadow-xs transition cursor-pointer"
+                  title="Author a new custom YARA malware rule"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>New Custom Rule</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setHistoryModalOpen(true)}
+                  className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-surface-subtle)] hover:bg-[var(--sd-border)] text-[var(--sd-text)] text-xs font-medium shadow-xs transition cursor-pointer"
+                  title="View recent detections and linked incidents"
+                >
+                  <History className="h-3.5 w-3.5" />
+                  <span>Match History</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Live Rules List */}
+            <div className="space-y-3">
+              {yaraRules
+                .filter((r) => {
+                  if (!yaraFilter) return true;
+                  const q = yaraFilter.toLowerCase();
+                  return (
+                    (r.name && r.name.toLowerCase().includes(q)) ||
+                    r.id.toLowerCase().includes(q) ||
+                    (r.category && r.category.toLowerCase().includes(q)) ||
+                    (r.description && r.description.toLowerCase().includes(q))
+                  );
+                })
+                .map((rule) => {
+                  const isActive = rule.status === "ACTIVE";
+                  const sevLower = (rule.severity || "medium").toLowerCase();
+                  const sevColor =
+                    sevLower === "critical"
+                      ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
+                      : sevLower === "high"
+                      ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                      : "bg-[var(--sd-pine-dim)] text-[var(--sd-pine-bright)] border-[var(--sd-pine-border)]";
+
+                  return (
+                    <div
+                      key={rule.id}
+                      className={`p-4 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-3 transition ${
+                        !isActive ? "opacity-60 bg-[var(--sd-bg)]" : ""
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-medium uppercase tracking-wider border font-mono ${sevColor}`}
+                          >
+                            {rule.severity}
+                          </span>
+                          <span className="font-mono text-sm font-medium text-[var(--sd-text)]">
+                            {rule.name || rule.id}
+                          </span>
+                          <span className="text-[11px] font-mono text-[var(--sd-text-muted)] bg-[var(--sd-surface-subtle)] px-2 py-0.5 rounded border border-[var(--sd-border)]">
+                            {rule.id}
+                          </span>
+                          {rule.is_system ? (
+                            <span className="text-[10px] font-mono text-[var(--sd-pine-bright)] bg-[var(--sd-pine-dim)] border border-[var(--sd-pine-border)] px-1.5 py-0.5 rounded">
+                              SYSTEM
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-mono text-[var(--sd-warning)] bg-[var(--sd-warning-dim)] border border-[var(--sd-warning-border)] px-1.5 py-0.5 rounded">
+                              CUSTOM
+                            </span>
+                          )}
+                          <span className="text-[11px] text-[var(--sd-text-muted)]">
+                            • {rule.category}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-mono font-medium text-[var(--sd-pine-bright)]">
+                            {rule.matches_today} matches today
+                          </span>
+
+                          {/* Toggle Active Switch */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleYaraRule(rule)}
+                            className={`px-2.5 py-1 rounded-md text-xs font-mono font-medium flex items-center gap-1 border transition cursor-pointer ${
+                              isActive
+                                ? "bg-[var(--sd-success-dim)] text-[var(--sd-success)] border-[var(--sd-success-border)]"
+                                : "bg-[var(--sd-surface-subtle)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
+                            }`}
+                            title={isActive ? "Click to disable rule" : "Click to enable rule"}
+                          >
+                            <Power className="h-3 w-3" />
+                            <span>{isActive ? "ACTIVE" : "DISABLED"}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-[var(--sd-text-muted)] leading-relaxed">
+                        {rule.description}
+                      </p>
+
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-[var(--sd-border)] text-xs">
+                        <div className="text-[11px] font-mono text-[var(--sd-text-muted)]">
+                          Target Inspection Zone:{" "}
+                          <code className="text-[var(--sd-text)] bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">
+                            {rule.target || "endpoint telemetry"}
+                          </code>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenTester(rule)}
+                            className="px-2.5 py-1 text-[11px] font-medium text-[var(--sd-pine-bright)] hover:bg-[var(--sd-pine-dim)] rounded-md border border-[var(--sd-pine-border)] flex items-center gap-1 transition cursor-pointer"
+                          >
+                            <Code className="h-3 w-3" />
+                            <span>Test in Sandbox</span>
+                          </button>
+
+                          {!rule.is_system && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteYaraRule(rule)}
+                              className="p-1 text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)] rounded-md transition cursor-pointer"
+                              title="Delete custom rule"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
           </div>
         )}
 
@@ -635,10 +913,21 @@ export default function ThreatsDashboardPage() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Telemetry Card */}
               <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-3 shadow-xs">
-                <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
-                  <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
-                  gRPC Ingest Service &amp; PII Scrubbing
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
+                    <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
+                    gRPC Ingest Service &amp; PII Scrubbing
+                  </h3>
+                  <button
+                    onClick={handleResetPIIMetrics}
+                    disabled={resettingPii}
+                    className="sd-button sd-button-secondary px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer flex items-center gap-1.5"
+                    title="Reset live PII redaction metrics"
+                  >
+                    <RotateCcw className="h-3 w-3 text-[var(--sd-pine-bright)]" />
+                    {resettingPii ? "Resetting..." : "Reset"}
+                  </button>
+                </div>
                 <p className="text-[13px] text-[var(--sd-text-muted)]">
                   In-flight regex tokenizer redacting sensitive credentials before events reach the NATS message bus.
                 </p>
@@ -646,19 +935,72 @@ export default function ThreatsDashboardPage() {
                 <div className="space-y-2 pt-2">
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Agent Handshake Protocol:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-medium">mTLS v1.3 with X.509 cert</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">
+                      {telemetry?.agent_handshake_protocol || "mTLS v1.3 with X.509 cert"}
+                    </span>
                   </div>
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Active Enrolled Endpoints:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-medium">48 agents online</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">
+                      {telemetry?.active_agents_connected ?? 0} {telemetry?.active_agents_connected === 1 ? "agent" : "agents"} online
+                    </span>
                   </div>
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Rate Limit Policy:</span>
-                    <span className="font-mono text-[var(--sd-text)] font-medium">10,000 ev/min per tenant</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">
+                      {telemetry?.rate_limit_policy || "10,000 ev/min per tenant"}
+                    </span>
                   </div>
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
-                    <span className="text-[var(--sd-text-muted)]">TimescaleDB Hypertable Events:</span>
-                    <span className="font-mono text-[var(--sd-pine-bright)] font-medium">148,290 records</span>
+                    <span className="text-[var(--sd-text-muted)]">Telemetry Database Records:</span>
+                    <span className="font-mono text-[var(--sd-pine-bright)] font-medium">
+                      {(telemetry?.events_persisted_timescaledb ?? 0).toLocaleString()} records
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
+                    <span className="text-[var(--sd-text-muted)]">PII Tokens Scrubbed Today:</span>
+                    <span className="font-mono text-[var(--sd-pine-bright)] font-medium">
+                      {(telemetry?.pii_redacted_today ?? 0).toLocaleString()} redacted
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-[13px] py-1.5">
+                    <span className="text-[var(--sd-text-muted)]">Ingestion Message Bus:</span>
+                    <span className="font-mono text-[var(--sd-text)] font-medium">
+                      {telemetry?.bus_status || "Active Ingestion Loop"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Live PII Token Redaction Breakdown */}
+                <div className="mt-3 pt-3 border-t border-[var(--sd-border)]">
+                  <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider mb-2">
+                    Live PII Redaction Breakdown
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                      <div className="text-[var(--sd-text-muted)] text-[11px]">JWT Tokens</div>
+                      <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
+                        {(telemetry?.pii_categories?.jwt_tokens ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                      <div className="text-[var(--sd-text-muted)] text-[11px]">Secrets / Keys</div>
+                      <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
+                        {(telemetry?.pii_categories?.passwords_and_secrets ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                      <div className="text-[var(--sd-text-muted)] text-[11px]">Credit Cards</div>
+                      <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
+                        {(telemetry?.pii_categories?.credit_cards ?? 0).toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                      <div className="text-[var(--sd-text-muted)] text-[11px]">User Emails</div>
+                      <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
+                        {(telemetry?.pii_categories?.emails ?? 0).toLocaleString()}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -668,24 +1010,32 @@ export default function ThreatsDashboardPage() {
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                     <Send className="h-4 w-4 text-[var(--sd-pine)]" />
-                    HMAC-SHA256 Webhook Dispatcher
+                    HMAC-SHA256 Webhook Dispatcher (Real Channels)
                   </h3>
                   <button
-                    onClick={dispatchTestWebhook}
+                    onClick={() => dispatchTestWebhook()}
                     disabled={loading}
                     className="sd-button sd-button-primary px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer"
                   >
-                    Dispatch Test Webhook
+                    Dispatch Live Test Webhook
                   </button>
                 </div>
                 <p className="text-[13px] text-[var(--sd-text-muted)]">
-                  Dispatches signed webhook payloads with <code>X-ShieldDesk-Signature</code> and exponential backoff retry.
+                  Dispatches real signed webhook payloads to your configured channels (e.g. Discord, Slack) with <code>X-ShieldDesk-Signature</code> and exponential backoff retry.
                 </p>
 
                 {webhookLog && (
-                  <pre className="p-3 rounded-lg bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap leading-relaxed">
-                    {JSON.stringify(webhookLog, null, 2)}
-                  </pre>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs font-mono">
+                      <span className="text-[var(--sd-text-muted)]">Delivery Status:</span>
+                      <span className={webhookLog.success ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>
+                        {webhookLog.message ? String(webhookLog.message) : (webhookLog.success ? "Success" : "Failed")}
+                      </span>
+                    </div>
+                    <pre className="p-3 rounded-lg bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap leading-relaxed">
+                      {JSON.stringify(webhookLog, null, 2)}
+                    </pre>
+                  </div>
                 )}
               </div>
             </div>
@@ -989,6 +1339,26 @@ export default function ThreatsDashboardPage() {
             </div>
           )
         )}
+
+        {/* YARA Interactive Modals */}
+        <YaraRuleTesterModal
+          isOpen={testerModalOpen}
+          onClose={() => setTesterModalOpen(false)}
+          initialRuleContent={testingRule?.raw_content}
+          initialRuleId={testingRule?.id}
+          availableRules={yaraRules}
+        />
+
+        <YaraRuleCreatorModal
+          isOpen={creatorModalOpen}
+          onClose={() => setCreatorModalOpen(false)}
+          onRuleCreated={() => fetchThreatData(true)}
+        />
+
+        <YaraMatchHistoryModal
+          isOpen={historyModalOpen}
+          onClose={() => setHistoryModalOpen(false)}
+        />
       </main>
     </div>
   );

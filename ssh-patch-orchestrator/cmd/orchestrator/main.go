@@ -9,7 +9,7 @@ import (
 func main() {
 	// --- Server mode (default when running as part of ShieldDesk) ---
 	serverCmd := flag.NewFlagSet("server", flag.ExitOnError)
-	serverPort := serverCmd.Int("port", 8004, "HTTP API server port")
+	serverPort := serverCmd.Int("port", 8006, "HTTP API server port")
 	serverAuditDir := serverCmd.String("audit-dir", ".", "Directory for audit log files")
 
 	// --- CLI mode (direct one-shot patch job) ---
@@ -62,7 +62,7 @@ func printUsage() {
 	fmt.Println("ShieldDesk — SSH Patch Orchestrator with LVM Snapshot Rollback")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  orchestrator server [--port 8004] [--audit-dir .]")
+	fmt.Println("  orchestrator server [--port 8006] [--audit-dir .]")
 	fmt.Println("      Start the HTTP API server (used by the ShieldDesk UI)")
 	fmt.Println()
 	fmt.Println("  orchestrator run -host <ip> -user <user> -key <path>")

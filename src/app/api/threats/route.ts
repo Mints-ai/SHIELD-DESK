@@ -6,6 +6,7 @@ export const revalidate = 0;
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
 import { getActiveDetectionRules, toggleDetectionRule } from "@/lib/detection/engine";
+import { getYaraRules } from "@/lib/detection/yara/store";
 import { query } from "@/lib/db";
 import {
   getThreatAlertsForUser,
@@ -22,6 +23,10 @@ import {
   getLiveEgressRateMBPerMin,
   recordNetworkEgress,
   resetAnomalyBaselines,
+  getLivePIIMetrics,
+  recordScrubbedPII,
+  resetPIIMetrics,
+  scrubTelemetryPayload,
 } from "@/lib/alerts/threatAlertStore";
 import { resolveClientIp } from "@/lib/network/clientIp";
 
@@ -118,21 +123,11 @@ const ANOMALY_BASELINES = [
   },
 ];
 
-const INGEST_TELEMETRY = {
-  active_agents_connected: 48,
-  agent_handshake_protocol: "mTLS v1.3",
-  events_per_minute: 4120,
+const BASELINE_INGEST_POLICY = {
+  agent_handshake_protocol: "mTLS v1.3 with X.509 cert (gRPC :50051)",
   max_capacity_per_tenant: 10000,
+  rate_limit_policy: "10,000 ev/min per tenant",
   rate_limit_drops: 0,
-  pii_redacted_today: 184,
-  pii_categories: {
-    jwt_tokens: 92,
-    passwords_and_secrets: 41,
-    credit_cards: 29,
-    ssn_and_national_ids: 22,
-  },
-  bus_status: "NATS JetStream (Healthy)",
-  events_persisted_timescaledb: 148290,
 };
 
 
@@ -176,9 +171,9 @@ export async function GET(req: NextRequest) {
 
   const engineRules = getActiveDetectionRules();
 
-  // Try to query real telemetry count from DB
-  let liveEventsCount = INGEST_TELEMETRY.events_persisted_timescaledb;
-  let liveConnectedAgents = INGEST_TELEMETRY.active_agents_connected;
+  // Real telemetry count from DB (starts at 0, no static mock data)
+  let liveEventsCount = 0;
+  let liveConnectedAgents = 0;
   let liveSudoDbCount = 0;
 
   try {
@@ -190,7 +185,11 @@ export async function GET(req: NextRequest) {
       liveEventsCount = parseInt(telRes.rows[0].count, 10);
     }
     const agentRes = await query<{ count: string }>(
-      `SELECT count(*) FROM endpoint_agents WHERE tenant_id = $1 AND status = 'connected'`,
+      `SELECT count(*) FROM endpoint_agents
+       WHERE tenant_id = $1
+         AND status = 'connected'
+         AND kill_switch_active = false
+         AND COALESCE(last_seen_at, created_at) >= now() - interval '15 seconds'`,
       [session.tenantId]
     );
     if (agentRes.rows.length > 0) {
@@ -297,10 +296,8 @@ export async function GET(req: NextRequest) {
       // Go service offline, fallback to in-memory store
     }
 
-<<<<<<< Updated upstream
-=======
-    // Query Go Ingest Service if online (port 8005)
-    const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8005";
+    // Query Go Ingest Service if online (port 8004)
+    const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8004";
     let liveIngestStats: {
       pii_redacted_today?: number;
       pii_categories?: {
@@ -414,10 +411,10 @@ export async function GET(req: NextRequest) {
       // Non-fatal
     }
 
->>>>>>> Stashed changes
     return NextResponse.json({
       status: "ok",
       engine: goThreatState ? "go-threat-service" : "typescript-in-memory",
+      ingest_engine: liveIngestStats ? "go-ingest-grpc" : "nominal-benchmark",
       dataMode: isDemoMode() ? "demo" : "live",
       demoMode: isDemoMode(),
       demoDataDisclaimer: isDemoMode()
@@ -425,14 +422,10 @@ export async function GET(req: NextRequest) {
         : null,
       tenantId: session.tenantId,
       detection_rules: engineRules,
-      yara_rules: goThreatState?.yara_rules || YARA_RULES,
+      yara_rules: liveYaraRules.length > 0 ? liveYaraRules : (goThreatState?.yara_rules || YARA_RULES),
       sigma_rules: goThreatState?.sigma_rules || SIGMA_RULES,
       anomaly_baselines: goThreatState?.anomaly_baselines || anomalyBaselines,
-      ingest_telemetry: {
-        ...INGEST_TELEMETRY,
-        active_agents_connected: liveConnectedAgents,
-        events_persisted_timescaledb: liveEventsCount,
-      },
+      ingest_telemetry: mergedTelemetry,
       can_view_auth_alerts: canViewAuthAlerts,
       security_alerts: securityAlerts,
       blocked_ips: isSystemAdmin ? (goThreatState?.blocked_ips || getBlockedIps()) : [],
@@ -597,6 +590,59 @@ export async function POST(req: NextRequest) {
         alert_dispatched: true,
         alert_subject: "alerts.tenant_acme.auth_anomaly_burst",
         alert: simulatedAlert,
+      });
+    }
+
+    if (action === "reset_pii" || action === "reset_pii_metrics") {
+      resetPIIMetrics();
+
+      // Sync reset with Go Ingest service if running
+      try {
+        const ingestServiceUrl = process.env.INGEST_HTTP_URL || "http://localhost:8004";
+        await fetch(`${ingestServiceUrl}/api/ingest/reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(800),
+        });
+      } catch {
+        // Go Ingest offline fallback
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: "Live PII redaction metrics reset successfully.",
+        live_pii: getLivePIIMetrics(),
+        ingest_telemetry: {
+          ...BASELINE_INGEST_POLICY,
+          pii_redacted_today: 0,
+          pii_categories: {
+            jwt_tokens: 0,
+            passwords_and_secrets: 0,
+            credit_cards: 0,
+            ssn_and_national_ids: 0,
+            emails: 0,
+          },
+        },
+      });
+    }
+
+    if (action === "scrub_telemetry") {
+      if (body.payload && typeof body.payload === "object") {
+        const { cleaned, redactedCount, categories } = scrubTelemetryPayload(body.payload);
+        return NextResponse.json({
+          success: true,
+          cleaned,
+          redactedCount,
+          categories,
+          live_pii: getLivePIIMetrics(),
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        redactedCount: 0,
+        categories: {},
+        live_pii: getLivePIIMetrics(),
       });
     }
 

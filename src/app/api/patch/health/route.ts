@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8004";
+const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8006";
 
 export async function GET() {
   try {
@@ -13,7 +13,7 @@ export async function GET() {
         return NextResponse.json({ online: true, ...data });
       }
       return NextResponse.json(
-        { online: false, error: "Port conflict: unexpected service responded on port 8004" },
+        { online: false, error: "Port conflict: unexpected service responded on port 8006" },
         { status: 503 }
       );
     }

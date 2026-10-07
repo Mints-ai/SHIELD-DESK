@@ -3,7 +3,7 @@ import { getSessionFromRequest } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/permissions";
 import { isDevPersonaAllowed } from "@/lib/config/environment";
 
-const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8004";
+const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8006";
 
 function corsHeaders() {
   return {
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(data, { headers: corsHeaders() });
   } catch (err: any) {
     return NextResponse.json(
-      { error: "SSH Patch Orchestrator is offline. Start it with: orchestrator.exe server --port 8004", offline: true },
+      { error: "SSH Patch Orchestrator is offline. Start it with: orchestrator.exe server --port 8006", offline: true },
       { status: 503, headers: corsHeaders() }
     );
   }
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(data, { status: res.status, headers: corsHeaders() });
   } catch (err: any) {
     return NextResponse.json(
-      { error: "SSH Patch Orchestrator is offline. Make sure it is running on port 8004.", offline: true },
+      { error: "SSH Patch Orchestrator is offline. Make sure it is running on port 8006.", offline: true },
       { status: 503, headers: corsHeaders() }
     );
   }

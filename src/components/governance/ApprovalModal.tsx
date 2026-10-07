@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useId, useState } from "react";
+import React, { useId, useState, useEffect } from "react";
 import {
   CheckCircle,
   AlertTriangle,
@@ -48,9 +48,20 @@ export function ApprovalModal({
   const [rejectionReason, setRejectionReason] = useState("");
   const [isRejecting, setIsRejecting] = useState(false);
 
+  useEffect(() => {
+    if (isOpen) {
+      setIsSubmitting(false);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+      setRejectionReason("");
+      setIsRejecting(false);
+    }
+  }, [isOpen, token?.id]);
+
   if (!isOpen || !token) return null;
 
   const isSelfRequester = activeUserId === token.requested_by;
+  const isAlreadyFinalized = token.status !== "pending";
 
   const handleDecision = async (action: "approve" | "reject") => {
     setIsSubmitting(true);
@@ -78,6 +89,13 @@ export function ApprovalModal({
       setSuccessMsg(body?.message || `Successfully ${action}d action token.`);
       if (onDecisionSuccess && body.token) {
         onDecisionSuccess(body.token);
+      }
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("shielddesk:approvals-changed", {
+            detail: { action, token: body.token },
+          })
+        );
       }
       setTimeout(() => {
         onClose();
@@ -221,13 +239,19 @@ export function ApprovalModal({
               </div>
               <div className="pt-1.5 flex items-center gap-2">
                 <span className="text-[11px] text-[var(--sd-danger)]">Switch persona to test peer approval:</span>
-                <button
-                  type="button"
-                  onClick={() => setActiveUserId("dev-admin")}
-                  className="px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] font-bold border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
-                >
-                  Switch to dev-admin
-                </button>
+                {(() => {
+                  const peerUser = token.requested_by === "dev-admin" ? "dev-analyst" : "dev-admin";
+                  const peerLabel = peerUser === "dev-admin" ? "System Admin" : "SOC Analyst";
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => setActiveUserId(peerUser)}
+                      className="px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] font-bold border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
+                    >
+                      Switch to {peerLabel} ({peerUser})
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           ) : (
@@ -235,6 +259,16 @@ export function ApprovalModal({
               <UserCheck className="h-4 w-4 shrink-0" />
               <span>
                 Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; Qualified to sign off.
+              </span>
+            </div>
+          )}
+
+          {/* Finalized Token Notice */}
+          {isAlreadyFinalized && (
+            <div className="rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] p-3 text-[13px] text-[var(--sd-text-muted)] flex items-center gap-2">
+              <Clock className="h-4 w-4 shrink-0 text-[var(--sd-warning)]" />
+              <span>
+                Token status is <strong className="uppercase font-mono text-[var(--sd-text)]">{token.status}</strong>. This authorization has already concluded.
               </span>
             </div>
           )}
@@ -253,7 +287,7 @@ export function ApprovalModal({
           )}
 
           {/* Rejection input area if toggled */}
-          {isRejecting && (
+          {!isAlreadyFinalized && isRejecting && (
             <div className="space-y-1.5">
               <label htmlFor={rejectionId} className="text-[11px] font-semibold text-[var(--sd-text)]">
                 Reason for rejection (logged to immutable audit trail):
@@ -272,40 +306,63 @@ export function ApprovalModal({
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center justify-end gap-2.5 pt-4 border-t border-[var(--sd-border)]">
-            <button
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[13px] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer"
-            >
-              Cancel
-            </button>
-
-            {!isRejecting ? (
+            {isAlreadyFinalized ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="sd-button px-4 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[13px] font-semibold text-[var(--sd-text)] transition cursor-pointer"
+              >
+                Close
+              </button>
+            ) : (
               <>
                 <button
-                  onClick={() => setIsRejecting(true)}
+                  type="button"
+                  onClick={() => {
+                    if (isRejecting) {
+                      setIsRejecting(false);
+                      setErrorMsg(null);
+                    } else {
+                      onClose();
+                    }
+                  }}
                   disabled={isSubmitting}
-                  className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)]/80 text-[13px] font-semibold transition cursor-pointer"
+                  className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[13px] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer"
                 >
-                  Reject Action...
+                  {isRejecting ? "Back" : "Cancel"}
                 </button>
-                <button
-                  onClick={() => handleDecision("approve")}
-                  disabled={isSubmitting || isSelfRequester}
-                  className="sd-button-primary flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/90 text-[var(--sd-on-accent)] text-[13px] font-bold transition shadow-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <span>{isSubmitting ? "Authorizing..." : "Approve & Execute"}</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </button>
+
+                {!isRejecting ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsRejecting(true)}
+                      disabled={isSubmitting}
+                      className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)]/80 text-[13px] font-semibold transition cursor-pointer"
+                    >
+                      Reject Action...
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDecision("approve")}
+                      disabled={isSubmitting || isSelfRequester}
+                      className="sd-button-primary flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/90 text-[var(--sd-on-accent)] text-[13px] font-bold transition shadow-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <span>{isSubmitting ? "Authorizing..." : "Approve & Execute"}</span>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleDecision("reject")}
+                    disabled={isSubmitting}
+                    className="sd-button px-4 py-2.5 rounded-xl bg-[var(--sd-danger)] hover:opacity-95 text-[var(--sd-on-accent)] text-[13px] font-bold transition cursor-pointer"
+                  >
+                    {isSubmitting ? "Submitting..." : "Confirm Rejection"}
+                  </button>
+                )}
               </>
-            ) : (
-              <button
-                onClick={() => handleDecision("reject")}
-                disabled={isSubmitting}
-                className="sd-button px-4 py-2.5 rounded-xl bg-[var(--sd-danger)] hover:opacity-95 text-[var(--sd-on-accent)] text-[13px] font-bold transition cursor-pointer"
-              >
-                {isSubmitting ? "Submitting..." : "Confirm Rejection"}
-              </button>
             )}
           </div>
         </motion.div>

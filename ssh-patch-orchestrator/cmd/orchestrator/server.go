@@ -138,7 +138,7 @@ func (s *PatchServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"service":   "ShieldDesk SSH Patch Orchestrator (Go Backend API)",
 		"status":    "running",
-		"port":      8004,
+		"port":      8006,
 		"ui_url":    "http://localhost:3000/dashboard/scanner",
 		"message":   "This is the backend REST API microservice. Use the ShieldDesk UI at http://localhost:3000/dashboard/scanner to view and execute patches.",
 		"endpoints": []string{"/health", "/api/v1/jobs"},

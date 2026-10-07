@@ -197,4 +197,80 @@ test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry S
     const data = await res.json();
     assert.equal(data.killSwitchActive, true);
   });
+
+  await t.test("SD-026: Disconnected endpoint stays disconnected across incoming heartbeats until explicitly reconnected", async () => {
+    // Release kill switch first
+    await triggerKillSwitch({
+      agentId: enrolledAgentId,
+      active: false,
+      caller: {
+        id: "usr-admin-01",
+        tenant_id: "acme-tenant",
+        role: "system_admin",
+      },
+    });
+
+    // Import PATCH from fleet route dynamically
+    const { PATCH: fleetPATCH } = await import("@/app/api/fleet/[id]/route");
+
+    // Admin disconnects endpoint
+    const disconnectReq = new NextRequest(`http://localhost:3000/api/fleet/${enrolledAgentId}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action: "disconnect" }),
+    });
+    const disconnectRes = await fleetPATCH(disconnectReq, {
+      params: Promise.resolve({ id: enrolledAgentId }),
+    });
+    assert.equal(disconnectRes.status, 200);
+
+    // Heartbeat comes in from still-running daemon
+    const hbReq = new NextRequest("http://localhost:3000/api/agent/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agentId: enrolledAgentId,
+        cpuUsage: 25.0,
+        memoryUsage: 60.0,
+        eps: 50,
+      }),
+    });
+    const hbRes = await heartbeatPOST(hbReq);
+    assert.equal(hbRes.status, 200);
+    const hbData = await hbRes.json();
+    assert.equal(hbData.status, "disconnected", "Endpoint must remain disconnected despite active heartbeat");
+
+    // Admin reconnects endpoint
+    const reconnectReq = new NextRequest(`http://localhost:3000/api/fleet/${enrolledAgentId}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action: "reconnect" }),
+    });
+    const reconnectRes = await fleetPATCH(reconnectReq, {
+      params: Promise.resolve({ id: enrolledAgentId }),
+    });
+    assert.equal(reconnectRes.status, 200);
+
+    // Next heartbeat should now be accepted as connected
+    const hbReq2 = new NextRequest("http://localhost:3000/api/agent/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agentId: enrolledAgentId,
+        cpuUsage: 18.0,
+        memoryUsage: 50.0,
+        eps: 30,
+      }),
+    });
+    const hbRes2 = await heartbeatPOST(hbReq2);
+    assert.equal(hbRes2.status, 200);
+    const hbData2 = await hbRes2.json();
+    assert.equal(hbData2.status, "connected", "Endpoint should be connected after explicit reconnect");
+  });
 });
