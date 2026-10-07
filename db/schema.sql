@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS approval_tokens (
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT check_separation_of_duties
-    CHECK (approved_by IS NULL OR requested_by <> approved_by),
+    CHECK (approved_by IS NULL OR tier IN ('Tier 1', 'Tier 2') OR requested_by <> approved_by),
   CONSTRAINT check_tier3_dual_approval_separation
     CHECK (secondary_approved_by IS NULL OR approved_by <> secondary_approved_by)
 );
@@ -212,7 +212,7 @@ CREATE TABLE IF NOT EXISTS agent_command_logs (
   tenant_id     text NOT NULL,
   command       text NOT NULL,
   tier          text NOT NULL CHECK (tier IN ('Tier 0', 'Tier 1', 'Tier 2', 'Tier 3')),
-  token_id      uuid REFERENCES approval_tokens(id),
+  token_id      uuid REFERENCES approval_tokens(id) ON DELETE CASCADE,
   status        text NOT NULL CHECK (status IN ('pending', 'executing', 'succeeded', 'failed', 'rolled_back')),
   output        text,
   executed_by   text NOT NULL,
@@ -226,7 +226,7 @@ CREATE TABLE IF NOT EXISTS agent_commands (
   tenant_id     text NOT NULL,
   command       text NOT NULL,
   tier          text NOT NULL CHECK (tier IN ('Tier 0', 'Tier 1', 'Tier 2', 'Tier 3')),
-  token_id      uuid REFERENCES approval_tokens(id),
+  token_id      uuid REFERENCES approval_tokens(id) ON DELETE CASCADE,
   signature     text NOT NULL,
   nonce         text,
   status        text NOT NULL DEFAULT 'queued'

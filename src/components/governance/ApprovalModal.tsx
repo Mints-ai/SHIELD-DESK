@@ -38,7 +38,7 @@ export function ApprovalModal({
   onNavigate,
   onDecisionSuccess,
 }: ApprovalModalProps) {
-  const { activeUserId, setActiveUserId } = useChat();
+  const { activeUserId, setActiveUserId, activeUser } = useChat();
   const titleId = useId();
   const rejectionId = useId();
   const reduceMotion = useReducedMotion();
@@ -60,7 +60,15 @@ export function ApprovalModal({
 
   if (!isOpen || !token) return null;
 
-  const isSelfRequester = activeUserId === token.requested_by;
+  const isSystemAdmin = activeUser.role === "system_admin" || activeUser.role === "super_admin";
+  const allowsSelfApproval = isSystemAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
+  const isBlockedBySelfRequest = activeUserId === token.requested_by && !allowsSelfApproval;
+  const isAnalystRole =
+    activeUser.role === "analyst" ||
+    activeUser.role === "user" ||
+    activeUser.role === "viewer" ||
+    activeUser.role === "auditor";
+  const canApproveAction = isSystemAdmin && !isBlockedBySelfRequest;
   const isAlreadyFinalized = token.status !== "pending";
 
   const handleDecision = async (action: "approve" | "reject") => {
@@ -225,40 +233,54 @@ export function ApprovalModal({
             </div>
           </div>
 
-          {/* Separation of Duties Rule Banner */}
-          {isSelfRequester ? (
+          {/* Governance & Role Authorization Banner */}
+          {isAnalystRole ? (
             <div className="rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] p-3 text-[13px] text-[var(--sd-danger)] space-y-2">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-[var(--sd-danger)]" />
                 <div className="space-y-1">
-                  <p className="font-bold">Separation of Duties Policy (ISO 27001 A.9.2)</p>
+                  <p className="font-bold">Approval Restricted &mdash; Analyst Role</p>
                   <p className="text-[13px] leading-relaxed text-[var(--sd-danger)]">
-                    You cannot sign off on an action you requested (<code className="font-mono font-bold text-[var(--sd-danger)]">{token.requested_by}</code>). A distinct authorized peer must approve this token.
+                    Analysts cannot approve remediation actions under any circumstances. Only System Administrators are permitted to authorize containment tasks.
                   </p>
                 </div>
               </div>
               <div className="pt-1.5 flex items-center gap-2">
-                <span className="text-[11px] text-[var(--sd-danger)]">Switch persona to test peer approval:</span>
-                {(() => {
-                  const peerUser = token.requested_by === "dev-admin" ? "dev-analyst" : "dev-admin";
-                  const peerLabel = peerUser === "dev-admin" ? "System Admin" : "SOC Analyst";
-                  return (
-                    <button
-                      type="button"
-                      onClick={() => setActiveUserId(peerUser)}
-                      className="px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] font-bold border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
-                    >
-                      Switch to {peerLabel} ({peerUser})
-                    </button>
-                  );
-                })()}
+                <span className="text-[11px] text-[var(--sd-danger)]">Switch persona to test System Admin approval:</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveUserId("dev-admin")}
+                  className="px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] font-bold border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
+                >
+                  Switch to System Admin (dev-admin)
+                </button>
+              </div>
+            </div>
+          ) : isBlockedBySelfRequest ? (
+            <div className="rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] p-3 text-[13px] text-[var(--sd-danger)] space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-[var(--sd-danger)]" />
+                <div className="space-y-1">
+                  <p className="font-bold">Separation of Duties Policy (Tier 3 Critical)</p>
+                  <p className="text-[13px] leading-relaxed text-[var(--sd-danger)]">
+                    Tier 3 break-glass actions require sign-off by a distinct administrator. You cannot approve an action you requested (<code className="font-mono font-bold text-[var(--sd-danger)]">{token.requested_by}</code>).
+                  </p>
+                </div>
               </div>
             </div>
           ) : (
             <div className="rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] p-2.5 text-[13px] text-[var(--sd-success)] flex items-center gap-2">
               <UserCheck className="h-4 w-4 shrink-0" />
               <span>
-                Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; Qualified to sign off.
+                {allowsSelfApproval && activeUserId === token.requested_by ? (
+                  <>
+                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; System Admin self-approval permitted for {token.tier}.
+                  </>
+                ) : (
+                  <>
+                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; Qualified to sign off on {token.tier} action.
+                  </>
+                )}
               </span>
             </div>
           )}
@@ -338,15 +360,15 @@ export function ApprovalModal({
                       type="button"
                       onClick={() => setIsRejecting(true)}
                       disabled={isSubmitting}
-                      className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)]/80 text-[13px] font-semibold transition cursor-pointer"
+                      className="px-4 py-2.5 rounded-xl border border-[#8a3025]/50 bg-[#8a3025]/15 text-[#e07567] hover:bg-[#8a3025]/25 text-[13px] font-semibold transition cursor-pointer"
                     >
                       Reject Action...
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDecision("approve")}
-                      disabled={isSubmitting || isSelfRequester}
-                      className="sd-button-primary flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/90 text-[var(--sd-on-accent)] text-[13px] font-bold transition shadow-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={isSubmitting || !canApproveAction}
+                      className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] text-[13px] font-bold shadow-[0_4px_16px_rgba(160,127,58,0.25)] transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <span>{isSubmitting ? "Authorizing..." : "Approve & Execute"}</span>
                       <ArrowRight className="h-3.5 w-3.5" />
@@ -357,7 +379,7 @@ export function ApprovalModal({
                     type="button"
                     onClick={() => handleDecision("reject")}
                     disabled={isSubmitting}
-                    className="sd-button px-4 py-2.5 rounded-xl bg-[var(--sd-danger)] hover:opacity-95 text-[var(--sd-on-accent)] text-[13px] font-bold transition cursor-pointer"
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#8a3025] to-[#6d241c] hover:from-[#9b372b] hover:to-[#7d2a20] text-white border border-[#b84a3c]/40 text-[13px] font-bold shadow-[0_2px_12px_rgba(138,48,37,0.3)] transition cursor-pointer"
                   >
                     {isSubmitting ? "Submitting..." : "Confirm Rejection"}
                   </button>

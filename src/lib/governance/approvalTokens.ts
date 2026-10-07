@@ -81,13 +81,14 @@ export async function requestApprovalToken(
     targetEndpointIds?: string[];
     nonce?: string;
     approvalLevel?: string;
+    tier?: AutonomyTier | string;
   }
 ) {
   if (!args.taskId) return { error: "missing_task_id" };
 
   const action = args.actionType || "remediate_task";
   const classification = classifyResponseTier(action, { cveScore: args.cveScore });
-  const tier = classification.tier;
+  const tier: AutonomyTier = (args.tier as AutonomyTier) || classification.tier;
   const confidence = calculateModelConfidence(tier);
   const tokenId = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
@@ -274,13 +275,23 @@ export async function approveActionToken(
       token = MOCK_APPROVAL_TOKENS[args.tokenId];
       isMock = Boolean(token);
     }
-    if (!token) return { error: "not_found" }; // 404 anti-enumeration
+    if (!token) {
+      return {
+        error: "not_found",
+        message: "Authorization token not found or no longer pending. Please close this modal and refresh the task list.",
+      };
+    }
 
-    // 2. Separation of Duties enforcement: Requester CANNOT approve their own action
-    if (token.requested_by === session.uid) {
+    // 2. Separation of Duties enforcement:
+    // System Admin / Super Admin can approve Tier 1 and Tier 2 tasks even if requested by them.
+    // For Tier 3 (break-glass), separation of duties is strictly enforced.
+    const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
+    const allowsSelfApproval = isSystemAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
+
+    if (token.requested_by === session.uid && !allowsSelfApproval) {
       return {
         error: "separation_of_duties_violation",
-        message: "Separation of duties violation: you cannot approve your own action request.",
+        message: `Separation of duties violation: you cannot approve your own action request for ${token.tier}.`,
       };
     }
 
@@ -413,10 +424,13 @@ export async function approveActionToken(
     }
 
     // Separation of Duties check in mock mode
-    if (token.requested_by === session.uid) {
+    const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
+    const allowsSelfApproval = isSystemAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
+
+    if (token.requested_by === session.uid && !allowsSelfApproval) {
       return {
         error: "separation_of_duties_violation",
-        message: "Separation of duties violation: you cannot approve your own action request.",
+        message: `Separation of duties violation: you cannot approve your own action request for ${token.tier}.`,
       };
     }
 

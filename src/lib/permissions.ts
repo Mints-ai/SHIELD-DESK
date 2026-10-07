@@ -63,9 +63,9 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.read",
     "incident.investigate",
     "cve.read",
-    // analysts can sign off on Tier 1 and Tier 2 containment actions
-    "approve.tier1",
-    "approve.tier2",
+    "incident.mitigate",
+    "task.assign",
+    // Analysts can investigate and draft tasks, but CANNOT approve remediation actions.
   ],
   viewer: [
     "incident.read",
@@ -82,8 +82,8 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
-    "approve.tier1",
-    "approve.tier2",
+    "task.assign",
+    // Standard users/analysts cannot approve remediation actions.
   ],
 };
 

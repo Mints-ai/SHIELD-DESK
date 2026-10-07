@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
         // In demo mode with DB offline, allow proceeding
       }
     } else {
-      // If no planId specified, attempt to associate with the tenant's active plan
+      // If no planId specified, link to the tenant's latest active incident mitigation plan
       try {
         const planRes = await query<{ id: string }>(
           "SELECT id FROM mitigation_plans WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1",
@@ -162,17 +162,10 @@ export async function POST(req: NextRequest) {
         if (planRes.rows.length > 0) {
           planId = planRes.rows[0].id;
         } else {
-          // Create default plan if none exists for this tenant
-          const newPlanId = crypto.randomUUID();
-          await query(
-            `INSERT INTO mitigation_plans (id, incident_id, tenant_id, version, status, summary)
-             VALUES ($1, '11111111-1111-1111-1111-111111111111', $2, 1, 'active', 'Tenant Remediation Plan')`,
-            [newPlanId, session.tenantId]
-          );
-          planId = newPlanId;
+          planId = null;
         }
       } catch {
-        planId = "p1111111-1111-1111-1111-111111111111";
+        planId = null;
       }
     }
 
@@ -199,16 +192,11 @@ export async function POST(req: NextRequest) {
 
       if (tier !== "Tier 0") {
         try {
-          const requesterUid = session.uid === "dev-admin" ? "dev-analyst" : session.uid;
-          const requesterSession = {
-            ...session,
-            uid: requesterUid,
-            role: (requesterUid === "dev-analyst" ? "user" : session.role) as typeof session.role,
-          };
-          await requestApprovalToken(requesterSession, {
+          await requestApprovalToken(session, {
             taskId,
             actionType: title,
             blastRadius,
+            tier,
           });
         } catch {
           // Token creation is non-blocking
@@ -239,16 +227,11 @@ export async function POST(req: NextRequest) {
 
         if (tier !== "Tier 0") {
           try {
-            const requesterUid = session.uid === "dev-admin" ? "dev-analyst" : session.uid;
-            const requesterSession = {
-              ...session,
-              uid: requesterUid,
-              role: (requesterUid === "dev-analyst" ? "user" : session.role) as typeof session.role,
-            };
-            await requestApprovalToken(requesterSession, {
+            await requestApprovalToken(session, {
               taskId,
               actionType: title,
               blastRadius,
+              tier,
             });
           } catch {}
         }

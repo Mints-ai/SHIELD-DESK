@@ -16,7 +16,7 @@ export const DEV_USERS: Record<DevUserId, DevUserMetadata> = {
   "dev-analyst": {
     id: "dev-analyst",
     label: "Analyst",
-    role: "user",
+    role: "analyst",
     tenantId: "acme-tenant",
     tenantName: "Acme Corp",
     email: "analyst@acme.corp",
