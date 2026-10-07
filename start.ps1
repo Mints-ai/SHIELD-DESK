@@ -140,7 +140,7 @@ function Stop-AllServices {
         Write-Host "  [STOPPED] $($job.Name)" -ForegroundColor DarkGray
     }
     # Kill any child processes that outlived the jobs
-    Get-Process -Name "ollama" -ErrorAction SilentlyContinue |
+    Get-Process -Name "ollama", "ingest", "threat", "webhook" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "  All services stopped. Goodbye!" -ForegroundColor DarkGreen
@@ -153,6 +153,10 @@ function Stop-AllServices {
 
 Write-Banner
 Check-Prerequisites
+
+# Ensure no orphaned microservices from previous sessions are blocking ports
+Get-Process -Name "ingest", "threat", "webhook" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "  Launching services..." -ForegroundColor White
@@ -171,15 +175,15 @@ $pythonJob  = Start-Service "PythonBrain" "python server.py" $PYTHON    $envMap
 $nextJob    = Start-Service "NextJS"      "npm run dev"    $ROOT        $envMap
 $threatDir  = Join-Path $ROOT "services\threat"
 $threatExe  = Join-Path $threatDir "threat.exe"
-$threatCmd  = if (Test-Path $threatExe) { ".\threat.exe" } else { "go run ." }
+$threatCmd  = if (Test-Path $threatExe) { "cmd.exe /c threat.exe" } else { "go run ." }
 $threatJob  = Start-Service "GoThreat"    $threatCmd       $threatDir   $envMap
 $webhookDir = Join-Path $ROOT "services\webhooks"
 $webhookExe = Join-Path $webhookDir "webhook.exe"
-$webhookCmd = if (Test-Path $webhookExe) { ".\webhook.exe" } else { "go run ." }
+$webhookCmd = if (Test-Path $webhookExe) { "cmd.exe /c webhook.exe" } else { "go run ." }
 $webhookJob = Start-Service "GoWebhook"   $webhookCmd      $webhookDir  $envMap
 $ingestDir  = Join-Path $ROOT "services\ingest"
 $ingestExe  = Join-Path $ingestDir "ingest.exe"
-$ingestCmd  = if (Test-Path $ingestExe) { ".\ingest.exe" } else { "go run ." }
+$ingestCmd  = if (Test-Path $ingestExe) { "cmd.exe /c ingest.exe" } else { "go run ." }
 $ingestJob  = Start-Service "GoIngest"    $ingestCmd       $ingestDir   $envMap
 
 $allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob)
