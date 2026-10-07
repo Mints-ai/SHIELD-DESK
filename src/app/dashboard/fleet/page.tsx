@@ -85,6 +85,18 @@ export default function FleetPage() {
   const [killSwitchEngaged, setKillSwitchEngaged] = useState(false);
   const [filterAgentId, setFilterAgentId] = useState<string>("all");
   const [reconnectingAgentId, setReconnectingAgentId] = useState<string | null>(null);
+  // Map of agentId -> timestamp (ms) when 5-second reconnect grace window expires
+  const [disconnectGracePeriods, setDisconnectGracePeriods] = useState<Record<string, number>>({});
+  const [currentTime, setCurrentTime] = useState<number>(() => Date.now());
+
+  // High-frequency clock to tick countdowns smoothly
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 200);
+    return () => clearInterval(timer);
+  }, []);
+
   const [dispatchFeedback, setDispatchFeedback] = useState<{
     type: "success" | "error";
     message: string;
@@ -382,9 +394,28 @@ export default function FleetPage() {
     }
   };
 
-  // Disconnect an agent (marks as disconnected in DB, keeps record)
+  // Disconnect an agent (starts 5s reconnect grace period; marks as disconnected in DB)
   const handleDisconnectAgent = async (agentId: string) => {
-    if (!confirm("Disconnect this endpoint? It will show as offline until it reconnects.")) return;
+    // Start 5-second countdown grace period immediately
+    setDisconnectGracePeriods((prev) => ({
+      ...prev,
+      [agentId]: Date.now() + 5000,
+    }));
+
+    // Optimistically update agent status locally
+    setAgents((prev) =>
+      prev.map((a) =>
+        a.id === agentId
+          ? { ...a, status: "disconnected", cpu_usage: 0, eps: 0 }
+          : a
+      )
+    );
+    setSelectedAgent((prev) =>
+      prev?.id === agentId
+        ? { ...prev, status: "disconnected", cpu_usage: 0, eps: 0 }
+        : prev
+    );
+
     try {
       const res = await fetch(`/api/fleet/${agentId}`, {
         method: "PATCH",
@@ -396,23 +427,24 @@ export default function FleetPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setAgents((prev) =>
-          prev.map((a) =>
-            a.id === agentId
-              ? { ...a, status: "disconnected", cpu_usage: 0, eps: 0 }
-              : a
-          )
-        );
-        setSelectedAgent((prev) =>
-          prev?.id === agentId
-            ? { ...prev, status: "disconnected", cpu_usage: 0, eps: 0 }
-            : prev
-        );
         fetchFleet();
       } else {
+        // Revert grace period on error
+        setDisconnectGracePeriods((prev) => {
+          const next = { ...prev };
+          delete next[agentId];
+          return next;
+        });
+        await fetchFleet(true);
         alert(data.error || "Failed to disconnect agent");
       }
     } catch {
+      setDisconnectGracePeriods((prev) => {
+        const next = { ...prev };
+        delete next[agentId];
+        return next;
+      });
+      await fetchFleet(true);
       alert("Network error disconnecting agent");
     }
   };
@@ -420,16 +452,24 @@ export default function FleetPage() {
   // Reconnect/refresh a disconnected agent
   const handleReconnectAgent = async (agentId: string) => {
     setReconnectingAgentId(agentId);
+    // Clear grace period so countdown is removed immediately
+    setDisconnectGracePeriods((prev) => {
+      const next = { ...prev };
+      delete next[agentId];
+      return next;
+    });
+
+    const nowIso = new Date().toISOString();
     setAgents((prev) =>
       prev.map((a) =>
         a.id === agentId
-          ? { ...a, status: "connected", cpu_usage: 0, memory_usage: 0, eps: 0 }
+          ? { ...a, status: "connected", last_heartbeat: nowIso, cpu_usage: 0, memory_usage: 0, eps: 0 }
           : a
       )
     );
     setSelectedAgent((prev) =>
       prev?.id === agentId
-        ? { ...prev, status: "connected", cpu_usage: 0, memory_usage: 0, eps: 0 }
+        ? { ...prev, status: "connected", last_heartbeat: nowIso, cpu_usage: 0, memory_usage: 0, eps: 0 }
         : prev
     );
     try {
@@ -467,6 +507,11 @@ export default function FleetPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        setDisconnectGracePeriods((prev) => {
+          const next = { ...prev };
+          delete next[agentId];
+          return next;
+        });
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
         setSelectedAgent((prev) => (prev?.id === agentId ? null : prev));
         fetchFleet();
@@ -975,6 +1020,11 @@ export default function FleetPage() {
               const memVal = isDisconnected || isStale ? 0 : agent.memory_usage;
               const epsVal = isDisconnected || isStale ? 0 : agent.eps;
 
+              const graceExpiresAt = disconnectGracePeriods[agent.id];
+              const remainingGraceMs = graceExpiresAt ? Math.max(0, graceExpiresAt - currentTime) : 0;
+              const isWithinGrace = isDisconnected && remainingGraceMs > 0;
+              const remainingSeconds = Math.ceil(remainingGraceMs / 1000);
+
               return (
                 <div
                   key={agent.id}
@@ -1140,13 +1190,13 @@ export default function FleetPage() {
                             e.stopPropagation();
                             handleDisconnectAgent(agent.id);
                           }}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/60 transition cursor-pointer"
+                          className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/60 transition cursor-pointer"
                           title="Disconnect this endpoint"
                         >
                           <Unplug className="h-3.5 w-3.5" />
                           <span>Disconnect</span>
                         </button>
-                      ) : (
+                      ) : isWithinGrace ? (
                         <button
                           type="button"
                           onClick={(e) => {
@@ -1156,25 +1206,35 @@ export default function FleetPage() {
                             }
                           }}
                           disabled={reconnectingAgentId === agent.id}
-                          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 hover:border-emerald-500/60 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-                          title="Refresh and reconnect this endpoint"
+                          className="w-full flex items-center justify-center gap-2 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 hover:border-emerald-500/80 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-xs shadow-emerald-500/10 animate-pulse"
+                          title={`Reconnect host — window expires in ${remainingSeconds}s`}
                         >
-                          <RefreshCw className={cn("h-3 w-3", reconnectingAgentId === agent.id && "animate-spin")} />
-                          <span>{reconnectingAgentId === agent.id ? "Refreshing..." : "Reconnect Host"}</span>
+                          <RefreshCw className={cn("h-3.5 w-3.5", reconnectingAgentId === agent.id && "animate-spin")} />
+                          <span>
+                            {reconnectingAgentId === agent.id
+                              ? "Reconnecting..."
+                              : `Reconnect Host (${remainingSeconds}s)`}
+                          </span>
                         </button>
-                      )}
-                      {canManageFleetAgents && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRemoveAgent(agent.id, agent.hostname);
-                          }}
-                          className="flex items-center justify-center p-1.5 rounded-xl text-[11px] font-mono border border-red-500/30 text-red-400 hover:bg-red-500/10 hover:border-red-500/60 transition cursor-pointer"
-                          title="Remove endpoint from fleet"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                      ) : (
+                        canManageFleetAgents ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveAgent(agent.id, agent.hostname);
+                            }}
+                            className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-red-500/40 text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:border-red-500/70 transition cursor-pointer"
+                            title="Remove endpoint from fleet"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span>Delete Host</span>
+                          </button>
+                        ) : (
+                          <div className="w-full py-1.5 text-center text-[10px] font-mono text-[var(--sd-text-dim)]">
+                            Endpoint Severed
+                          </div>
+                        )
                       )}
                     </div>
                 </div>

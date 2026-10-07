@@ -84,12 +84,14 @@ export async function PATCH(
         const sql = isCrossTenant
           ? `UPDATE endpoint_agents
              SET status = 'connected',
+                 last_seen_at = now(),
                  cpu_usage = 0,
                  memory_usage = 0,
                  eps = 0
              WHERE id = $1 RETURNING id;`
           : `UPDATE endpoint_agents
              SET status = 'connected',
+                 last_seen_at = now(),
                  cpu_usage = 0,
                  memory_usage = 0,
                  eps = 0
@@ -102,6 +104,7 @@ export async function PATCH(
         const agent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === id);
         if (agent) {
           agent.status = "connected";
+          agent.last_heartbeat = new Date().toISOString();
           agent.cpu_usage = 0;
           agent.memory_usage = 0;
           agent.eps = 0;
