@@ -32,6 +32,27 @@ func TestStripPII(t *testing.T) {
 	}
 }
 
+func TestPIIMetricsTracker(t *testing.T) {
+	ResetPIIStats()
+	payload := map[string]string{
+		"token": "sk-1234567890",
+		"email": "analyst@acme.corp",
+	}
+	StripPII(payload)
+
+	total, categories := GetPIIStats()
+	if total < 2 {
+		t.Errorf("Expected at least 2 redacted tokens, got %d", total)
+	}
+	if categories.PasswordsAndSecrets < 1 {
+		t.Errorf("Expected sensitive key count >= 1, got %d", categories.PasswordsAndSecrets)
+	}
+	if categories.Emails < 1 {
+		t.Errorf("Expected emails count >= 1, got %d", categories.Emails)
+	}
+}
+
+
 func TestTenantRateLimiter(t *testing.T) {
 	rl := NewTenantRateLimiter()
 	tenant := "ten_test_throttle"

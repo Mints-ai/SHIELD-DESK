@@ -22,6 +22,7 @@ export type Permission =
   | "incident.investigate"
   | "cve.read"
   | "incident.mitigate"
+  | "task.assign"     // create / assign remediation tasks
   // Approval tier gates — additive. Each role can approve up to its highest tier.
   | "approve.tier1"  // low-risk reversible (Tier 1)
   | "approve.tier2"  // host isolation / patching (Tier 2) — requires responder+
@@ -35,6 +36,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
+    "task.assign",
     "approve.tier1",
     "approve.tier2",
     "approve.tier3",
@@ -61,8 +63,9 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.read",
     "incident.investigate",
     "cve.read",
-    // analysts can flag low-risk Tier 1 actions for auto-containment
+    // analysts can sign off on Tier 1 and Tier 2 containment actions
     "approve.tier1",
+    "approve.tier2",
   ],
   viewer: [
     "incident.read",
@@ -80,6 +83,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "cve.read",
     "incident.mitigate",
     "approve.tier1",
+    "approve.tier2",
   ],
 };
 
@@ -105,6 +109,17 @@ export function canAccess(role: string, permission: Permission): boolean {
 }
 
 export const hasPermission = canAccess;
+
+/**
+ * Returns true if the session is allowed to create / assign tasks.
+ * Rules: System Admin (any tenant) OR any user from globex-tenant.
+ */
+export function canAssignTask(role: string, tenantId: string): boolean {
+  if (role === "viewer" || role === "auditor") {
+    return false;
+  }
+  return true;
+}
 
 export function canExecuteTool(role: string, toolName: string): boolean {
   const requiredPermission = TOOL_PERMISSIONS[toolName];

@@ -375,8 +375,8 @@ func (h *HTTPServer) Start() error {
 
 		yaraRules := []RuleItem{
 			{
-				ID:           "yara_webshell_c99",
-				Name:         "Webshell_C99_PHP",
+				ID:           "YARA-MAL-001",
+				Name:         "WebShell_C99_PHP",
 				Category:     "Malware / Webshell",
 				Severity:     "CRITICAL",
 				MatchesToday: 3,
@@ -385,7 +385,7 @@ func (h *HTTPServer) Start() error {
 				Description:  "Detects obfuscated PHP C99/b374k webshell headers, base64_decode, and passthru command execution payloads.",
 			},
 			{
-				ID:           "yara_ransomware_extensions",
+				ID:           "YARA-MAL-002",
 				Name:         "Ransomware_LockBit_Indicators",
 				Category:     "Ransomware",
 				Severity:     "CRITICAL",
@@ -395,7 +395,7 @@ func (h *HTTPServer) Start() error {
 				Description:  "Detects mass extension renaming (.lockbit, .blackcat) and automated shadow copy deletion commands.",
 			},
 			{
-				ID:           "yara_cobalt_beacon",
+				ID:           "YARA-MAL-003",
 				Name:         "Cobalt_Strike_Beacon_Memory",
 				Category:     "C2 / Post-Exploitation",
 				Severity:     "HIGH",
@@ -403,6 +403,26 @@ func (h *HTTPServer) Start() error {
 				Status:       "ACTIVE",
 				Target:       "process memory",
 				Description:  "Detects known Cobalt Strike malleable C2 reflective DLL loader memory patterns.",
+			},
+			{
+				ID:           "YARA-MAL-004",
+				Name:         "Log4j_JNDI_Exploit_Strings",
+				Category:     "Exploit / Initial Access",
+				Severity:     "CRITICAL",
+				MatchesToday: 0,
+				Status:       "ACTIVE",
+				Target:       "inbound HTTP / log stream",
+				Description:  "Detects Log4j JNDI injection attack strings in requests and logs.",
+			},
+			{
+				ID:           "YARA-MAL-005",
+				Name:         "Mimikatz_Credential_Dumping",
+				Category:     "Credential Access",
+				Severity:     "CRITICAL",
+				MatchesToday: 0,
+				Status:       "ACTIVE",
+				Target:       "process memory / LSASS",
+				Description:  "Detects Mimikatz sekurlsa and logonpasswords memory artifact signatures.",
 			},
 		}
 
@@ -677,6 +697,83 @@ func (h *HTTPServer) Start() error {
 			"success":   success,
 			"alert_id":  req.AlertID,
 			"tenant_id": req.TenantID,
+		})
+	})
+
+	// 10. Native YARA Rules & Match Stats (SD-027)
+	mux.HandleFunc("GET /api/threats/yara", func(w http.ResponseWriter, r *http.Request) {
+		tenantID := r.URL.Query().Get("tenant_id")
+		if tenantID == "" {
+			tenantID = "acme-tenant"
+		}
+
+		rules := []RuleItem{
+			{
+				ID:           "YARA-MAL-001",
+				Name:         "WebShell_C99_PHP",
+				Category:     "Malware / Webshell",
+				Severity:     "CRITICAL",
+				MatchesToday: 3,
+				Status:       "ACTIVE",
+				Target:       "filesystem / webroot",
+				Description:  "Detects obfuscated PHP C99/b374k webshell headers, base64_decode, and passthru command execution payloads.",
+			},
+			{
+				ID:           "YARA-MAL-002",
+				Name:         "Ransomware_LockBit_Indicators",
+				Category:     "Ransomware",
+				Severity:     "CRITICAL",
+				MatchesToday: 0,
+				Status:       "ACTIVE",
+				Target:       "filesystem write operations",
+				Description:  "Detects mass extension renaming (.lockbit, .blackcat) and automated shadow copy deletion commands.",
+			},
+			{
+				ID:           "YARA-MAL-003",
+				Name:         "Cobalt_Strike_Beacon_Memory",
+				Category:     "C2 / Post-Exploitation",
+				Severity:     "HIGH",
+				MatchesToday: 1,
+				Status:       "ACTIVE",
+				Target:       "process memory",
+				Description:  "Detects known Cobalt Strike malleable C2 reflective DLL loader memory patterns.",
+			},
+			{
+				ID:           "YARA-MAL-004",
+				Name:         "Log4j_JNDI_Exploit_Strings",
+				Category:     "Exploit / Initial Access",
+				Severity:     "CRITICAL",
+				MatchesToday: 0,
+				Status:       "ACTIVE",
+				Target:       "inbound HTTP / log stream",
+				Description:  "Detects Log4j JNDI injection attack strings in requests and logs.",
+			},
+			{
+				ID:           "YARA-MAL-005",
+				Name:         "Mimikatz_Credential_Dumping",
+				Category:     "Credential Access",
+				Severity:     "CRITICAL",
+				MatchesToday: 0,
+				Status:       "ACTIVE",
+				Target:       "process memory / LSASS",
+				Description:  "Detects Mimikatz sekurlsa and logonpasswords memory artifact signatures.",
+			},
+		}
+
+		totalMatches := 0
+		for _, r := range rules {
+			totalMatches += r.MatchesToday
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":              "ok",
+			"source":              "go-threat-service",
+			"tenant_id":           tenantID,
+			"yara_rules":          rules,
+			"total_rules":         len(rules),
+			"matches_today_total": totalMatches,
+			"timestamp":           time.Now().UTC(),
 		})
 	})
 

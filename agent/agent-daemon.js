@@ -22,10 +22,14 @@ const args = process.argv.slice(2);
 let token = process.env.SHIELDDESK_ENROLL_TOKEN || '';
 let controlUrl = (process.env.SHIELDDESK_CONTROL_URL || 'http://localhost:3000').replace(/\/$/, '');
 let customHostname = process.env.SHIELDDESK_HOSTNAME || os.hostname();
+let agentId = process.env.SHIELDDESK_AGENT_ID || '';
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--token' && args[i + 1]) {
     token = args[i + 1];
+    i++;
+  } else if (args[i] === '--agent-id' && args[i + 1]) {
+    agentId = args[i + 1];
     i++;
   } else if (args[i] === '--control-url' && args[i + 1]) {
     controlUrl = args[i + 1].replace(/\/$/, '');
@@ -36,10 +40,12 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-if (!token) {
-  console.error('\x1b[31m[Error] Missing enrollment token.\x1b[0m');
+if (!token && !agentId) {
+  console.error('\x1b[31m[Error] Missing enrollment token or agent ID.\x1b[0m');
   console.log('\nUsage:');
   console.log('  node agent/agent-daemon.js --token <sdt_token> [--control-url http://localhost:3000]');
+  console.log('  or resume an existing endpoint:');
+  console.log('  node agent/agent-daemon.js --agent-id <agent_id> [--control-url http://localhost:3000]');
   console.log('\nGenerate an enrollment token in the ShieldDesk dashboard under "Fleet & hosts" -> "Connect Endpoint".\n');
   process.exit(1);
 }
@@ -200,43 +206,45 @@ async function start() {
   console.log(`[*] Target Hostname:     \x1b[33m${customHostname}\x1b[0m`);
   console.log(`[*] Platform / OS:       \x1b[33m${getOsType()} (${os.release()})\x1b[0m`);
   console.log(`[*] Control Plane URL:   \x1b[33m${controlUrl}\x1b[0m`);
-  console.log(`[*] Presenting enrollment token to control plane...`);
-
-  // 1. Enroll Agent
-  let agentId = '';
   let tenantId = '';
 
-  try {
-    const endpointIp = await getEndpointIpAddress();
-    console.log(`[*] Detected Endpoint IP: \x1b[33m${endpointIp || 'Unavailable'}\x1b[0m`);
+  if (!agentId) {
+    console.log(`[*] Presenting enrollment token to control plane...`);
+    try {
+      const endpointIp = await getEndpointIpAddress();
+      console.log(`[*] Detected Endpoint IP: \x1b[33m${endpointIp || 'Unavailable'}\x1b[0m`);
 
-    const enrollRes = await request(`${controlUrl}/api/agent/enroll`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }, {
-      token: token.trim(),
-      hostname: customHostname,
-      ipAddress: endpointIp,
-      osType: getOsType(),
-      agentVersion: '0.4.2',
-    });
+      const enrollRes = await request(`${controlUrl}/api/agent/enroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, {
+        token: token.trim(),
+        hostname: customHostname,
+        ipAddress: endpointIp,
+        osType: getOsType(),
+        agentVersion: '0.4.2',
+      });
 
-    if (enrollRes.status !== 200 || !enrollRes.data.success) {
-      console.error(`\x1b[31m[Enrollment Failed]\x1b[0m Status: ${enrollRes.status}`, enrollRes.data);
+      if (enrollRes.status !== 200 || !enrollRes.data.success) {
+        console.error(`\x1b[31m[Enrollment Failed]\x1b[0m Status: ${enrollRes.status}`, enrollRes.data);
+        process.exit(1);
+      }
+
+      agentId = enrollRes.data.agentId;
+      tenantId = enrollRes.data.tenantId;
+
+      console.log(`\x1b[32m[+] ENROLLMENT SUCCESSFUL!\x1b[0m`);
+      console.log(`    Agent ID:   \x1b[35m${agentId}\x1b[0m`);
+      console.log(`    Tenant ID:  \x1b[35m${tenantId}\x1b[0m`);
+      console.log(`    Host IP:    \x1b[35m${endpointIp || 'Unavailable'}\x1b[0m`);
+      console.log(`    Status:     \x1b[32mCONNECTED\x1b[0m`);
+    } catch (err) {
+      console.error(`\x1b[31m[Network Error]\x1b[0m Could not connect to ${controlUrl}:`, err.message);
       process.exit(1);
     }
-
-    agentId = enrollRes.data.agentId;
-    tenantId = enrollRes.data.tenantId;
-
-    console.log(`\x1b[32m[+] ENROLLMENT SUCCESSFUL!\x1b[0m`);
-    console.log(`    Agent ID:   \x1b[35m${agentId}\x1b[0m`);
-    console.log(`    Tenant ID:  \x1b[35m${tenantId}\x1b[0m`);
-    console.log(`    Host IP:    \x1b[35m${endpointIp || 'Unavailable'}\x1b[0m`);
+  } else {
+    console.log(`\x1b[32m[+] Resuming live connection for existing Agent ID: \x1b[35m${agentId}\x1b[0m`);
     console.log(`    Status:     \x1b[32mCONNECTED\x1b[0m`);
-  } catch (err) {
-    console.error(`\x1b[31m[Network Error]\x1b[0m Could not connect to ${controlUrl}:`, err.message);
-    process.exit(1);
   }
 
   console.log('\n[*] Streaming real-time OS telemetry every 3 seconds (Ctrl+C to stop/disconnect)...\n');

@@ -472,10 +472,10 @@ export async function rejectActionToken(
 
     const updated = await query<ApprovalTokenRecord>(
       `UPDATE approval_tokens
-       SET status = 'rejected', approved_by = $1, rejection_reason = $2, updated_at = now()
-       WHERE id = $3
+       SET status = 'rejected', approved_by = NULL, rejection_reason = $1, updated_at = now()
+       WHERE id = $2
        RETURNING *`,
-      [session.uid, args.reason || "Rejected by analyst", token.id]
+      [args.reason || "Rejected by analyst", token.id]
     );
 
     if (token.task_id) {
@@ -485,11 +485,12 @@ export async function rejectActionToken(
     await query(
       `INSERT INTO approval_audit_log (token_id, tenant_id, actor_id, action, details, created_at)
        VALUES ($1, $2, $3, 'token_rejected', $4, now())`,
-      [token.id, token.tenant_id, session.uid, `Rejected: ${args.reason || "No reason specified"}`]
+      [token.id, token.tenant_id, session.uid, `Rejected by ${session.uid}: ${args.reason || "No reason specified"}`]
     );
 
     return { success: true, token: updated.rows[0] };
-  } catch {
+  } catch (err: unknown) {
+    console.error("[ApprovalTokens] Exception rejecting token in database:", err);
     const token = MOCK_APPROVAL_TOKENS[args.tokenId];
     if (!token) return { error: "not_found" };
     if (!canAccess(session.role, "VIEW_CROSS_TENANT") && token.tenant_id !== session.tenantId) {

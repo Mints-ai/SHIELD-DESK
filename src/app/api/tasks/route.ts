@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
-import { canAccess } from "@/lib/permissions";
+import { canAccess, canAssignTask } from "@/lib/permissions";
 import { query } from "@/lib/db";
 import { trackError } from "@/lib/observability/errorTracker";
 import { isDemoModeActive } from "@/lib/config/environment";
+import { requestApprovalToken } from "@/lib/governance/approvalTokens";
 import crypto from "crypto";
 
 export interface MitigationTaskRecord {
@@ -21,78 +22,7 @@ export interface MitigationTaskRecord {
   created_at: string;
 }
 
-// In-memory demo store for when database is offline or in test mode
-const DEMO_STORED_TASKS: Record<string, MitigationTaskRecord[]> = {
-  "acme-tenant": [
-    {
-      id: "t1111111-1111-1111-1111-111111111111",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      tenant_id: "acme-tenant",
-      horizon: "immediate",
-      title: "Isolate affected host FIN-WS-042",
-      description: "Quarantine endpoint network interface to halt lateral movement toward database server",
-      tier: "Tier 2",
-      status: "pending",
-      blast_radius: "Workstation FIN-WS-042 (Finance Subnet)",
-      incident_code: "INC-1042",
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-    },
-    {
-      id: "t2222222-2222-2222-2222-222222222222",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      tenant_id: "acme-tenant",
-      horizon: "immediate",
-      title: "Revoke exposed user and administrative credentials",
-      description: "Terminate active session tokens for compromised user accounts",
-      tier: "Tier 1",
-      status: "completed",
-      blast_radius: "User Sessions",
-      incident_code: "INC-1042",
-      created_at: new Date(Date.now() - 7200000).toISOString(),
-    },
-    {
-      id: "t3333333-3333-3333-3333-333333333333",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      tenant_id: "acme-tenant",
-      horizon: "short_term",
-      title: "Deploy vendor patch for CVE-2020-6240",
-      description: "Apply SAP Security Notes to resolve NetWeaver DoS vulnerability",
-      tier: "Tier 2",
-      status: "approved",
-      blast_radius: "Finance Subnet Application Servers",
-      cve_id: "CVE-2020-6240",
-      incident_code: "INC-1042",
-      created_at: new Date(Date.now() - 10800000).toISOString(),
-    },
-    {
-      id: "t4444444-4444-4444-4444-444444444444",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      tenant_id: "acme-tenant",
-      horizon: "long_term",
-      title: "Implement zero-trust microsegmentation",
-      description: "Enforce strict firewall ACLs between general workstations and financial database tier",
-      tier: "Tier 2",
-      status: "pending",
-      blast_radius: "Entire Finance Zone",
-      incident_code: "INC-1042",
-      created_at: new Date(Date.now() - 14400000).toISOString(),
-    },
-    {
-      id: "t5555555-5555-5555-5555-555555555555",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      tenant_id: "acme-tenant",
-      horizon: "immediate",
-      title: "Block outbound egress to suspicious domain",
-      description: "Add DNS filter entry for newly registered domain detected in INC-1031",
-      tier: "Tier 1",
-      status: "completed",
-      blast_radius: "Perimeter Gateway",
-      incident_code: "INC-1031",
-      created_at: new Date(Date.now() - 18000000).toISOString(),
-    },
-  ],
-  "globex-tenant": [],
-};
+
 
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -150,19 +80,9 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     // If DB is offline, fall back safely if demo mode is permitted
     if (isDemoModeActive()) {
-      let tenantTasks = DEMO_STORED_TASKS[session.tenantId] || [];
-      if (planId) {
-        tenantTasks = tenantTasks.filter((t) => t.plan_id === planId);
-      }
-      if (horizon && horizon !== "all") {
-        tenantTasks = tenantTasks.filter((t) => t.horizon === horizon);
-      }
-      if (status && status !== "all") {
-        tenantTasks = tenantTasks.filter((t) => t.status === status);
-      }
       return NextResponse.json({
-        tasks: tenantTasks,
-        count: tenantTasks.length,
+        tasks: [],
+        count: 0,
         tenantId: session.tenantId,
         _source: "demo_fallback",
       });
@@ -186,8 +106,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Validate permission: Viewer cannot draft remediation tasks
-  if (session.role === "viewer") {
+  if (!canAssignTask(session.role, session.tenantId)) {
     return NextResponse.json(
       { error: "Insufficient permissions to draft mitigation tasks" },
       { status: 403 }
@@ -278,6 +197,24 @@ export async function POST(req: NextRequest) {
         cveId,
       ]);
 
+      if (tier !== "Tier 0") {
+        try {
+          const requesterUid = session.uid === "dev-admin" ? "dev-analyst" : session.uid;
+          const requesterSession = {
+            ...session,
+            uid: requesterUid,
+            role: (requesterUid === "dev-analyst" ? "user" : session.role) as typeof session.role,
+          };
+          await requestApprovalToken(requesterSession, {
+            taskId,
+            actionType: title,
+            blastRadius,
+          });
+        } catch {
+          // Token creation is non-blocking
+        }
+      }
+
       return NextResponse.json({
         success: true,
         task: res.rows[0],
@@ -300,10 +237,21 @@ export async function POST(req: NextRequest) {
           created_at: new Date().toISOString(),
         };
 
-        if (!DEMO_STORED_TASKS[session.tenantId]) {
-          DEMO_STORED_TASKS[session.tenantId] = [];
+        if (tier !== "Tier 0") {
+          try {
+            const requesterUid = session.uid === "dev-admin" ? "dev-analyst" : session.uid;
+            const requesterSession = {
+              ...session,
+              uid: requesterUid,
+              role: (requesterUid === "dev-analyst" ? "user" : session.role) as typeof session.role,
+            };
+            await requestApprovalToken(requesterSession, {
+              taskId,
+              actionType: title,
+              blastRadius,
+            });
+          } catch {}
         }
-        DEMO_STORED_TASKS[session.tenantId].unshift(newTask);
 
         return NextResponse.json({
           success: true,

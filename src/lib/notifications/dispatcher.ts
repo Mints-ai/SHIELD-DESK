@@ -31,6 +31,55 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
   };
   const color = notification.severity ? colorMap[notification.severity] : "#123826";
 
+  // Check if Go Webhook Microservice is available on port 8080 (Fire-and-forget handoff)
+  const goWebhookBaseUrl = process.env.GO_WEBHOOK_URL || "http://127.0.0.1:8080";
+  const targets = [
+    { name: "slack", url: slackUrl },
+    { name: "teams", url: teamsUrl },
+    { name: "discord", url: discordUrl },
+    { name: "generic_webhook", url: genericUrl },
+  ].filter((t): t is { name: string; url: string } => Boolean(t.url));
+
+  if (targets.length > 0) {
+    try {
+      const goPromises = targets.map((target) =>
+        fetch(`${goWebhookBaseUrl}/dispatch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            target_url: target.url,
+            secret_key: process.env.SHIELDDESK_WEBHOOK_SECRET || "sd_webhook_dev_secret",
+            event: notification.type,
+            tenant_id: notification.tenantId,
+            data: {
+              title: notification.title,
+              description: notification.description,
+              severity: notification.severity || "standard",
+              action_url: notification.actionUrl,
+              metadata: notification.metadata,
+            },
+          }),
+          signal: AbortSignal.timeout(600), // Swift timeout to prevent blocking Next.js
+        })
+      );
+
+      const results = await Promise.allSettled(goPromises);
+      let anyQueued = false;
+      results.forEach((res, idx) => {
+        if (res.status === "fulfilled" && (res.value.status === 200 || res.value.status === 202)) {
+          channelsDispatched.push(targets[idx].name);
+          anyQueued = true;
+        }
+      });
+
+      if (anyQueued) {
+        return { success: true, channelsDispatched };
+      }
+    } catch {
+      // Fallback to direct inline dispatch below if Go microservice is offline
+    }
+  }
+
   // 1. Slack Webhook Payload
   if (slackUrl) {
     try {

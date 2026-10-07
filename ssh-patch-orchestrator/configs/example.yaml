@@ -1,0 +1,31 @@
+# ShieldDesk — SSH Patch Orchestrator Example Configuration
+# WARNING: Placeholders only. NEVER commit real credentials, private keys, or passwords.
+
+orchestrator:
+  connect_timeout_seconds: 15
+  command_timeout_seconds: 300
+  job_timeout_seconds: 1800
+  max_output_bytes: 1048576 # 1 MB stream capture bound
+
+lvm:
+  default_cow_size_mb: 2048 # 2 GB COW snapshot buffer
+  max_cow_usage_threshold_percent: 85.0
+  reboot_timeout_seconds: 300
+
+audit:
+  driver: "json_lines" # Options: json_lines, shielddesk_audit_store
+  log_path: "audit.jsonl"
+  fail_closed_on_error: true
+
+policy:
+  mode: "default" # auto_execute low/medium risk, require approval for high/critical
+  require_explicit_approvals: false
+
+allowlist:
+  operations:
+    - type: "pkg.upgrade"
+      allowed_managers: ["apt", "dnf", "yum"]
+    - type: "pkg.install"
+      allowed_managers: ["apt", "dnf", "yum"]
+    - type: "service.restart"
+    - type: "service.reload"
