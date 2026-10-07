@@ -411,7 +411,7 @@ export default function ThreatsDashboardPage() {
     }
   };
 
-  const dispatchTestWebhook = async () => {
+  const dispatchTestWebhook = async (endpointId?: string) => {
     setLoading(true);
     try {
       const res = await fetch("/api/webhooks", {
@@ -420,7 +420,7 @@ export default function ThreatsDashboardPage() {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ endpoint_id: "wh-secops-slack" }),
+        body: JSON.stringify(endpointId ? { endpoint_id: endpointId } : {}),
       });
       const data = await res.json();
       setWebhookLog(data);
@@ -1010,24 +1010,32 @@ export default function ThreatsDashboardPage() {
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                     <Send className="h-4 w-4 text-[var(--sd-pine)]" />
-                    HMAC-SHA256 Webhook Dispatcher
+                    HMAC-SHA256 Webhook Dispatcher (Real Channels)
                   </h3>
                   <button
-                    onClick={dispatchTestWebhook}
+                    onClick={() => dispatchTestWebhook()}
                     disabled={loading}
                     className="sd-button sd-button-primary px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer"
                   >
-                    Dispatch Test Webhook
+                    Dispatch Live Test Webhook
                   </button>
                 </div>
                 <p className="text-[13px] text-[var(--sd-text-muted)]">
-                  Dispatches signed webhook payloads with <code>X-ShieldDesk-Signature</code> and exponential backoff retry.
+                  Dispatches real signed webhook payloads to your configured channels (e.g. Discord, Slack) with <code>X-ShieldDesk-Signature</code> and exponential backoff retry.
                 </p>
 
                 {webhookLog && (
-                  <pre className="p-3 rounded-lg bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap leading-relaxed">
-                    {JSON.stringify(webhookLog, null, 2)}
-                  </pre>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs font-mono">
+                      <span className="text-[var(--sd-text-muted)]">Delivery Status:</span>
+                      <span className={webhookLog.success ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>
+                        {webhookLog.message ? String(webhookLog.message) : (webhookLog.success ? "Success" : "Failed")}
+                      </span>
+                    </div>
+                    <pre className="p-3 rounded-lg bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap leading-relaxed">
+                      {JSON.stringify(webhookLog, null, 2)}
+                    </pre>
+                  </div>
                 )}
               </div>
             </div>
