@@ -7,10 +7,6 @@ export interface HibpStatus {
 }
 
 export function getHibpApiKey(): string | undefined {
-  if (process.env.HIBP_API_KEY && process.env.HIBP_API_KEY.trim() !== "") {
-    return process.env.HIBP_API_KEY.trim();
-  }
-
   try {
     const root = process.cwd();
     const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
@@ -23,9 +19,12 @@ export function getHibpApiKey(): string | undefined {
           const [key, ...vals] = trimmed.split("=");
           if (key.trim() === "HIBP_API_KEY") {
             const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
-            if (val) {
+            if (val && val.length > 0) {
               process.env.HIBP_API_KEY = val;
               return val;
+            } else {
+              delete process.env.HIBP_API_KEY;
+              return undefined;
             }
           }
         }
@@ -34,6 +33,13 @@ export function getHibpApiKey(): string | undefined {
   } catch {
     // Ignore FS error
   }
+
+  const envVal = process.env.HIBP_API_KEY?.trim();
+  if (envVal && envVal.length > 0) {
+    return envVal;
+  }
+
+  delete process.env.HIBP_API_KEY;
   return undefined;
 }
 

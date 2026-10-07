@@ -208,9 +208,9 @@ export default function ScannerDashboardPage() {
     }
   };
 
-  const fetchThreatIntel = async () => {
+  const fetchThreatIntel = async (isPoll = false) => {
     try {
-      setShodanLoading(true);
+      if (!isPoll) setShodanLoading(true);
       const res = await fetch("/api/intel/shodan");
       const data = await res.json();
       if (data.configured) {
@@ -229,19 +229,29 @@ export default function ScannerDashboardPage() {
           configured: false,
           error: data.message || data.error,
         });
+        // Key deleted: immediately wipe all inspection data, search input, and errors
+        setHostInspection(null);
+        setDetectedMyIp(null);
+        setTargetHostInput("");
+        setShodanInspectError(null);
       }
 
       const hibpRes = await fetch("/api/intel/hibp");
       const hibpData = await hibpRes.json();
       setHibpConfigured(Boolean(hibpData.configured));
     } catch (err: any) {
-      console.error("Failed to load threat intel:", err);
+      if (!isPoll) console.error("Failed to load threat intel:", err);
     } finally {
-      setShodanLoading(false);
+      if (!isPoll) setShodanLoading(false);
     }
   };
 
   const handleInspectTarget = async (overrideTarget?: string) => {
+    if (!shodanStatus?.configured) {
+      setShodanInspectError("Shodan API key is not configured. Add SHODAN_API_KEY to .env.local to enable host inspection.");
+      setHostInspection(null);
+      return;
+    }
     const target = (overrideTarget ?? targetHostInput ?? detectedMyIp ?? "").trim();
     if (!target) return;
     try {
@@ -249,6 +259,17 @@ export default function ScannerDashboardPage() {
       setShodanInspectError(null);
       const res = await fetch(`/api/intel/shodan?ip=${encodeURIComponent(target)}`);
       const data = await res.json();
+      if (!data.configured) {
+        setShodanStatus({
+          configured: false,
+          error: data.message || "Shodan is not configured",
+        });
+        setHostInspection(null);
+        setDetectedMyIp(null);
+        setTargetHostInput("");
+        setShodanInspectError("Shodan API key was removed. Host inspection is disabled.");
+        return;
+      }
       if (data.error) {
         setShodanInspectError(data.error);
       } else if (data.hostData) {
@@ -261,14 +282,22 @@ export default function ScannerDashboardPage() {
     }
   };
 
+  // Initial load and live 3-second connection monitor
   useEffect(() => {
     fetchData();
-    fetchThreatIntel();
+    fetchThreatIntel(false);
+
+    // Check API connection status every 3 seconds
+    const interval = setInterval(() => {
+      fetchThreatIntel(true);
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, [activeUserId]);
 
   useEffect(() => {
-    if (activeTab === "intel" && !shodanStatus) {
-      fetchThreatIntel();
+    if (activeTab === "intel") {
+      fetchThreatIntel(false);
     }
   }, [activeTab]);
 
@@ -1156,7 +1185,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 </div>
                 <button
                   type="button"
-                  onClick={fetchThreatIntel}
+                  onClick={() => fetchThreatIntel(false)}
                   disabled={shodanLoading}
                   className="sd-button text-xs px-2.5 py-1 rounded-md border border-[var(--sd-border)] flex items-center gap-1.5 self-start sm:self-auto cursor-pointer"
                 >
