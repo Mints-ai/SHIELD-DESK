@@ -108,6 +108,7 @@ function Stream-Jobs {
                     "GoThreat"    { "[Go Threat ] " }
                     "GoWebhook"   { "[Go Webhook] " }
                     "GoIngest"    { "[Go Ingest ] " }
+                    "GoPatch"     { "[SSH Patch ] " }
                     default       { "[Service   ] " }
                 }
                 $col = switch ($job.Name) {
@@ -118,6 +119,7 @@ function Stream-Jobs {
                     "GoThreat"    { "DarkCyan"}
                     "GoWebhook"   { "DarkYellow" }
                     "GoIngest"    { "Blue"    }
+                    "GoPatch"     { "Green"   }
                     default       { "White"   }
                 }
                 $lines -split "`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object {
@@ -140,7 +142,7 @@ function Stop-AllServices {
         Write-Host "  [STOPPED] $($job.Name)" -ForegroundColor DarkGray
     }
     # Kill any child processes that outlived the jobs
-    Get-Process -Name "ollama", "ingest", "threat", "webhook" -ErrorAction SilentlyContinue |
+    Get-Process -Name "ollama", "ingest", "threat", "webhook", "orchestrator" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "  All services stopped. Goodbye!" -ForegroundColor DarkGreen
@@ -155,7 +157,7 @@ Write-Banner
 Check-Prerequisites
 
 # Ensure no orphaned microservices from previous sessions are blocking ports
-Get-Process -Name "ingest", "threat", "webhook" -ErrorAction SilentlyContinue |
+Get-Process -Name "ingest", "threat", "webhook", "orchestrator" -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
@@ -185,8 +187,12 @@ $ingestDir  = Join-Path $ROOT "services\ingest"
 $ingestExe  = Join-Path $ingestDir "ingest.exe"
 $ingestCmd  = if (Test-Path $ingestExe) { "cmd.exe /c ingest.exe" } else { "go run ." }
 $ingestJob  = Start-Service "GoIngest"    $ingestCmd       $ingestDir   $envMap
+$patchDir   = Join-Path $ROOT "ssh-patch-orchestrator"
+$patchExe   = Join-Path $patchDir "orchestrator.exe"
+$patchCmd   = if (Test-Path $patchExe) { "cmd.exe /c orchestrator.exe server --port 8006" } else { "go run ./cmd/orchestrator server --port 8006" }
+$patchJob   = Start-Service "GoPatch"     $patchCmd        $patchDir    $envMap
 
-$allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob)
+$allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob)
 
 Write-Host ""
 Write-Host "  Waiting for all ports to open..." -ForegroundColor DarkGray
@@ -198,9 +204,10 @@ $ok3 = Wait-ForPort 3000  "Next.js UI"
 $ok4 = Wait-ForPort 8003  "Go Threat Engine"
 $ok5 = Wait-ForPort 8080  "Go Webhook Service"
 $ok6 = Wait-ForPort 8004  "Go Ingest Telemetry" 60
+$ok7 = Wait-ForPort 8006  "SSH Patch Orchestrator" 30
 
 Write-Host ""
-if ($ok1 -and $ok2 -and $ok3 -and $ok4 -and $ok5 -and $ok6) {
+if ($ok1 -and $ok2 -and $ok3 -and $ok4 -and $ok5 -and $ok6 -and $ok7) {
     Write-Host "  [ALL UP] All services are running!" -ForegroundColor Green
 } else {
     Write-Host "  [WARN] Some services may not have started -- check logs below." -ForegroundColor Yellow
@@ -212,6 +219,7 @@ Write-Host "  |  ShieldDesk UI   -->  http://localhost:3000     |" -ForegroundCo
 Write-Host "  |  Python AI Brain -->  http://localhost:8000     |" -ForegroundColor Yellow
 Write-Host "  |  Go Threat Engine-->  http://localhost:8003     |" -ForegroundColor Cyan
 Write-Host "  |  Go Ingest & PII -->  http://localhost:8004     |" -ForegroundColor Blue
+Write-Host "  |  SSH Patch Orch  -->  http://localhost:8006     |" -ForegroundColor Green
 Write-Host "  |  Go Webhook Svc  -->  http://localhost:8080     |" -ForegroundColor DarkYellow
 Write-Host "  |  Trivy Scanner   -->  Embedded (/api/scans)     |" -ForegroundColor Green
 Write-Host "  |  Ollama LLM      -->  http://localhost:11434    |" -ForegroundColor Magenta

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { hasPermission } from "@/lib/permissions";
+import { isDevPersonaAllowed } from "@/lib/config/environment";
 
-const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8004";
+const ORCHESTRATOR_URL = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8006";
 
 function corsHeaders() {
   return {
@@ -14,7 +15,15 @@ function corsHeaders() {
 
 /** GET /api/patch/jobs/[id] — get job status + logs */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSessionFromRequest(req);
+  let session = await getSessionFromRequest(req);
+  if (!session && isDevPersonaAllowed()) {
+    session = {
+      uid: "dev-analyst",
+      role: "analyst",
+      tenantId: "acme-tenant",
+      email: "analyst@acme.corp",
+    };
+  }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasPermission(session.role, "cve.read")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -41,7 +50,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 /** POST /api/patch/jobs/[id]/rollback — trigger manual rollback */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSessionFromRequest(req);
+  let session = await getSessionFromRequest(req);
+  if (!session && isDevPersonaAllowed()) {
+    session = {
+      uid: "dev-analyst",
+      role: "analyst",
+      tenantId: "acme-tenant",
+      email: "analyst@acme.corp",
+    };
+  }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasPermission(session.role, "cve.read")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

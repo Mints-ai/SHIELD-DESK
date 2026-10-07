@@ -31,7 +31,7 @@ Unlike basic remote execution scripts, this system enforces:
                                                          v
                                  +-----------------------------------------------+
                                  |         SSH Patch Orchestrator Engine         |
-                                 |       (Go Microservice on Port 8004)          |
+                                 |       (Go Microservice on Port 8006)          |
                                  +-----------------------+-----------------------+
                                                          |
                    +-------------------+-----------------+-------------------+
@@ -69,7 +69,7 @@ ssh-patch-orchestrator/
 ├── cmd/
 │   └── orchestrator/
 │       ├── main.go            # Entry point: handles "server", "run", "version" subcommands
-│       ├── server.go          # HTTP API Server (port 8004), in-memory job store, log streaming
+│       ├── server.go          # HTTP API Server (port 8006), in-memory job store, log streaming
 │       └── cli.go             # Standalone CLI runner for direct execution
 ├── configs/
 │   └── example.yaml           # Deployment configuration template
@@ -142,9 +142,9 @@ The orchestrator enforces a strictly deterministic state machine (`internal/orch
 
 ---
 
-## 5. API Reference (Go HTTP Service — Port 8004)
+## 5. API Reference (Go HTTP Service — Port 8006)
 
-The Go microservice runs on port `8004` and provides the following REST API endpoints:
+The Go microservice runs on port `8006` and provides the following REST API endpoints:
 
 ### 1. `GET /health`
 Returns orchestrator service status and version.
@@ -225,15 +225,15 @@ Next.js communicates with the Go microservice through the following authenticate
 1. **`src/app/api/patch/jobs/route.ts`**
    - Handles `GET` (list jobs) and `POST` (create job).
    - Validates user sessions and enforces the `cve.read` permission.
-   - Forwards JSON payloads to `http://localhost:8004/api/v1/jobs`.
+   - Forwards JSON payloads to `http://localhost:8006/api/v1/jobs`.
 
 2. **`src/app/api/patch/jobs/[id]/route.ts`**
    - Handles `GET` (poll job state + logs) and `POST` (trigger rollback).
-   - Forwards requests to `http://localhost:8004/api/v1/jobs/[id]`.
+   - Forwards requests to `http://localhost:8006/api/v1/jobs/[id]`.
 
 ### UI Console (`src/app/dashboard/scanner/page.tsx`)
 The **Patch** tab in the Security Scanner provides:
-- **Service Online/Offline Badge**: Live polling of port 8004 with visual indicator.
+- **Service Online/Offline Badge**: Live polling of port 8006 with visual indicator.
 - **SSH Credentials & Target Form**: Inputs for target host, port, SSH user, host key fingerprint, private key (PEM), target package, version, and restart services.
 - **Live Terminal Console**: Polls every 2 seconds during active runs, displaying color-coded pipeline logs:
   - Yellow: `[SNAPSHOT]` operations
@@ -256,7 +256,7 @@ This runs `start.ps1`, which launches all 5 platform services:
 1. **Ollama LLM** (Port 11434)
 2. **Python CVE Brain** (Port 8000)
 3. **Go Threat Engine** (Port 8003)
-4. **SSH Patch Orchestrator** (Port 8004)
+4. **SSH Patch Orchestrator** (Port 8006)
 5. **Next.js UI Console** (Port 3000)
 
 ### Running Standalone (CLI Mode)
@@ -277,7 +277,7 @@ cd ssh-patch-orchestrator
 ### Running Standalone (HTTP Server Mode)
 ```powershell
 cd ssh-patch-orchestrator
-.\orchestrator.exe server --port 8004 --audit-dir .
+.\orchestrator.exe server --port 8006 --audit-dir .
 ```
 
 ---

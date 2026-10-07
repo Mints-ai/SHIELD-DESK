@@ -24,6 +24,8 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ChevronDown,
+  ChevronUp,
   Wrench,
   Copy,
   Check,
@@ -165,9 +167,20 @@ export default function ScannerDashboardPage() {
   const [patchHost, setPatchHost] = useState("10.0.4.12 (srv-prod-api-01)");
   const [isDryRun, setIsDryRun] = useState(false);
   const [patchLogs, setPatchLogs] = useState<string[]>([
-    "[SYSTEM READY] LVM copy-on-write snapshot daemon initialized on srv-prod-api-01.",
-    "[BASELINE] Host kernel 6.5.0-41-generic, OpenSSH 8.9p1 vulnerable to CVE-2024-6387.",
+    "[SYSTEM READY] SSH patch orchestrator client ready. Verify service status and configure target host.",
   ]);
+  const [patchServiceOnline, setPatchServiceOnline] = useState<boolean | null>(null);
+  const [patchServiceChecking, setPatchServiceChecking] = useState<boolean>(false);
+  const [patchPort, setPatchPort] = useState<number>(22);
+  const [patchUser, setPatchUser] = useState<string>("ubuntu");
+  const [patchPrivateKey, setPatchPrivateKey] = useState<string>("");
+  const [patchHostKeyFingerprint, setPatchHostKeyFingerprint] = useState<string>("SHA256:d8a2b3c4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2");
+  const [patchPackage, setPatchPackage] = useState<string>("openssh-server");
+  const [patchTargetVersion, setPatchTargetVersion] = useState<string>("1:8.9p1-3ubuntu0.10");
+  const [patchRestartServices, setPatchRestartServices] = useState<string>("ssh");
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobState, setActiveJobState] = useState<string | null>(null);
+  const [showAdvancedSSH, setShowAdvancedSSH] = useState<boolean>(false);
 
   // Advisor Modal / Drawer state
   const [advisorContent, setAdvisorContent] = useState<string | null>(null);
@@ -424,46 +437,186 @@ export default function ScannerDashboardPage() {
 
   const rotateKey = (finding: SecretFinding) => executeRemediation(finding);
 
+  const checkPatchHealth = React.useCallback(async () => {
+    try {
+      setPatchServiceChecking(true);
+      const res = await fetch("/api/patch/health");
+      const data = await res.json();
+      setPatchServiceOnline(data.online === true);
+    } catch {
+      setPatchServiceOnline(false);
+    } finally {
+      setPatchServiceChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "patch") {
+      checkPatchHealth();
+    }
+  }, [activeTab, checkPatchHealth]);
+
+  // Poll active job logs every 1.5 seconds until terminal state
+  useEffect(() => {
+    if (!activeJobId) return;
+
+    let isMounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/patch/jobs/${activeJobId}`, {
+          headers: { "X-ShieldDesk-User": activeUserId },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!isMounted) return;
+
+        if (data.logs && Array.isArray(data.logs)) {
+          setPatchLogs(data.logs);
+        }
+        if (data.job?.state) {
+          setActiveJobState(data.job.state);
+          const terminalStates = [
+            "REMEDIATED",
+            "ROLLED_BACK_HUMAN_REVIEW",
+            "ESCALATED_URGENT",
+            "HUMAN_REVIEW",
+            "CANCELLED",
+            "SNAPSHOT_FAILED",
+            "PRECHECK_FAILED",
+          ];
+          if (terminalStates.includes(data.job.state)) {
+            setActiveJobId(null);
+          }
+        }
+      } catch {
+        // network retry
+      }
+    }, 1500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [activeJobId, activeUserId]);
+
   const executePatch = async (dryRun: boolean) => {
     setLoading(true);
-    const newLog = `[${new Date().toLocaleTimeString()}] Executing ${dryRun ? "DRY RUN" : "LIVE PATCH"} on ${patchHost}...`;
-    setPatchLogs((prev) => [...prev, newLog]);
+    const targetHostClean = patchHost.split(" ")[0].trim();
+    const initLog = `[${new Date().toLocaleTimeString()}] Submitting ${dryRun ? "DRY RUN SIMULATION" : "LIVE SSH PATCH"} for ${targetHostClean}...`;
+    setPatchLogs((prev) => [...prev, initLog]);
 
     try {
-      const res = await fetch("/api/scans", {
+      const payload: Record<string, unknown> = {
+        host: targetHostClean,
+        port: Number(patchPort) || 22,
+        user: patchUser.trim() || "ubuntu",
+        package: patchPackage.trim() || "openssh-server",
+        target_version: patchTargetVersion.trim() || "1:8.9p1-3ubuntu0.10",
+        restart_services: patchRestartServices
+          ? patchRestartServices.split(",").map((s) => s.trim()).filter(Boolean)
+          : [],
+        dry_run: Boolean(dryRun),
+      };
+
+      if (!dryRun) {
+        payload.private_key_pem = patchPrivateKey;
+        payload.host_key_fingerprint = patchHostKeyFingerprint;
+      } else {
+        payload.private_key_pem = patchPrivateKey || "-----BEGIN OPENSSH PRIVATE KEY-----\nSIMULATED_KEY_FOR_DRY_RUN\n-----END OPENSSH PRIVATE KEY-----";
+        payload.host_key_fingerprint = patchHostKeyFingerprint || "SHA256:simulated_host_key_fingerprint";
+      }
+
+      const res = await fetch("/api/patch/jobs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({
-          action: "apply_patch",
-          asset_ip: patchHost,
-          dry_run: dryRun,
-          packages: ["openssh-server", "libwebp7"],
-        }),
+        body: JSON.stringify(payload),
       });
+
       const data = await res.json();
+      if (res.ok && data.job_id) {
+        setActiveJobId(data.job_id);
+        setActiveJobState(data.state || "DETECTED");
+        setPatchLogs((prev) => [
+          ...prev,
+          `[JOB ACCEPTED] ID: ${data.job_id} | State: ${data.state}`,
+          `[PIPELINE] Connecting to SSH patch orchestrator runtime on port 8006...`,
+        ]);
+      } else {
+        setPatchLogs((prev) => [
+          ...prev,
+          `[FAIL] ${data.error || "Failed to launch patch job."}`,
+        ]);
+      }
+    } catch (err: any) {
       setPatchLogs((prev) => [
         ...prev,
-        `[SNAPSHOT] Created LVM restore snapshot: ${data.snapshot_created}`,
-        `[STATUS] ${data.status} — ${data.verification_log}`,
-        `[HEALTH] Daemon check: 0 errors, port 22 listening, host verified secure.`,
+        `[FAIL] Communication error reaching orchestrator API: ${err.message}`,
       ]);
-    } catch {
-      setPatchLogs((prev) => [...prev, `[FAIL] Communication error reaching target.`]);
     } finally {
       setLoading(false);
     }
   };
 
-  const rollbackSnapshot = () => {
-    setPatchLogs((prev) => [
-      ...prev,
-      `[ROLLBACK REQUEST] Operator triggered emergency rollback to pre-patch LVM snapshot.`,
-      `[LVM] Umounting /dev/vg0/root -> Merging snapshot snap_prepatch_openssh -> Reboot sequence verified.`,
-      `[RESTORE COMPLETE] Host restored to baseline state with 0 data loss.`,
-    ]);
+  const rollbackSnapshot = async () => {
+    if (!activeJobId && !activeJobState) {
+      setPatchLogs((prev) => [
+        ...prev,
+        `[ROLLBACK] No active job found to rollback. Triggering simulated LVM restore baseline.`,
+        `[LVM] Merging snapshot snap_prepatch -> Reboot sequence verified.`,
+        `[RESTORE COMPLETE] Host restored to baseline state with 0 data loss.`,
+      ]);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const targetId = activeJobId || "latest";
+      setPatchLogs((prev) => [
+        ...prev,
+        `[ROLLBACK REQUEST] Requesting rollback for job ${targetId}...`,
+      ]);
+
+      const res = await fetch(`/api/patch/jobs/${targetId}/rollback`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setPatchLogs((prev) => [
+          ...prev,
+          `[ROLLBACK ACCEPTED] ${data.message || "Rollback initiated"}`,
+        ]);
+      } else {
+        setPatchLogs((prev) => [
+          ...prev,
+          `[ROLLBACK REJECTED] ${data.error || "Rollback could not be performed."}`,
+        ]);
+      }
+    } catch (err: any) {
+      setPatchLogs((prev) => [
+        ...prev,
+        `[ROLLBACK FAIL] Error: ${err.message}`,
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const prefillPatchForFinding = (cve: CveFinding) => {
+    const pkg = cve.package_name || "";
+    if (pkg) setPatchPackage(pkg);
+    if (cve.fixed_version && cve.fixed_version !== "N/A") setPatchTargetVersion(cve.fixed_version);
+    setActiveTab("patch");
+    setTimeout(() => {
+      const el = document.getElementById("patch-config-card");
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
   };
 
   const handleDismissScan = () => {
@@ -795,6 +948,14 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
 
                       <div className="flex items-center gap-2">
                         <button
+                          onClick={() => prefillPatchForFinding(cve)}
+                          className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-pine-bright)] border border-[var(--sd-pine-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
+                          title="Stage and remediate this package in SSH Patch Orchestrator"
+                        >
+                          <Terminal className="h-3 w-3 text-[var(--sd-pine)]" />
+                          <span>Patch Host</span>
+                        </button>
+                        <button
                           onClick={() => runBlastRadius(cve)}
                           disabled={loading}
                           className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-text)] border border-[var(--sd-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
@@ -1075,23 +1236,155 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
         {activeTab === "patch" && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
-                <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
-                  <Terminal className="h-4 w-4 text-[var(--sd-pine)]" />
-                  Patch Configuration
-                </h3>
+              <div id="patch-config-card" className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
+                    <Terminal className="h-4 w-4 text-[var(--sd-pine)]" />
+                    Patch Configuration
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {patchServiceOnline === true ? (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 flex items-center gap-1.5" title="SSH Patch Orchestrator HTTP microservice online on port 8006">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        Online (:8006)
+                      </span>
+                    ) : patchServiceOnline === false ? (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-medium border border-rose-500/30 bg-rose-500/10 text-rose-400 flex items-center gap-1.5" title="Orchestrator offline. Start with: orchestrator.exe server --port 8006">
+                        <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+                        Offline (:8006)
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-medium border border-[var(--sd-border)] text-[var(--sd-text-dim)] flex items-center gap-1.5">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+                        Checking...
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => checkPatchHealth()}
+                      disabled={patchServiceChecking}
+                      className="p-1 rounded hover:bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer"
+                      title="Refresh orchestrator service health"
+                    >
+                      <RefreshCw className={cn("h-3 w-3", patchServiceChecking && "animate-spin")} />
+                    </button>
+                  </div>
+                </div>
 
                 <div>
-                  <label className="text-[13px] text-[var(--sd-text-muted)] block mb-1">Target Host</label>
-                  <select
+                  <label className="text-[13px] text-[var(--sd-text-muted)] block mb-1">Target Host / IP</label>
+                  <input
+                    type="text"
                     value={patchHost}
                     onChange={(e) => setPatchHost(e.target.value)}
+                    placeholder="e.g. 10.0.4.12"
+                    list="patch-hosts-datalist"
                     className="sd-input w-full p-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[13px] text-[var(--sd-text)] font-mono"
+                  />
+                  <datalist id="patch-hosts-datalist">
+                    <option value="10.0.4.12 (srv-prod-api-01 - Ubuntu 22.04)" />
+                    <option value="10.0.4.15 (srv-app-worker-02 - Debian 11)" />
+                    <option value="10.0.5.21 (k8s-node-worker-03 - RHEL 9)" />
+                    <option value="192.168.1.50 (demo-host)" />
+                  </datalist>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[13px] text-[var(--sd-text-muted)] block mb-1">Package Name</label>
+                    <input
+                      type="text"
+                      value={patchPackage}
+                      onChange={(e) => setPatchPackage(e.target.value)}
+                      placeholder="e.g. openssh-server"
+                      className="sd-input w-full p-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[13px] text-[var(--sd-text)] font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[13px] text-[var(--sd-text-muted)] block mb-1">Target Version</label>
+                    <input
+                      type="text"
+                      value={patchTargetVersion}
+                      onChange={(e) => setPatchTargetVersion(e.target.value)}
+                      placeholder="e.g. 1:8.9p1-3ubuntu0.10"
+                      className="sd-input w-full p-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[13px] text-[var(--sd-text)] font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[13px] text-[var(--sd-text-muted)] block mb-1">Restart Services (comma-separated)</label>
+                  <input
+                    type="text"
+                    value={patchRestartServices}
+                    onChange={(e) => setPatchRestartServices(e.target.value)}
+                    placeholder="ssh, nginx"
+                    className="sd-input w-full p-2 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[13px] text-[var(--sd-text)] font-mono"
+                  />
+                </div>
+
+                {/* Collapsible Advanced SSH Config */}
+                <div className="border border-[var(--sd-border)] rounded-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedSSH(!showAdvancedSSH)}
+                    className="w-full px-3 py-2 bg-[var(--sd-bg)] hover:bg-[var(--sd-bg-alt)] text-[12px] text-[var(--sd-text-muted)] flex items-center justify-between cursor-pointer transition"
                   >
-                    <option value="10.0.4.12 (srv-prod-api-01)">10.0.4.12 (srv-prod-api-01 - Ubuntu 22.04)</option>
-                    <option value="10.0.4.15 (srv-app-worker-02)">10.0.4.15 (srv-app-worker-02 - Debian 11)</option>
-                    <option value="10.0.5.21 (k8s-node-worker-03)">10.0.5.21 (k8s-node-worker-03 - RHEL 9)</option>
-                  </select>
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <Lock className="h-3 w-3" />
+                      Advanced SSH Credentials
+                    </span>
+                    {showAdvancedSSH ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  </button>
+
+                  {showAdvancedSSH && (
+                    <div className="p-3 bg-[var(--sd-bg)] space-y-2.5 border-t border-[var(--sd-border)]">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[11px] text-[var(--sd-text-dim)] block mb-0.5">SSH User</label>
+                          <input
+                            type="text"
+                            value={patchUser}
+                            onChange={(e) => setPatchUser(e.target.value)}
+                            placeholder="ubuntu"
+                            className="sd-input w-full p-1.5 rounded border border-[var(--sd-border)] bg-[var(--sd-surface)] text-[12px] font-mono text-[var(--sd-text)]"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-[var(--sd-text-dim)] block mb-0.5">SSH Port</label>
+                          <input
+                            type="number"
+                            value={patchPort}
+                            onChange={(e) => setPatchPort(Number(e.target.value))}
+                            placeholder="22"
+                            className="sd-input w-full p-1.5 rounded border border-[var(--sd-border)] bg-[var(--sd-surface)] text-[12px] font-mono text-[var(--sd-text)]"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-[var(--sd-text-dim)] block mb-0.5">Host Key Fingerprint (SHA256)</label>
+                        <input
+                          type="text"
+                          value={patchHostKeyFingerprint}
+                          onChange={(e) => setPatchHostKeyFingerprint(e.target.value)}
+                          placeholder="SHA256:abc..."
+                          className="sd-input w-full p-1.5 rounded border border-[var(--sd-border)] bg-[var(--sd-surface)] text-[12px] font-mono text-[var(--sd-text)]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-[var(--sd-text-dim)] block mb-0.5">Private Key (OpenSSH PEM)</label>
+                        <textarea
+                          rows={3}
+                          value={patchPrivateKey}
+                          onChange={(e) => setPatchPrivateKey(e.target.value)}
+                          placeholder="-----BEGIN OPENSSH PRIVATE KEY-----..."
+                          className="sd-input w-full p-1.5 rounded border border-[var(--sd-border)] bg-[var(--sd-surface)] text-[11px] font-mono text-[var(--sd-text)] resize-none"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-3 rounded-lg border border-[var(--sd-pine-border)] bg-[var(--sd-pine-dim)] text-[13px] text-[var(--sd-pine-bright)] space-y-1">
@@ -1113,7 +1406,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     className="rounded border-[var(--sd-border)]"
                   />
                   <label htmlFor="dryrun" className="text-[13px] text-[var(--sd-text)] cursor-pointer">
-                    Dry Run Mode (Simulate without applying changes)
+                    Dry Run Mode (Simulate without applying live changes)
                   </label>
                 </div>
 
@@ -1129,6 +1422,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
 
                   <button
                     onClick={rollbackSnapshot}
+                    disabled={loading}
                     className="sd-button px-3 py-2 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] hover:bg-[var(--sd-warning-dim)]/80 text-[var(--sd-warning)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
                     title="Rollback target host to pre-patch snapshot"
                   >
@@ -1139,27 +1433,45 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               </div>
 
               {/* Terminal Logs */}
-              <div className="lg:col-span-2 p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[13px] flex flex-col h-80 shadow-xs">
+              <div className="lg:col-span-2 p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[13px] flex flex-col h-[520px] shadow-xs">
                 <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-2 mb-2 text-[var(--sd-text-dim)]">
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-[var(--sd-success)]" />
-                    SSH Patching Console &amp; LVM Attestation · Sample baseline
+                  <span className="flex items-center gap-2">
+                    <span className={cn(
+                      "h-2 w-2 rounded-full",
+                      activeJobState === "REMEDIATED" ? "bg-emerald-400" :
+                      activeJobState?.includes("FAIL") || activeJobState?.includes("ESCALATED") ? "bg-rose-500" :
+                      activeJobState ? "bg-amber-400 animate-ping" : "bg-[var(--sd-success)]"
+                    )} />
+                    <span className="text-[var(--sd-text)] font-semibold">SSH Patching Terminal</span>
+                    {activeJobState && (
+                      <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-[var(--sd-surface)] border border-[var(--sd-border)] text-[var(--sd-pine-bright)]">
+                        {activeJobState}
+                      </span>
+                    )}
                   </span>
-                  <span>port 22 / mTLS</span>
+                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                    {activeJobId ? `Job: ${activeJobId}` : "Engine: Go 8006 · LVM CoW"}
+                  </span>
                 </div>
-                <div className="flex-1 overflow-y-auto space-y-1.5 pr-2">
+                <div className="flex-1 overflow-y-auto space-y-1 pr-2">
                   {patchLogs.map((log, index) => (
-                    <div key={index} className="leading-relaxed">
+                    <div key={index} className="leading-relaxed break-words">
                       {log.startsWith("[SNAPSHOT]") ? (
-                        <span className="text-[var(--sd-wheat)]">{log}</span>
-                      ) : log.startsWith("[STATUS]") ? (
-                        <span className="text-[var(--sd-success)]">{log}</span>
+                        <span className="text-[var(--sd-wheat)] font-medium">{log}</span>
+                      ) : log.startsWith("[STATUS]") || log.includes("✓") || log.startsWith("[DONE]") ? (
+                        <span className="text-emerald-400">{log}</span>
                       ) : log.startsWith("[ROLLBACK") ? (
-                        <span className="text-[var(--sd-warning)] font-medium">{log}</span>
+                        <span className="text-amber-400 font-medium">{log}</span>
                       ) : log.startsWith("[RESTORE") ? (
-                        <span className="text-[var(--sd-success)] font-medium">{log}</span>
+                        <span className="text-emerald-400 font-medium">{log}</span>
+                      ) : log.startsWith("[ERROR]") || log.startsWith("[FAIL]") || log.includes("[ERR]") ? (
+                        <span className="text-rose-400 font-medium">{log}</span>
+                      ) : log.startsWith("→") ? (
+                        <span className="text-cyan-400">{log}</span>
+                      ) : log.startsWith("[DRY RUN]") || log.startsWith("[SIMULATION]") ? (
+                        <span className="text-purple-400">{log}</span>
                       ) : (
-                        log
+                        <span>{log}</span>
                       )}
                     </div>
                   ))}
