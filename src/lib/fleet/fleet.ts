@@ -207,7 +207,9 @@ export async function getEndpointAgent(
       };
     }
   } catch (dbErr) {
-    console.error("[getEndpointAgent] DB lookup failed, checking fallback:", dbErr);
+    if (process.env.DATABASE_URL) {
+      console.error("[getEndpointAgent] DB lookup failed, checking fallback:", dbErr);
+    }
   }
 
   // Also check live telemetry store

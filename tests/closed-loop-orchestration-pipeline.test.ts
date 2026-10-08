@@ -3,6 +3,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ClosedLoopOrchestrator } from "../src/lib/orchestration";
 import { requestApprovalToken, approveActionToken } from "../src/lib/governance/approvalTokens";
+import { createEnrollmentToken, enrollEndpointAgent } from "../src/lib/fleet/enrollment";
+import { MOCK_ENDPOINT_AGENTS } from "../src/lib/fleet/fleet";
 import type { SessionUser } from "../src/lib/auth/session";
 
 test("ShieldDesk Phase 9: Closed-Loop AI SOC & Autonomous Remediation Pipeline", async (t) => {
@@ -17,6 +19,25 @@ test("ShieldDesk Phase 9: Closed-Loop AI SOC & Autonomous Remediation Pipeline",
     tenant_id: "acme-tenant",
     role: "super_admin",
   };
+
+  // Dynamically enroll test host via standard platform enrollment flow
+  const { rawToken } = await createEnrollmentToken({
+    caller: approverUser,
+    label: "Phase 9 Test Host Enrollment",
+  });
+  await enrollEndpointAgent({
+    rawToken,
+    hostname: "FIN-WS-042",
+    ipAddress: "10.0.4.42",
+    osType: "windows",
+  });
+
+  t.after(() => {
+    const idx = MOCK_ENDPOINT_AGENTS.findIndex((a) => a.hostname === "FIN-WS-042");
+    if (idx !== -1) {
+      MOCK_ENDPOINT_AGENTS.splice(idx, 1);
+    }
+  });
 
   await t.test("Tier 1 Autonomous Remediation: End-to-end auto-containment and state verification", async () => {
     const result = await ClosedLoopOrchestrator.execute({
