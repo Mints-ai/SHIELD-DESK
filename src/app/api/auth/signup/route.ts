@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const assignedRole: ShieldDeskRole = role === "system_admin" ? "system_admin" : "user";
+    const assignedRole: ShieldDeskRole = role === "system_admin" ? "system_admin" : "analyst";
+
     const tenantId = organizationName
       ? organizationName.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-tenant"
       : "custom-tenant";

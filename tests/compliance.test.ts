@@ -13,7 +13,7 @@ test("ShieldDesk Layer 4 & Phase 7: Compliance, ISO 27001 & Executive Scorecard 
   const acmeAnalyst: SessionUser = {
     id: "dev-analyst",
     tenant_id: "acme-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   await t.test("ISO 27001 Control Mapping: covers essential incident and technological controls", () => {

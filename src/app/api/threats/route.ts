@@ -232,13 +232,11 @@ export async function GET(req: NextRequest) {
     }
 
     // Determine if this user can view authentication security alerts.
-    // Strictly restricted to Company System Admin (admin@acme.corp).
-    // Globex Analyst (dev-other) is a developer persona and receives a blank view.
-    const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin" || session.role === "super_admin";
+    // Restricted to System Admin and Super Admin roles only.
+    const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
     const canViewAuthAlerts = Boolean(session && isSystemAdmin);
 
     // Use dynamic threat alert store for authorized users only.
-    // Defaults to empty array if no active alerts or user is unauthorized (e.g. Globex Analyst)
     const securityAlerts = canViewAuthAlerts
       ? getThreatAlertsForUser(session.uid)
       : [];
@@ -550,7 +548,8 @@ export async function POST(req: NextRequest) {
 
       // Record simulated anomaly alert in the active store
       const simulatedAlert = recordThreatAlert({
-        targetUser: session.uid === "dev-other" ? "analyst@globex.corp" : "admin@acme.corp",
+        targetUser: session.uid || "admin@acme.corp",
+
         clientIp: "192.168.1.105",
         failureReason: "Synthetic Anomaly Burst (+4.8σ baseline spike)",
         severity: "critical",

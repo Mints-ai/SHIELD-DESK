@@ -62,7 +62,8 @@ export async function POST(req: NextRequest) {
 
     let authenticatedUid: string | null = null;
     let tenantId = "acme-tenant";
-    let role: ShieldDeskRole = "user";
+    let role: ShieldDeskRole = "analyst";
+
 
     // 1. Production Email/Password Authentication
     if (email && password) {
@@ -172,7 +173,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const validUsers = ["dev-analyst", "dev-admin", "dev-other"];
+      const validUsers = ["dev-admin", "dev-super", "dev-responder", "dev-analyst"];
       if (!validUsers.includes(userId)) {
         recordThreatAlert({
           targetUser: String(userId),
@@ -183,8 +184,7 @@ export async function POST(req: NextRequest) {
       }
 
       authenticatedUid = userId;
-      if (userId === "dev-other") tenantId = "globex-tenant";
-      if (userId === "dev-admin") role = "system_admin";
+      // Role is resolved from DEV_USERS in getSessionFromRequest — no hardcoding needed here.
     } else {
       if (email) {
         recordThreatAlert({

@@ -36,7 +36,7 @@ describe("ShieldDesk Mandatory MFA & SaaS Billing Enforcement Suite", () => {
   const viewerToken = createSessionToken({
     uid: "usr-viewer-1",
     tenantId: "acme-tenant",
-    role: "user",
+    role: "analyst",
   });
 
   it("Item 1: TOTP verification strictly validates code format and rejects invalid tokens", async () => {
@@ -52,7 +52,7 @@ describe("ShieldDesk Mandatory MFA & SaaS Billing Enforcement Suite", () => {
   it("Item 1: Action approval enforces mandatory MFA in production for privileged approvers", async () => {
     // 1. Request token in test mode
     const reqRes = await requestApprovalToken(
-      { uid: "usr-requester-1", tenantId: "acme-tenant", role: "user" },
+      { uid: "usr-requester-1", tenantId: "acme-tenant", role: "analyst" },
       { taskId: "task-prod-containment", actionType: "isolate_host" }
     );
     assert.ok(reqRes.token);

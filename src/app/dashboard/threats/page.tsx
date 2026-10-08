@@ -158,19 +158,15 @@ export default function ThreatsDashboardPage() {
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
       if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
-      if (activeUserId === "dev-other" || activeUser?.tenantId === "globex-tenant") {
-        setBlockedIps([]);
-        setSecurityAlerts([]);
+      if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
+      else setBlockedIps([]);
+      if (data.security_alerts && isSystemAdmin) {
+        setSecurityAlerts(data.security_alerts);
       } else {
-        if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
-        else setBlockedIps([]);
-        if (data.security_alerts && isSystemAdmin) {
-          setSecurityAlerts(data.security_alerts);
-        } else {
-          setSecurityAlerts([]);
-        }
+        setSecurityAlerts([]);
       }
       setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
+
     } catch (err) {
       console.error("Failed to load threats:", err);
     } finally {
@@ -194,19 +190,15 @@ export default function ThreatsDashboardPage() {
         if (data.sigma_rules) setSigmaRules(data.sigma_rules);
         if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
         if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
-        if (activeUserId === "dev-other" || activeUser?.tenantId === "globex-tenant") {
-          setBlockedIps([]);
-          setSecurityAlerts([]);
+        if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
+        else setBlockedIps([]);
+        if (data.security_alerts && isSystemAdmin) {
+          setSecurityAlerts(data.security_alerts);
         } else {
-          if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
-          else setBlockedIps([]);
-          if (data.security_alerts && isSystemAdmin) {
-            setSecurityAlerts(data.security_alerts);
-          } else {
-            setSecurityAlerts([]);
-          }
+          setSecurityAlerts([]);
         }
         setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
+
       } catch (err) {
         console.error("Failed to load threats in polling:", err);
       }

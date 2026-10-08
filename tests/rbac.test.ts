@@ -14,13 +14,13 @@ import { canAccess, canExecuteTool } from "@/lib/permissions";
 describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
   const acmeAnalyst: ChatSession = {
     uid: "dev-analyst",
-    role: "user",
+    role: "analyst",
     tenantId: "acme-tenant",
   };
 
   const globexAnalyst: ChatSession = {
     uid: "dev-other",
-    role: "user",
+    role: "analyst",
     tenantId: "globex-tenant",
   };
 
@@ -60,18 +60,17 @@ describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
   });
 
   it("RBAC Tool Gating: canExecuteTool enforces principle of least privilege", () => {
-    // Analyst / standard user
-    assert.strictEqual(canExecuteTool("user", "getIncidents"), true);
-    assert.strictEqual(canExecuteTool("user", "investigateIncident"), true);
-    assert.strictEqual(canExecuteTool("user", "analyzeCve"), true);
-    assert.strictEqual(canExecuteTool("user", "generateMitigationPlan"), true);
+    // Analyst: read-only investigation and CVE analysis, cannot generate mitigation plans
+    assert.strictEqual(canExecuteTool("analyst", "getIncidents"), true);
+    assert.strictEqual(canExecuteTool("analyst", "investigateIncident"), true);
+    assert.strictEqual(canExecuteTool("analyst", "analyzeCve"), true);
+    assert.strictEqual(canExecuteTool("analyst", "simulateBlastRadius"), true);
+    assert.strictEqual(canExecuteTool("analyst", "generateMitigationPlan"), false);
 
-    // Viewer role
-    assert.strictEqual(canExecuteTool("viewer", "getIncidents"), true);
-    assert.strictEqual(canExecuteTool("viewer", "analyzeCve"), true);
-    assert.strictEqual(canExecuteTool("viewer", "simulateBlastRadius"), true);
-    assert.strictEqual(canExecuteTool("viewer", "investigateIncident"), false);
-    assert.strictEqual(canExecuteTool("viewer", "generateMitigationPlan"), false);
+    // Responder: active mitigation and incident response
+    assert.strictEqual(canExecuteTool("responder", "getIncidents"), true);
+    assert.strictEqual(canExecuteTool("responder", "investigateIncident"), true);
+    assert.strictEqual(canExecuteTool("responder", "generateMitigationPlan"), true);
 
     // Unknown tool
     assert.strictEqual(canExecuteTool("system_admin", "unknownDestructiveTool"), false);
@@ -79,7 +78,7 @@ describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
 
   it("Priority 1: simulateBlastRadius computes downstream dependencies, posture delta, and isolation (all roles with cve.read)", async () => {
     // 1. Authorization Gate (updated policy): All roles with cve.read can now run blast radius.
-    //    Acme analyst (role: "user") has cve.read — must be ALLOWED (not denied).
+    //    Acme analyst (role: "analyst") has cve.read — must be ALLOWED (not denied).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const acmeRes: any = await simulateBlastRadius(acmeAnalyst, { cveId: "CVE-2024-6387" });
     assert.ok(!("error" in acmeRes), "Acme analyst must be ALLOWED blast radius simulation under updated RBAC policy");

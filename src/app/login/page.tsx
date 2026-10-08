@@ -380,11 +380,13 @@ function LoginForm() {
                           <div
                             className={cn(
                               "h-2 w-2 rounded-full",
-                              userId === "dev-admin"
+                              u.role === "system_admin"
                                 ? "bg-[var(--sd-wheat)]"
-                                : userId === "dev-other"
-                                  ? "bg-[var(--sd-text-dim)]"
-                                  : "bg-[var(--sd-pine-bright)]"
+                                : u.role === "super_admin"
+                                  ? "bg-[#f59e0b]"
+                                  : u.role === "responder"
+                                    ? "bg-[#60a5fa]"
+                                    : "bg-[var(--sd-pine-bright)]"
                             )}
                           />
                           <div className="flex flex-col">

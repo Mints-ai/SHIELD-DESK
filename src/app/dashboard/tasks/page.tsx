@@ -67,7 +67,8 @@ export default function SOCTaskBoardPage() {
   const detailDialogId = useId();
   const { activeUserId, activeUser } = useChat();
 
-  const canAssignTask = activeUser.role !== "viewer" && activeUser.role !== "auditor";
+  const canAssignTask = activeUser.role !== "analyst";
+
 
   const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);

@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
         const approverUid = requesterUid === "system-air" ? "dev-admin" : "system-air";
 
         const tokenRes = await requestApprovalToken(
-          { uid: requesterUid, role: "user", tenantId: caller.tenant_id },
+          { uid: requesterUid, role: "analyst", tenantId: caller.tenant_id },
+
           {
             taskId: `task-dev-${Date.now().toString(36)}`,
             actionType: command.split(" ")[0],

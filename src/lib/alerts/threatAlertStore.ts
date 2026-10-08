@@ -327,20 +327,17 @@ export function getLiveEgressRateMBPerMin(): { current_value: number; is_anomaly
 
 /**
  * Determine if a user/persona is authorized to view or manage threat alerts.
- * Strictly restricted to Company System Admin (dev-admin / system_admin).
- * Globex Analyst (dev-other) is an external developer persona and has a blank view.
+ * Restricted to system_admin and super_admin roles only.
  */
 export function isUserAuthorizedForAlerts(userId?: string | null): boolean {
   if (!userId) return false;
-  if (userId === "dev-other") return false; // Globex analyst is developer, not company admin
-  if (userId === "dev-admin") return true;
   const devUser = DEV_USERS[userId as DevUserId];
   if (devUser) {
-    if (devUser.tenantId === "globex-tenant") return false;
     return devUser.role === "system_admin" || devUser.role === "super_admin";
   }
   return false;
 }
+
 
 /**
  * Record an authentication failure alert in the Threat Engine store.

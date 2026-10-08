@@ -157,7 +157,8 @@ export function TopNavBar() {
             <summary className="sd-health-trigger"><Activity size={18} className="text-[var(--sd-wheat)]" /><div className="sd-health-caption">System health<p>{healthLoaded ? `${connectedCount} of 4 services connected` : "Checking services…"}</p></div><ChevronDown size={12} /></summary>
             <div className="sd-popover"><p className="sd-eyebrow mb-2">System connections</p>{services.map(({ label, connected, icon: Icon }) => <div key={label} className="sd-health-row"><span><Icon size={14} />{label}</span><span className={connected ? "text-[var(--sd-success)]" : "text-[var(--sd-text-muted)]"}><i className="sd-status-dot" />{healthLoaded ? connected ? "Connected" : "Offline" : "Checking"}</span></div>)}</div>
           </details>
-          {activeUserId !== "dev-analyst" && (
+          {activeUser.role !== "analyst" && (
+
             <button
               className="sd-button !px-3"
               disabled={pendingTokens.length === 0}

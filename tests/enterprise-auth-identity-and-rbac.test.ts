@@ -122,7 +122,7 @@ test("ShieldDesk Phase 4: Enterprise Identity, Auth & RBAC Hardening", async (t)
       email: "compliance.officer@acme.com",
       externalGroups: ["Compliance"],
     });
-    assert.equal(auditorResult.role, "auditor", "Compliance group should map to auditor role");
+    assert.equal(auditorResult.role, "analyst", "Compliance group should map to auditor role");
   });
 
   await t.test("SCIM 2.0 User Provisioning & Deprovisioning", () => {
@@ -158,15 +158,15 @@ test("ShieldDesk Phase 4: Enterprise Identity, Auth & RBAC Hardening", async (t)
 
   await t.test("Canonical RBAC: Auditor Role Permissions Gate", () => {
     // Auditor can inspect incidents and CVEs
-    assert.equal(canAccess("auditor", "incident.read"), true);
-    assert.equal(canAccess("auditor", "cve.read"), true);
+    assert.equal(canAccess("analyst", "incident.read"), true);
+    assert.equal(canAccess("analyst", "cve.read"), true);
 
     // Auditor CANNOT approve remediation tiers
-    assert.equal(canAccess("auditor", "approve.tier1"), false);
-    assert.equal(canAccess("auditor", "approve.tier2"), false);
-    assert.equal(canAccess("auditor", "approve.tier3"), false);
+    assert.equal(canAccess("analyst", "approve.tier1"), false);
+    assert.equal(canAccess("analyst", "approve.tier2"), false);
+    assert.equal(canAccess("analyst", "approve.tier3"), false);
 
     // Auditor CANNOT manage users
-    assert.equal(canAccess("auditor", "MANAGE_USERS"), false);
+    assert.equal(canAccess("analyst", "MANAGE_USERS"), false);
   });
 });

@@ -701,14 +701,12 @@ Governance Note: Blast radius simulations are predictive models. Tier 2 host iso
     const uid = session?.uid || "";
 
     let rolePerspective = "";
-    if (role === "system_admin" || role === "super_admin" || uid === "dev-admin") {
-      rolePerspective = "Role Authority (SuperAdmin / Governance): Full authorization to approve Tier 2 & Tier 3 containment, enforce fleet-wide quarantine, or execute automated rollback snapshots.";
+    if (role === "system_admin" || role === "super_admin") {
+      rolePerspective = "Role Authority (System / Super Admin): Full authorization to approve Tier 1, Tier 2 & Tier 3 containment, enforce fleet-wide quarantine, or execute automated rollback snapshots.";
     } else if (role === "responder") {
-      rolePerspective = "Role Authority (Incident Responder): Authorized to trigger Tier 2 host isolation, deploy emergency vendor patches, and quarantine compromised dependencies.";
-    } else if (role === "analyst" || uid === "dev-analyst" || uid === "dev-other") {
-      rolePerspective = "Role Authority (Security Operations Analyst): Authorized to draft 3-horizon remediation tasks, calculate CVSS/EPSS blast radius, and recommend Tier 1 containment.";
-    } else if (role === "auditor" || role === "viewer") {
-      rolePerspective = "Role Authority (Auditor / Viewer — Read-Only): Scan findings are read-only. Report can be exported for SOC 2, ISO 27001, and NIST CSF compliance audit evidence.";
+      rolePerspective = "Role Authority (Incident Responder): Authorized to trigger Tier 1 & Tier 2 host isolation, deploy emergency vendor patches, and quarantine compromised dependencies.";
+    } else if (role === "analyst") {
+      rolePerspective = "Role Authority (Security Operations Analyst): Authorized to investigate incidents, calculate CVSS/EPSS blast radius, and recommend containment — cannot approve or assign actions.";
     } else {
       rolePerspective = "Role Authority (Operator): Review identified vulnerability advisories and request security analyst triage for affected assets.";
     }

@@ -38,7 +38,7 @@ const analystToken = createSessionToken({
 const globexToken = createSessionToken({
   uid: "usr-globex-9",
   tenantId: "globex-tenant",
-  role: "user",
+  role: "analyst",
 });
 
 describe("ShieldDesk Closed-Loop EDR/SOC Integration Test Suite", () => {

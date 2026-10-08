@@ -30,7 +30,7 @@ test("ShieldDesk SD-008 & SD-009: X.509 Certificate Pipeline & Revocation Suite"
   const analystToken = createSessionToken({
     uid: "usr-analyst-01",
     tenantId: "acme-tenant",
-    role: "user",
+    role: "analyst",
   });
 
   const testAgentId = "ea888888-8888-8888-8888-888888888888";

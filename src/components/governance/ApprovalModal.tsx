@@ -60,15 +60,18 @@ export function ApprovalModal({
 
   if (!isOpen || !token) return null;
 
-  const isSystemAdmin = activeUser.role === "system_admin" || activeUser.role === "super_admin";
-  const allowsSelfApproval = isSystemAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
+  const isElevatedAdmin = activeUser.role === "system_admin" || activeUser.role === "super_admin";
+  const isResponder = activeUser.role === "responder";
+  const canApproveAny = isElevatedAdmin || isResponder;
+  const allowsSelfApproval = isElevatedAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
   const isBlockedBySelfRequest = activeUserId === token.requested_by && !allowsSelfApproval;
-  const isAnalystRole =
-    activeUser.role === "analyst" ||
-    activeUser.role === "user" ||
-    activeUser.role === "viewer" ||
-    activeUser.role === "auditor";
-  const canApproveAction = isSystemAdmin && !isBlockedBySelfRequest;
+  const isAnalystRole = activeUser.role === "analyst";
+  // Responders cannot approve Tier 3 (break-glass requires admin)
+  const canApproveAction =
+    canApproveAny &&
+    !isBlockedBySelfRequest &&
+    (isElevatedAdmin || (isResponder && token.tier !== "Tier 3"));
+
   const isAlreadyFinalized = token.status !== "pending";
 
   const handleDecision = async (action: "approve" | "reject") => {
@@ -241,21 +244,29 @@ export function ApprovalModal({
                 <div className="space-y-1">
                   <p className="font-bold">Approval Restricted &mdash; Analyst Role</p>
                   <p className="text-[13px] leading-relaxed text-[var(--sd-danger)]">
-                    Analysts cannot approve remediation actions under any circumstances. Only System Administrators are permitted to authorize containment tasks.
+                    Analysts cannot approve remediation actions. Only System Admins, Super Admins, or Responders (Tier 1 &amp; 2) are permitted to authorize containment tasks.
                   </p>
                 </div>
               </div>
               <div className="pt-1.5 flex items-center gap-2">
-                <span className="text-[11px] text-[var(--sd-danger)]">Switch persona to test System Admin approval:</span>
+                <span className="text-[11px] text-[var(--sd-danger)]">Switch persona to test approval:</span>
                 <button
                   type="button"
                   onClick={() => setActiveUserId("dev-admin")}
                   className="px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] font-bold border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
                 >
-                  Switch to System Admin (dev-admin)
+                  Switch to System Admin
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveUserId("dev-responder")}
+                  className="px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] font-bold border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
+                >
+                  Switch to Responder
                 </button>
               </div>
             </div>
+
           ) : isBlockedBySelfRequest ? (
             <div className="rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] p-3 text-[13px] text-[var(--sd-danger)] space-y-2">
               <div className="flex items-start gap-2">
@@ -274,7 +285,11 @@ export function ApprovalModal({
               <span>
                 {allowsSelfApproval && activeUserId === token.requested_by ? (
                   <>
-                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; System Admin self-approval permitted for {token.tier}.
+                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; {activeUser.role === "system_admin" ? "System Admin" : "Super Admin"} self-approval permitted for {token.tier}.
+                  </>
+                ) : isResponder ? (
+                  <>
+                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; Responder qualified to sign off on {token.tier} action{token.tier === "Tier 3" ? " (Tier 3 requires admin — use a higher role)" : ""}.
                   </>
                 ) : (
                   <>
@@ -283,6 +298,7 @@ export function ApprovalModal({
                 )}
               </span>
             </div>
+
           )}
 
           {/* Finalized Token Notice */}
