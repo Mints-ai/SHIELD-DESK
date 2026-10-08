@@ -71,7 +71,7 @@ test("ShieldDesk Phase 0 Security & Auth Hardening Suite", async (t) => {
     const validToken = createSessionToken({
       uid: "usr-soc-001",
       tenantId: "acme-tenant",
-      role: "user",
+      role: "analyst",
     });
 
     const [payload, sig] = validToken.split(".");

@@ -67,7 +67,8 @@ export default function FleetPage() {
   const canManageFleetAgents =
     activeUser.role === "system_admin" ||
     activeUser.role === "super_admin" ||
-    activeUser.tenantId === "globex-tenant";
+    activeUser.role === "responder";
+
 
   const [agents, setAgents] = useState<EndpointAgentRecord[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<EndpointAgentRecord | null>(null);

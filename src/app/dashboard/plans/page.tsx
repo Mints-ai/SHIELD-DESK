@@ -97,15 +97,15 @@ export default function PlansIndexPage() {
           }
         } else {
           if (isMounted) {
-            setPlans(activeUserId === "dev-other" ? [] : fallbackPlans);
-            setIsSampleData(activeUserId !== "dev-other");
+            setPlans(fallbackPlans);
+            setIsSampleData(true);
           }
         }
       } catch {
         if (isMounted) {
-            setPlans(activeUserId === "dev-other" ? [] : fallbackPlans);
-            setIsSampleData(activeUserId !== "dev-other");
-          }
+          setPlans(fallbackPlans);
+          setIsSampleData(true);
+        }
       } finally {
         if (isMounted) setIsLoading(false);
       }

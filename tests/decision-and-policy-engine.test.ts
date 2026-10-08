@@ -131,7 +131,7 @@ describe("Phase 2 & 5: Decision Engine & Policy Engine Isolation Suite", () => {
         actor: {
           id: "usr-auditor-01",
           tenantId: "tenant-acme",
-          role: "viewer", // Read-only
+          role: "analyst", // Read-only
         },
       });
 

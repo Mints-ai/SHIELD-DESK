@@ -1,19 +1,18 @@
 import "server-only";
 
 /**
- * ShieldDesk roles, per the development plan's RBAC table:
- *   System Admin — platform-wide privileges (including cross-tenant view)
- *   Super Admin  — company-level administration
- *   User         — permissions based on assigned role
+ * ShieldDesk RBAC — 4-role model:
+ *   system_admin — platform-wide privileges, cross-tenant visibility, all approvals
+ *   super_admin  — company-level admin, all approvals within tenant
+ *   responder    — incident response, Tier 1 & 2 approvals, task assignment
+ *   analyst      — read-only investigation, cannot approve or assign tasks
  *
- * The four chat tools don't need per-record ownership checks the way an
- * HR tool would (there's no "my incident" concept in ShieldDesk — an
- * incident belongs to the tenant, not to one analyst). The permission
- * that actually matters here is whether a request can cross tenant
- * boundaries at all; every other check is tenant isolation, applied
- * uniformly to every query in lib/tools/shieldDeskChatTools.ts.
+ * Tenant isolation is enforced uniformly on every DB query in
+ * lib/tools/shieldDeskChatTools.ts. The permission that gates cross-tenant
+ * access is VIEW_CROSS_TENANT, held only by system_admin.
  */
-export type ShieldDeskRole = "system_admin" | "super_admin" | "analyst" | "responder" | "viewer" | "auditor" | "user";
+export type ShieldDeskRole = "system_admin" | "super_admin" | "responder" | "analyst";
+
 
 export type Permission =
   | "VIEW_CROSS_TENANT"
@@ -47,6 +46,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
+    "task.assign",
     "approve.tier1",
     "approve.tier2",
     "approve.tier3",
@@ -56,36 +56,20 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "incident.investigate",
     "cve.read",
     "incident.mitigate",
+    "task.assign",
     "approve.tier1",
     "approve.tier2",
+    // Responders can contain threats (Tier 1 & 2) but NOT break-glass (Tier 3).
   ],
   analyst: [
     "incident.read",
     "incident.investigate",
     "cve.read",
-    "incident.mitigate",
-    "task.assign",
-    // Analysts can investigate and draft tasks, but CANNOT approve remediation actions.
-  ],
-  viewer: [
-    "incident.read",
-    "cve.read",
-    // Viewers have READ only — they cannot approve any action.
-  ],
-  auditor: [
-    "incident.read",
-    "cve.read",
-    // Auditors have read-only access to audit logs, evidence packages, and compliance reports.
-  ],
-  user: [
-    "incident.read",
-    "incident.investigate",
-    "cve.read",
-    "incident.mitigate",
-    "task.assign",
-    // Standard users/analysts cannot approve remediation actions.
+    // Analysts are read-only: they can view incidents/CVEs and investigate,
+    // but CANNOT mitigate, assign tasks, or approve any action.
   ],
 };
+
 
 /** Maps an AutonomyTier string to the Permission required to approve it. */
 export const TIER_APPROVE_PERMISSIONS: Record<string, Permission> = {
@@ -111,15 +95,14 @@ export function canAccess(role: string, permission: Permission): boolean {
 export const hasPermission = canAccess;
 
 /**
- * Returns true if the session is allowed to create / assign tasks.
- * Rules: System Admin (any tenant) OR any user from globex-tenant.
+ * Returns true if the role is permitted to create / assign remediation tasks.
+ * Permitted roles: system_admin, super_admin, responder.
+ * Analysts are read-only and cannot assign tasks.
  */
 export function canAssignTask(role: string, tenantId: string): boolean {
-  if (role === "viewer" || role === "auditor") {
-    return false;
-  }
-  return true;
+  return canAccess(role as ShieldDeskRole, "task.assign");
 }
+
 
 export function canExecuteTool(role: string, toolName: string): boolean {
   const requiredPermission = TOOL_PERMISSIONS[toolName];

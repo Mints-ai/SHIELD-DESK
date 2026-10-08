@@ -57,7 +57,7 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
   const acmeAnalyst: SessionUser = {
     id: "dev-analyst",
     tenant_id: "acme-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   const acmeAdmin: SessionUser = {
@@ -69,7 +69,7 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
   const globexUser: SessionUser = {
     id: "dev-other",
     tenant_id: "globex-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   await t.test("Tenant Isolation: acmeAnalyst sees only Acme endpoint agents", async () => {

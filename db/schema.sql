@@ -15,7 +15,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
 CREATE TABLE IF NOT EXISTS users (
   id            text PRIMARY KEY,   -- opaque user id
   tenant_id     text NOT NULL,
-  role          text NOT NULL CHECK (role IN ('system_admin', 'super_admin', 'user')),
+  role          text NOT NULL CHECK (role IN ('system_admin', 'super_admin', 'responder', 'analyst')),
+
   email         text UNIQUE,
   password_hash text,
   -- TOTP / MFA columns (added in launch-readiness pass)

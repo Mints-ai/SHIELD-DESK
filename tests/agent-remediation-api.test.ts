@@ -19,7 +19,7 @@ test("ShieldDesk Automated Remediation & Agent Queue API Suite", async (t) => {
   const acmeAnalyst: SessionUser = {
     id: "dev-analyst",
     tenant_id: "acme-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   const acmeAdmin: SessionUser = {

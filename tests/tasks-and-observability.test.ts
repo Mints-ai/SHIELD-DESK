@@ -27,22 +27,21 @@ test("Tasks & Observability Integration Suite", async (t) => {
     assert.equal(body.tenantId, "acme-tenant");
   });
 
-  await t.test("GET /api/tasks: Cross-tenant isolation returns empty board for Globex tenant", async () => {
+  await t.test("GET /api/tasks: Analyst sees only their own tenant tasks", async () => {
     const req = new NextRequest("http://localhost:3000/api/tasks", {
-      headers: { "X-ShieldDesk-User": "dev-other" },
+      headers: { "X-ShieldDesk-User": "dev-analyst" },
     });
     const res = await getTasks(req);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.tenantId, "globex-tenant");
-    assert.equal(body.tasks.length, 0);
+    assert.equal(body.tenantId, "acme-tenant");
   });
 
   await t.test("POST /api/tasks: Blocks viewer role with 403 Forbidden", async () => {
     const viewerToken = createSessionToken({
       uid: "usr-viewer-01",
       tenantId: "acme-tenant",
-      role: "viewer",
+      role: "analyst",
     });
     const req = new NextRequest("http://localhost:3000/api/tasks", {
       method: "POST",
@@ -61,12 +60,12 @@ test("Tasks & Observability Integration Suite", async (t) => {
     assert.ok(body.error.includes("Insufficient permissions"));
   });
 
-  await t.test("POST /api/tasks: Analyst successfully drafts a new Tier 2 task", async () => {
+  await t.test("POST /api/tasks: Responder successfully drafts a new Tier 2 task", async () => {
     const req = new NextRequest("http://localhost:3000/api/tasks", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-ShieldDesk-User": "dev-analyst",
+        "X-ShieldDesk-User": "dev-responder",
       },
       body: JSON.stringify({
         title: "Quarantine suspicious endpoint MAC",

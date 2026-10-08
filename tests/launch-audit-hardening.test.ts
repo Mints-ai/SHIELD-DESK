@@ -28,7 +28,7 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
   const acmeAnalyst: SessionUser = {
     id: "dev-analyst",
     tenant_id: "acme-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   const acmeAdmin: SessionUser = {
@@ -40,7 +40,7 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
   const globexUser: SessionUser = {
     id: "dev-other",
     tenant_id: "globex-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   it("Audit Item 43: Scans API explicitly blocks demo mode in production (GET & POST)", async () => {

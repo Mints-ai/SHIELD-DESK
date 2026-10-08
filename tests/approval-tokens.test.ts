@@ -13,7 +13,7 @@ import type { ChatSession } from "@/lib/auth/session";
 describe("ShieldDesk Priority 2: Approval Tokens & Layer 4 Governance Suite", () => {
   const acmeAnalyst: ChatSession = {
     uid: "dev-analyst",
-    role: "user",
+    role: "analyst",
     tenantId: "acme-tenant",
   };
 
@@ -25,7 +25,7 @@ describe("ShieldDesk Priority 2: Approval Tokens & Layer 4 Governance Suite", ()
 
   const globexAnalyst: ChatSession = {
     uid: "dev-other",
-    role: "user",
+    role: "analyst",
     tenantId: "globex-tenant",
   };
 

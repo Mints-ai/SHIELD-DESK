@@ -56,7 +56,7 @@ export function isSimulationAllowed(): boolean {
 }
 
 /**
- * True if development persona switching (dev-admin, dev-analyst, dev-other)
+ * True if development persona switching (dev-admin, dev-super, dev-responder, dev-analyst)
  * is permitted for testing. Strictly forbidden in production.
  */
 export function isDevPersonaAllowed(): boolean {

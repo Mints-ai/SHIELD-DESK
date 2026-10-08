@@ -23,7 +23,7 @@ test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry S
     uid: "usr-analyst-01",
     email: "analyst@acme.corp",
     tenantId: "acme-tenant",
-    role: "user",
+    role: "analyst",
   });
 
   let validRawToken = "";
