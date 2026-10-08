@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { usePathname } from "next/navigation";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   ArrowDown,
@@ -34,6 +35,9 @@ const DEFAULT_SUGGESTIONS = [
 ];
 
 export function ChatWidget() {
+  const pathname = usePathname();
+  const isAuthPage = pathname === "/login" || pathname?.startsWith("/login/");
+
   const {
     activeUserId,
     setActiveUserId,
@@ -45,6 +49,13 @@ export function ChatWidget() {
     promptToInject,
     setPromptToInject,
   } = useChat();
+
+  // Close chat automatically if navigating to the sign-in / auth page
+  useEffect(() => {
+    if (isAuthPage && isChatOpen) {
+      setIsChatOpen(false);
+    }
+  }, [isAuthPage, isChatOpen, setIsChatOpen]);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -299,6 +310,11 @@ export function ChatWidget() {
       ]
     : DEFAULT_SUGGESTIONS;
 
+
+  // Do not render chat bot trigger or window on the sign-in / authentication page
+  if (isAuthPage) {
+    return null;
+  }
 
   return (
     <>
