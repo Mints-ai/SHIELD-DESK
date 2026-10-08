@@ -15,6 +15,18 @@
 
 ---
 
+## Platform Interface & Live Console
+
+### Security Operations & Incident Workspace
+![ShieldDesk Security Operations Workspace](docs/screenshots/soc-incident-workspace.png)
+*Real-time incident workspace with active Microsoft Defender & Wazuh alert correlation, severity classification, attack timeline, and AI investigation trigger.*
+
+### Executive Risk Scorecard & Security Posture Index
+![ShieldDesk Executive Risk Scorecard](docs/screenshots/risk-scorecard.png)
+*Executive intelligence showing cyber posture index, estimated loss avoided, threats contained, benchmark MTTD/MTTR response velocity, and role-based operator switching.*
+
+---
+
 ## 1. What ShieldDesk Actually Does
 
 Security Operations teams are overwhelmed by thousands of fragmented alerts across cloud hosts, firewalls, and endpoints. ShieldDesk unifies this workflow in a single security operations and remediation control plane:
@@ -184,15 +196,16 @@ sequenceDiagram
 
 ## 4. Multi-Tenant RBAC & Security Isolation
 
-ShieldDesk is built from the ground up for multi-tenancy. Every database query, fleet command, and AI context prompt is strictly bound to the authenticated caller's tenant:
+ShieldDesk is built from the ground up for strict multi-tenancy. Every database query, fleet command, and AI context prompt is strictly bound to the authenticated caller's tenant:
 
-### 6 Unified Roles (`src/lib/permissions.ts`)
-- **`system_admin`**: Global platform administrator with cross-tenant visibility (`VIEW_CROSS_TENANT`), user management, emergency fleet kill-switch rights, and self-approval authority for Tier 1 & Tier 2 containment tasks.
-- **`super_admin`**: Tenant organization administrator with Tier 3 dual-approval authority (`approve.tier3`).
-- **`responder`**: Incident response engineer; signs off on Tier 1 and Tier 2 containment tasks (`approve.tier1`, `approve.tier2`) and dispatches containment commands.
-- **`analyst`**: Security operations analyst; drafts mitigation tasks (`task.assign`), investigates incidents, and simulates attack graphs. **Strictly restricted from approving any remediation actions (`approve.*` permissions revoked).**
-- **`viewer`**: Read-only stakeholder; cannot approve tokens, cannot draft tasks (rejected with `403 Forbidden`), and cannot execute state-changing actions.
-- **`user`**: Standard tenant operator with basic incident and CVE read/investigation permissions; zero approval rights.
+### Active Operator Personas & Role Hierarchy (`src/lib/permissions.ts`)
+The top navigation bar provides a live role-persona switcher (backed by `db/migrations/phase_l_rbac_roles.sql`) allowing operators to quickly evaluate system behavior across distinct privilege tiers:
+- **`system_admin` (System Admin)**: Global platform administrator with cross-tenant visibility (`VIEW_CROSS_TENANT`), user management, emergency fleet kill-switch rights, and self-approval authority for Tier 1 & Tier 2 containment tasks.
+- **`super_admin` (Super Admin)**: Tenant organization administrator with Tier 3 dual-approval authority (`approve.tier3`) and break-glass privileges.
+- **`responder` (Responder)**: Incident response engineer; signs off on Tier 1 and Tier 2 containment tasks (`approve.tier1`, `approve.tier2`) and dispatches containment commands to enrolled agents.
+- **`analyst` (Analyst)**: Security operations analyst; drafts mitigation tasks (`task.assign`), investigates incidents, and simulates attack graphs. **Strictly restricted from approving any remediation actions (`approve.*` permissions revoked).**
+- **`viewer` (Viewer)**: Read-only stakeholder; cannot approve tokens, cannot draft tasks (rejected with `403 Forbidden`), and cannot execute state-changing actions.
+- **`user` (Standard User)**: Basic tenant operator with incident and CVE read/investigation permissions; zero approval rights.
 
 ### Anti-Enumeration Defense
 Probing resources (incidents, plans, agent telemetry) belonging to another tenant returns `404 Not Found` rather than `403 Forbidden`, denying attackers confirmation of resource existence across tenant boundaries.
@@ -200,12 +213,13 @@ Probing resources (incidents, plans, agent telemetry) belonging to another tenan
 ### Edge Proxy & Header Anti-Spoofing (`src/proxy.ts`)
 In production environments, ShieldDesk strips `X-ShieldDesk-User` and `X-Tenant-ID` headers from untrusted incoming traffic, ensuring identity can only be established via cryptographically signed `shielddesk_session` cookies or validated Bearer tokens. Unauthenticated visits to protected pages (`/`, `/dashboard/*`) automatically redirect to `/login?redirect=...`.
 
-### Unified Authentication Architecture
+### Unified Authentication & Clean Sign-In Experience
 - **HMAC-SHA256 Session Tokens**: `src/lib/auth/token.ts` generates tamper-resistant, signed session cookies with constant-time cryptographic verification (`crypto.timingSafeEqual`).
 - **Scrypt Password Hashing**: `src/lib/auth/password.ts` protects local credentials using Node.js `crypto.scrypt` with random 16-byte salts.
 - **RFC 6238 TOTP Multi-Factor Authentication**: Native MFA enrollment and verification (`/api/auth/mfa/setup`, `/api/auth/login`) with replay protection.
 - **Supabase Cloud Bridge**: Integrated alongside local authentication via `@supabase/ssr` (`src/lib/auth/session.ts`).
 - **Rate-Limited Auth Gateways**: `/api/auth/login` throttles at 10 req/min per IP; `/api/auth/signup` throttles at 5 req/min per IP.
+- **Distraction-Free Sign-In Gate**: To ensure an unobstructed authentication flow, the AI Copilot widget is conditionally suppressed on `/login`, keeping the login form, MFA prompt, and legal terms front-and-center while remaining persistently docked across all operational dashboards.
 
 ---
 
@@ -371,8 +385,9 @@ go build -o threat.exe .
 
 ## 11. Comprehensive API Route Catalog
 
-All routes reside under `src/app/api/` and enforce strict session authentication and tenant isolation:
+All routes reside under `src/app/api/` and enforce strict session authentication, tenant isolation, and RBAC authorization:
 
+### Operational & Platform Endpoints
 | Method | Endpoint | Authorization | Description |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/chat` | Any authenticated role | AI Copilot conversational stream (SSE) with deterministic tool execution |
@@ -387,6 +402,7 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 | `POST` | `/api/fleet/kill-switch` | `super_admin`, `system_admin` | Emergency tenant fleet kill switch; immediately freezes agent command queues |
 | `GET` | `/api/billing` | Authenticated tenant user | Returns subscription tier, active endpoint count, and quota status |
 | `POST` | `/api/billing` | `system_admin`, `super_admin` | Upgrades subscription tier and generates checkout sessions |
+| `POST` | `/api/billing/webhook` | Stripe HMAC Signature | Idempotent Stripe webhook receiver (`stripe_events_processed` deduplication) |
 | `GET` | `/api/scans` | `cve.read` | Returns scanner status, engine mode, and cached or clean initial CVE posture |
 | `POST` | `/api/scans` | `cve.read` | Executes live Aqua Trivy scan on codebase/container (`action: "cve_scan"`) or Gitleaks scan |
 | `GET` | `/api/gitleaks/scan` | `cve.read` | Returns Gitleaks scanner status, engine mode, and cached secret leak findings |
@@ -401,27 +417,65 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 | `POST` | `/api/auth/logout` | Authenticated user | Clears the `shielddesk_session` cookie |
 | `POST` | `/api/auth/mfa/setup` | Authenticated user | Generates TOTP secret and QR code for two-factor authentication |
 
+### Advanced Engine & Enterprise Endpoints (`/api/v1/` & SCIM)
+| Method | Endpoint | Authorization | Description |
+| :--- | :--- | :--- | :--- |
+| `GET`, `POST` | `/api/scim/v2/Users` | Bearer Token / SCIM | RFC 7644 SCIM 2.0 enterprise user provisioning and lifecycle synchronization |
+| `GET`, `POST` | `/api/scim/v2/Groups` | Bearer Token / SCIM | RFC 7644 SCIM 2.0 group membership and role synchronization |
+| `GET` | `/api/v1/twin/attack-paths` | `incident.read` | Recursive CTE attack-path graph traversals with MITRE ATT&CK mapping |
+| `GET` | `/api/v1/twin/blast-radius` | `incident.read` | Multi-dimensional blast radius simulation (services, downtime, rollbacks) |
+| `GET`, `POST` | `/api/v1/decisions` | `incident.read` | Immutable decision audit records with dual Security & AI confidence metrics |
+| `POST` | `/api/v1/remediation/simulate` | `incident.read` | Root-cause grouping and maintenance window simulation across findings |
+| `POST` | `/api/v1/remediation/verify` | `responder`, `admin` | Deterministic verification of host state across 7 verification check types |
+| `POST` | `/api/v1/remediation/recheck` | `responder`, `admin` | Post-closure continuous drift detection schedules and re-evaluations |
+| `GET` | `/api/v1/compliance/export` | `system_admin`, `auditor` | Cryptographic evidence vault export (RFC-4180 CSV & JSON with Merkle proofs) |
+| `POST` | `/api/v1/ai/proposals` | Authenticated user | Structured AI remediation proposals with strict non-self-approval enforcement |
+| `GET`, `POST` | `/api/v1/ai/evaluation` | `system_admin` | Benchmark dataset evaluation tracking hallucination rate & tool accuracy |
+| `POST` | `/api/v1/agent/results` | Agent mTLS Token | Cryptographic RSA-SHA256 result report verification and host state digests |
+| `GET`, `POST` | `/api/v1/agent/update` | Agent mTLS Token | Signed agent self-update manifests with canary evaluation and auto-rollback |
+| `GET`, `POST` | `/api/v1/billing/licenses` | `super_admin` | Commercial license activation, grace periods, and signed offline cache generation |
+
 ---
 
-## 12. Database Schema Overview
+## 12. Database Schema & Migration Architecture
 
-The database (`db/schema.sql`) contains 15 core tables equipped with foreign key cascades, tenant indexes, and Row-Level Security (RLS) policies:
+ShieldDesk persists state across a resilient PostgreSQL schema designed with Row-Level Security (RLS), foreign key cascades, tenant-partitioned indexes, and tamper-evident Merkle hash chains:
 
-1. **`users`**: Tenant-bound user accounts, roles (`system_admin`, `super_admin`, `user`), scrypt password hashes, and TOTP MFA secrets.
+### Baseline Core Tables (`db/schema.sql`)
+1. **`users`**: Tenant accounts, roles (`system_admin`, `super_admin`, `responder`, `analyst`, `user`), scrypt hashes, TOTP secrets.
 2. **`incidents`**: Security incidents with severity (`critical`, `high`, `medium`, `low`) and status (`open`, `investigating`, `resolved`, `closed`).
-3. **`incident_events`**: Chronological event timeline associated with an incident.
-4. **`assets`**: Protected tenant infrastructure assets (hostnames, asset types).
+3. **`incident_events`**: Chronological event audit timeline associated with an incident.
+4. **`assets`**: Protected tenant infrastructure assets (hostnames, IP addresses, asset types).
 5. **`incident_assets`**: Many-to-many junction linking incidents to affected assets.
 6. **`incident_cves`**: Many-to-many junction linking incidents to specific CVE vulnerabilities.
 7. **`mitigation_plans`**: Versioned 3-horizon remediation plans linked to incidents.
 8. **`mitigation_tasks`**: Granular tasks categorized by horizon (`immediate`, `short_term`, `long_term`), autonomy tier, and status.
 9. **`approval_tokens`**: Human-in-the-loop authorization tokens with DB-level Separation of Duties checks.
 10. **`approval_audit_log`**: Detailed audit trail of approval requests, sign-offs, and rejections.
-11. **`endpoint_agents`**: Enrolled agent daemons with OS type (`linux`, `windows`, `darwin`), version, heartbeat, and safety snapshot IDs.
-12. **`agent_commands`**: RSA-signed command dispatch queue with delivery status (`queued`, `delivered`, `executed`, `failed`, `rolled_back`).
-13. **`agent_command_logs`**: Execution output and historical logs for fleet commands.
-14. **`hash_chain_audit`**: Cryptographically chained tamper-evident audit ledger (`prev_hash` + `current_hash`).
-15. **`chat_audit_log`**: Comprehensive compliance record of AI copilot queries, tool executions, and responses.
+11. **`endpoint_agents`**: Enrolled agent daemons with OS type (`linux`, `windows`), version, heartbeat, and safety snapshot IDs.
+12. **`endpoint_certificates`**: X.509 device certificates with ASN.1 DER integer padding and fingerprint binding.
+13. **`endpoint_enrollment_tokens`**: One-time cryptographically hashed enrollment tokens for host bootstrapping.
+14. **`agent_commands`**: RSA-signed command dispatch queue with delivery status (`queued`, `delivered`, `executed`, `failed`, `rolled_back`).
+15. **`agent_command_logs`**: Terminal console standard output and execution return codes.
+16. **`endpoint_telemetry`**: High-frequency CPU, memory, socket count, and ring-buffer telemetry records.
+17. **`endpoint_snapshots`**: Pre-execution system state snapshots (firewall tables, registry keys, process trees).
+18. **`endpoint_kill_switches`**: Emergency fleet kill switches locking agent execution.
+19. **`hash_chain_audit`**: Cryptographically chained tamper-evident audit ledger (`current_hash = SHA-256(prev_hash + ...)`).
+20. **`chat_audit_log`**: Comprehensive compliance record of AI copilot queries, tool executions, and responses.
+
+### Phased Migration Architecture (`db/migrations/`)
+- **`phase_a_security_data_layer.sql`**: `universal_security_events`, `vulnerability_findings`, `connector_cursors`, `connector_health`.
+- **`phase_b_security_digital_twin.sql`**: `twin_nodes`, `twin_edges`, `twin_sync_log` for recursive CTE graph traversals.
+- **`phase_c_attack_path_blast_radius.sql`**: `attack_path_reports`, `blast_radius_reports` for choke point and damage analysis.
+- **`phase_d_decision_records.sql`**: `decision_records` immutable ledger with decoupled Security & AI confidence scoring.
+- **`phase_e_remediation_verification.sql`**: `remediation_simulation_plans`, `remediation_verifications`, `continuous_recheck_schedules`.
+- **`phase_f_evidence_vault.sql`**: `compliance_export_bundles` for cryptographic Merkle proofs and compliance attestations.
+- **`phase_g_ai_evaluation.sql`**: `ai_prompt_versions`, `ai_agent_identities`, `ai_eval_benchmark_dataset`, `ai_eval_benchmark_runs`.
+- **`phase_h_execution_broker.sql`**: `execution_dispatch_tokens`, `agent_update_manifests`, `agent_update_events`.
+- **`phase_i_entitlements_stripe.sql`**: `stripe_events_processed` (idempotency), `offline_caches`, `licenses`.
+- **`phase_j_agent_license_activation.sql`**: Hardware fingerprint and license entitlement binding tables.
+- **`phase_k_yara_malware_rules.sql`**: YARA and Sigma detection rule definitions and tenant subscriptions.
+- **`phase_l_rbac_roles.sql`**: Unified 6-tier RBAC role definitions and fine-grained permissions matrix.
 
 ---
 
@@ -498,15 +552,18 @@ cd services/threat && go run .             # Go Threat Engine (:8003)
 
 ## 14. Automated Testing & Verification
 
-ShieldDesk maintains rigorous automated test suites across both TypeScript/Node.js and Go:
+ShieldDesk maintains rigorous automated test suites across both TypeScript/Node.js (covering Phases A through L) and Go:
 
 ```bash
-# 1. Run TypeScript Test Suite (204 automated tests across 32 suites)
+# 1. Run TypeScript Test Suite (49 test suites across all phases)
 npm test
 
 # 2. Run Go Threat Engine Test Suite (6 tests, 100% passing)
 cd services/threat
 go test -v .
+
+# 3. TypeScript Strict Type Safety Validation (0 errors)
+npx tsc --noEmit
 ```
 
 ### Test Suite Highlights:
@@ -528,11 +585,7 @@ go test -v .
 - `tests/security-auth-hardening.test.ts` (16 tests): Cryptographic HMAC session tokens, scrypt password hashing, timing-safe equality, and protected route 401 enforcement.
 - `tests/security-injection.test.ts` (5 tests): Adversarial prompt injection defense, SQL injection protection, and regex secret redactor verification.
 - `tests/tasks-and-observability.test.ts` (8 tests): Task board database persistence, viewer role gating (`403 Forbidden`), and Sentry `trackError` instrumentation.
-
-TypeScript strict type safety validation:
-```bash
-npx tsc --noEmit
-```
+- `tests/phase-a-security-data-layer.test.ts` through `tests/phase-l-rbac.test.ts`: Verification of connectors, digital twin graph queries, decision records, evidence vaults, execution brokers, and commercial billing.
 
 ---
 
@@ -540,12 +593,18 @@ npx tsc --noEmit
 
 ```text
 shielddesk/
+├── docs/
+│   ├── screenshots/               # Production UI walkthrough captures (Workspace & Scorecard)
+│   ├── launch-gates/              # Public launch readiness gate documents (Pilot, OS matrix, Legal)
+│   ├── GAP_ANALYSIS.md            # Comprehensive spec-to-code gap matrix across Phases A–I
+│   ├── PRODUCTION_READINESS_AUDIT.md # Evidence-based readiness evaluation and capability statuses
+│   └── PRODUCTION_LAUNCH_CHECKLIST.md # Gate completion status tracking
 ├── src/
 │   ├── app/
 │   │   ├── api/
 │   │   │   ├── agent/             # Universal agent enrollment, telemetry, and binary endpoints
 │   │   │   ├── auth/              # HMAC sessions, scrypt login, signup, and TOTP MFA
-│   │   │   ├── billing/           # Multi-tier SaaS subscriptions & endpoint quotas (GET, POST)
+│   │   │   ├── billing/           # Multi-tier SaaS subscriptions, quotas, and Stripe webhook
 │   │   │   ├── chat/              # AI copilot SSE stream & deterministic tool router
 │   │   │   ├── incidents/         # Tenant-scoped incident investigation API
 │   │   │   ├── tasks/             # PostgreSQL-backed SOC mitigation tasks API (GET, POST)
@@ -555,6 +614,8 @@ shielddesk/
 │   │   │   ├── gitleaks/          # Gitleaks secret scanning and mitigation routes
 │   │   │   ├── scans/             # Live Aqua Trivy & secret scanner integration
 │   │   │   ├── threats/           # YARA/Sigma rules & telemetry bus
+│   │   │   ├── scim/              # RFC 7644 SCIM 2.0 enterprise identity provisioning (/v2/Users, /v2/Groups)
+│   │   │   ├── v1/                # Advanced engines (twin, decisions, remediation, compliance, ai)
 │   │   │   ├── ingest/            # Authenticated alert webhook ingest
 │   │   │   ├── compliance/        # Compliance posture reporting (SOC2, ISO27001)
 │   │   │   └── reports/           # Executive risk scorecards
@@ -565,24 +626,30 @@ shielddesk/
 │   │   │   ├── scanner/           # Live Trivy vulnerability & secret leak posture
 │   │   │   ├── threats/           # Threat detection & rule configuration
 │   │   │   ├── compliance/        # Regulatory framework scorecards
-│   │   │   └── risk-scorecard/    # Executive risk metrics
-│   │   ├── login/                 # Public login, tenant registration, & MFA gate
+│   │   │   └── risk-scorecard/    # Executive risk metrics & posture index
+│   │   ├── login/                 # Public login, tenant registration, & MFA gate (chat widget suppressed)
 │   │   ├── onboarding/            # 4-step guided organization & agent onboarding
-│   │   └── page.tsx               # Root SOC overview console
+│   │   └── page.tsx               # Root SOC overview console (Incident Workspace)
 │   ├── components/                # React UI components (AI chat, governance, navigation)
 │   ├── proxy.ts                   # Edge security middleware: header spoofing defense & route guard
 │   └── lib/
 │       ├── auth/                  # HMAC session tokens, scrypt passwords, Supabase SSR, TOTP
-│       ├── billing/               # SaaS plan tiers (Community, Pro, Enterprise) & quota limits
-│       ├── permissions.ts         # 6-tier RBAC matrix & tool execution gates
+│       ├── billing/               # SaaS plan tiers, entitlements, and Stripe webhook idempotency
+│       ├── permissions.ts         # 6-tier RBAC matrix (updated Phase L) & tool execution gates
 │       ├── governance/            # Approval tokens, blast radius throttle, autonomy tiers
-│       ├── fleet/                 # RSA-2048 command signing & fleet management logic
+│       ├── fleet/                 # RSA-2048 command signing, execution broker, mTLS, updater
+│       ├── security-twin/         # PostgreSQL CTE graph queries & sync pipeline
+│       ├── decision-engine/       # Evidence Engine with SHA-256 hashes & decision records
+│       ├── verification-engine/   # Deterministic host verification & continuous recheck schedules
+│       ├── compliance/            # Merkle tree evidence vault & RFC-4180 export generator
+│       ├── ai/                    # LLM Gateway, prompt registry, evaluation lab benchmark suite
 │       ├── gitleaks.ts            # Gitleaks secret scanner execution engine & parser
 │       ├── trivy.ts               # Aqua Trivy vulnerability scanner execution engine & parser
 │       ├── security/              # Centralized PII and secret redactor engine
 │       ├── observability/         # Central errorTracker with dynamic Sentry instrumentation
 │       ├── config/environment.ts  # Safety boundaries (DEMO_MODE vs FAIL_CLOSED)
 │       └── db/                    # PostgreSQL connection pool with lazy initialization
+├── agent/                         # Dual-language endpoint agent (Go main agent + Rust break-glass daemon)
 ├── tools/
 │   ├── gitleaks/                  # Local Gitleaks v8.30.1 binary & configuration directory
 │   └── trivy/                     # Local Aqua Security Trivy binary installation directory
@@ -593,15 +660,16 @@ shielddesk/
 ├── ai-chat-desk/                  # Python HTTP service & Random Forest ML model for CVE/EPSS
 ├── services/
 │   ├── threat/                    # High-speed Go threat & anomaly worker with NATS
-│   ├── scan/                      # FastAPI service for Trivy, Gitleaks, & patch orchestration
-│   ├── ingest/                    # Go telemetry intake engine with gRPC and mTLS
-│   ├── webhooks/                  # Go signed webhook dispatcher
-│   ├── ai-advisor/                # FastAPI advisor with Claude & RAG vector store
-│   └── iam/                       # [DEPRECATED] Retired in favor of native App Router auth
+│   ├── connectors/                # Wazuh, Trivy, OpenVAS universal ingestion connectors
+│   ├── security-twin/             # Digital twin graph builder & benchmarks
+│   ├── decision-engine/           # Extended evidence scoring service
+│   ├── verification-engine/       # Remediation verification daemon
+│   └── llm-gateway/               # Prompt versioning & AI evaluation harness
 ├── db/
-│   ├── schema.sql                 # Complete DDL: 15 tables, constraints, RLS policies
-│   └── seed.sql                   # Endpoint agent and audit fixtures
-├── tests/                         # Node.js native test harness (204 automated tests across 32 suites)
+│   ├── schema.sql                 # Core DDL: 20 tables, constraints, RLS policies
+│   ├── migrations/                # 13 Phase migrations (launch_readiness_001 to phase_l_rbac_roles)
+│   └── seed.sql                   # Endpoint agent, incident, and audit fixtures
+├── tests/                         # Node.js native test harness (49 test suites covering phases A–L)
 ├── sentry.client.config.ts        # Client Sentry error and performance monitoring
 ├── sentry.server.config.ts        # Server Sentry error tracking
 ├── sentry.edge.config.ts          # Edge Sentry error tracking
