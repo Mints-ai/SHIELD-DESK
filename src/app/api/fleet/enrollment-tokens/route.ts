@@ -13,10 +13,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Allow administrators or authenticated tenant users to create enrollment tokens for their tenant
-  if (!session.tenantId) {
+  // Only system_admin or super_admin roles can create enrollment tokens
+  const isSuperOrAdmin =
+    session.role === "system_admin" ||
+    session.role === "super_admin";
+
+  if (!session.tenantId || !isSuperOrAdmin) {
     return NextResponse.json(
-      { error: "Insufficient permissions: Valid tenant required to create enrollment tokens" },
+      { error: "Insufficient permissions: Only administrators can create enrollment tokens" },
       { status: 403 }
     );
   }

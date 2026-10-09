@@ -73,7 +73,11 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
       const resPost = await scansPOST(reqPost);
       assert.equal(resPost.status, 403, "POST /api/scans with demo payload must return 403 in production");
     } finally {
-      process.env.APP_ENV = origAppEnv;
+      if (origAppEnv !== undefined) {
+        process.env.APP_ENV = origAppEnv;
+      } else {
+        delete process.env.APP_ENV;
+      }
     }
   });
 
@@ -136,7 +140,11 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
         "SimulationExecutor must reject execution in production"
       );
     } finally {
-      process.env.APP_ENV = origAppEnv;
+      if (origAppEnv !== undefined) {
+        process.env.APP_ENV = origAppEnv;
+      } else {
+        delete process.env.APP_ENV;
+      }
     }
   });
 
