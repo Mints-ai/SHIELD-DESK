@@ -46,3 +46,4 @@ pgdata/
 package-lock.json
 
 tools/trivy/trivy.exe
+agent/bin/
