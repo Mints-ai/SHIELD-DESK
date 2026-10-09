@@ -61,7 +61,18 @@ export async function POST(req: NextRequest) {
     const incidentId = crypto.randomUUID();
     const incidentCode = `INC-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // 2. Persist Incident into database
+    // Extract any CVE IDs from payload or alert text
+    const linkedCves: string[] = Array.isArray(payload.cveIds) ? [...payload.cveIds] : [];
+    const textToScan = `${payload.title} ${payload.description || ""}`;
+    const cveMatches = textToScan.match(/CVE-\d{4}-\d{4,7}/gi);
+    if (cveMatches) {
+      for (const c of cveMatches) {
+        const upper = c.toUpperCase();
+        if (!linkedCves.includes(upper)) linkedCves.push(upper);
+      }
+    }
+
+    // 2. Persist Incident, Events, Assets, and CVEs into database
     try {
       await query(
         `INSERT INTO incidents (id, tenant_id, incident_code, title, severity, status, description, created_at, updated_at)
@@ -81,6 +92,41 @@ export async function POST(req: NextRequest) {
          VALUES ($1, now(), $2)`,
         [incidentId, `External alert ingested from ${payload.source}: ${payload.title} on ${hostname}.`]
       );
+
+      // Link impacted asset to the incident so it appears in the SOC workspace
+      if (hostname && hostname !== "UNKNOWN-HOST") {
+        const assetRow = await query<{ id: string }>(
+          `SELECT id FROM assets WHERE hostname = $1 AND tenant_id = $2 LIMIT 1`,
+          [hostname, tenantId]
+        );
+        let assetId = assetRow.rows[0]?.id;
+        if (!assetId) {
+          assetId = crypto.randomUUID();
+          await query(
+            `INSERT INTO assets (id, tenant_id, hostname, asset_type)
+             VALUES ($1, $2, $3, 'workstation')`,
+            [assetId, tenantId, hostname]
+          );
+        }
+        await query(
+          `INSERT INTO incident_assets (incident_id, asset_id)
+           VALUES ($1, $2)
+           ON CONFLICT DO NOTHING`,
+          [incidentId, assetId]
+        );
+      }
+
+      // Link any identified CVEs to the incident
+      if (linkedCves.length > 0) {
+        for (const cve of linkedCves) {
+          await query(
+            `INSERT INTO incident_cves (incident_id, cve_id)
+             VALUES ($1, $2)
+             ON CONFLICT DO NOTHING`,
+            [incidentId, cve]
+          );
+        }
+      }
     } catch {
       // In-memory fallback mode
     }
@@ -98,6 +144,7 @@ export async function POST(req: NextRequest) {
         title: payload.title,
         severity,
         hostname,
+        linkedCves,
       },
     });
 
@@ -114,6 +161,7 @@ export async function POST(req: NextRequest) {
         source: payload.source,
         externalId: payload.externalAlertId || "None",
         hostname,
+        linkedCves: linkedCves.join(", ") || "None",
       },
     }).catch(() => {});
 
@@ -121,6 +169,11 @@ export async function POST(req: NextRequest) {
       success: true,
       incidentId,
       incidentCode,
+      source: payload.source,
+      tenantId,
+      severity,
+      hostname,
+      linkedCves,
       message: `Alert from ${payload.source} ingested and correlated into incident ${incidentCode}`,
     }, { status: 201 });
   } catch (err) {

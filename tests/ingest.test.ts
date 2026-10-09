@@ -95,6 +95,40 @@ test("ShieldDesk Public Ingestion & Webhook Normalizer Suite", async (t) => {
     assert.equal(body.hostname, "GLX-EDGE-ROUTER");
   });
 
+  await t.test("Ingests SIEM alert with HMAC signature and links asset and CVEs", async () => {
+    const payload = JSON.stringify({
+      source: "defender",
+      title: "Suspicious PowerShell Execution with Shadow Copy Tampering",
+      severity: "high",
+      hostname: "anandbarjun",
+      description: "Suspicious encoded command attempting vssadmin delete shadows /all referencing CVE-2020-6240",
+    });
+
+    const secret = process.env.SHIELDDESK_WEBHOOK_SECRET || "sd_webhook_dev_secret";
+    const signature = "sha256=" + (await import("node:crypto")).default.createHmac("sha256", secret).update(payload).digest("hex");
+
+    const { POST: postSiem } = await import("../src/app/api/ingest/siem/route");
+    const req = new NextRequest("http://localhost:3000/api/ingest/siem", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-shielddesk-signature": signature,
+        "x-shielddesk-tenant-id": "acme-tenant",
+      },
+      body: payload,
+    });
+
+    const res = await postSiem(req);
+    assert.equal(res.status, 201);
+
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.source, "defender");
+    assert.equal(body.hostname, "anandbarjun");
+    assert.equal(body.severity, "high");
+    assert.ok(body.linkedCves.includes("CVE-2020-6240"));
+  });
+
   await t.test("Rejects malformed JSON body with 400 Bad Request", async () => {
     const req = new NextRequest("http://localhost:3000/api/ingest/webhooks", {
       method: "POST",
