@@ -153,73 +153,61 @@ CONSTRAINT check_separation_of_duties
 CONSTRAINT check_tier3_dual_approval_separation
   CHECK (secondary_approved_by IS NULL OR approved_by <> secondary_approved_by)
 ```
-- **System Admin Self-Approval (Tier 1 & Tier 2)**: For reversible and medium-risk containment tasks (e.g. host quarantine, session revocation), a System Administrator (`system_admin` or `super_admin`) is authorized to sign off and execute a task even if created by them, avoiding operational deadlocks during active incidents.
-- **Analyst Zero-Approval Rule**: Analysts (`analyst` and `user` roles) have **zero sign-off authority under any circumstance**. They can discover threats, investigate root causes, and draft/assign tasks, but cannot authorize remediation execution.
+- **Self-Approval (Tier 1 & Tier 2)**: For reversible and containment tasks (e.g. host quarantine, session revocation), authorized operators (`system_admin`, `super_admin`, `responder`) are permitted to sign off and execute tasks even if created by them, avoiding operational deadlocks during active incidents.
+- **Analyst Zero-Authority Rule**: Analysts (`analyst` role) have **zero write, assignment, or sign-off authority**. They are read-only viewers who can investigate threats and view plans, but cannot draft tasks, modify tasks, or authorize remediation execution.
 - **Tier 3 Break-Glass Separation**: For destructive actions (e.g. credential revocation, fleet reboot), strict dual-authorization is mandatory: an administrator cannot approve their own Tier 3 request, and two distinct administrators must independently sign off.
 
 ---
 
-## 3.1 Remediation Task Management & UI Block Architecture
+## 3.1 Remediation Task Board & Operational Workflow
 
-The **Task Board** (`/dashboard/tasks`) coordinates the end-to-end lifecycle of security remediation tasks from analyst discovery to signed endpoint execution.
+The **Task Board** (`/dashboard/tasks`) coordinates the end-to-end lifecycle of security remediation tasks from discovery to cryptographically signed endpoint execution.
 
-### The Requester vs. Approver Lifecycle (Governance Rules)
-- **Who can Draft Tasks?**: Any operational user or analyst (`analyst`, `responder`, `system_admin`, `super_admin`) can draft custom or AI-suggested remediation tasks.
-- **Who can Approve Tasks?**: Only authorized administrators and responders (`system_admin`, `super_admin`, `responder`). **Analysts cannot approve tasks under any circumstances.**
-- **Admin Self-Approval for Containment (Tier 1 & 2)**: To ensure immediate incident response, System Administrators can approve and dispatch Tier 1 and Tier 2 tasks they drafted themselves without requiring peer hand-offs.
-- **Tier 3 Dual-Approval Enforcement**: For high-impact Tier 3 break-glass tasks, self-approval is rejected (`Separation of Duties Violation (403)`), requiring a second distinct administrator to sign off.
+### The 4-Stage Task Pipeline & Workflow
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Analyst as SOC Analyst (Requester)
+    actor Operator as Responder / Admin
     participant Board as Task Board (/dashboard/tasks)
     participant DB as PostgreSQL
-    actor Admin as SOC Lead / Admin (Approver)
     participant Agent as Endpoint Agent Daemon
 
-    Analyst->>Board: Draft New Remediation Task (e.g. Isolate FIN-WS-042)
-    Board->>DB: INSERT INTO mitigation_tasks (status='pending', requested_by=Analyst)
+    Operator->>Board: Draft & Assign Task (Title, Tier 1-3, Assignee, Plan)
+    Board->>DB: INSERT INTO mitigation_tasks (status='pending')
     DB-->>Board: Lands in "Pending Authorization" lane
-    Admin->>Board: Clicks "Sign Off Now"
-    Admin->>Board: Reviews Blast Radius & AI Confidence -> Clicks "Approve & Execute"
-    Board->>DB: UPDATE approval_tokens (status='approved', approved_by=Admin)
-    DB-->>Board: Moves to "Authorized & Queued" lane
-    Admin->>Board: Clicks "Dispatch to Agent"
+    Operator->>Board: Opens "Sign Off Now" Modal
+    Note over Operator,Board: Tier 1 & 2: Self-approval permitted<br/>Tier 3: Dual-Admin SoD strictly enforced
+    Operator->>DB: UPDATE approval_tokens (status='approved')
+    DB-->>Board: Transitions to "Authorized & Queued" lane
+    Operator->>Board: Clicks "Dispatch to Agent"
     Board->>DB: Status transitions to "Executing" (in_progress)
-    Board->>Agent: RSA-2048 Signed Command Dispatched
-    Agent-->>Board: Pre-flight Snapshot Verified -> Command Executed -> Result Signed
+    Board->>Agent: RSA-2048 Signed Command Dispatched over mTLS
+    Agent-->>Board: Pre-flight Snapshot -> Command Executed -> Result Signed
     Board->>DB: Status transitions to "Executed & Verified" (completed)
+    Note over Board,DB: Fail-safe Rollback: Unreachable agents automatically revert task to "Approved"
 ```
 
----
+#### Who Can Do What? (Operational Matrix)
 
-### Detailed Breakdown of Every Task Module Block
-
-#### 1. Kanban Board Lanes (Operational Lifecycle)
-| Lane | State | Description & Purpose |
-| :--- | :--- | :--- |
-| **Pending Authorization** | `pending` | Newly created tasks requiring governance approval before any agent command can be dispatched. Non-approver analysts can inspect, edit, or delete tasks here. |
-| **Authorized & Queued** | `approved` | Tasks that have successfully passed human sign-off with a valid cryptographic approval token. Ready for the SOC team to dispatch to the targeted endpoint. |
-| **Executing** | `in_progress` | Active execution phase. Shows live spinners and progress indicators while the agent daemon creates a safety snapshot and runs the remediation script. |
-| **Executed & Verified** | `completed` | Finished actions. Confirmed and recorded in the tamper-evident hash-chain audit ledger with terminal logs and endpoint return codes. |
+| Operational Stage | Who Can Perform | Who Is Blocked | Governance Rules & Behavior |
+| :--- | :--- | :--- | :--- |
+| **1. Draft & Assign Tasks** | `responder`, `system_admin`, `super_admin` | 🟢 `analyst` *(Read-only)* | Quick Draft bar & creation modal allow setting Title, Horizon, Autonomy Tier, and Assignee. Analyst sees no creation controls. |
+| **2. Edit, Re-assign & Delete** | `responder`, `system_admin`, `super_admin` | 🟢 `analyst` *(Read-only)* | In the Task Detail Drawer, operators can change Autonomy Tier, re-assign operator, change target mitigation plan, or delete tasks. Analysts see static read-only text. |
+| **3. Authorize (Tier 1 & 2)** | `responder`, `system_admin`, `super_admin` | 🟢 `analyst` *(Read-only)* | Covers low-risk reversible and containment actions (e.g. host quarantine, session revocation). Self-approval is permitted for prompt containment. |
+| **4. Authorize (Tier 3 Break-Glass)** | `system_admin`, `super_admin` | 🔵 `responder`<br>🟢 `analyst` | High-impact actions (e.g. credential rotation, firewall wipe). **Strict Separation of Duties**: The requester cannot self-approve; dual distinct admin sign-offs are mandatory. |
+| **5. Dispatch to Endpoint** | `responder`, `system_admin`, `super_admin` | 🟢 `analyst` *(Read-only)* | Cryptographically signs command payload with RSA-2048 and dispatches to endpoint daemon. If execution fails or agent is unreachable, status rolls back safely to `approved`. |
 
 ---
 
-#### 2. Task Card & Detail Drawer Component Blocks
+#### Kanban Board State Machine
 
-| Block Name | UI Element | Operational Necessity & Why It Exists |
+| Lane | State | Description |
 | :--- | :--- | :--- |
-| **Status Block** | Badge (`Pending`, `Approved`, `Executing`, `Executed`) | Provides instantaneous visibility into where the task sits in the governance pipeline, preventing premature or duplicate action attempts. |
-| **Horizon Block** | Horizon Tag (`Immediate`, `Short-term`, `Long-term`) | Categorizes remediation urgency: <br>• **Immediate**: Emergency triage & active containment (e.g. isolate host).<br>• **Short-term**: Vulnerability remediation (e.g. deploy patch).<br>• **Long-term**: Architectural posture hardening (e.g. firewall microsegmentation). |
-| **Autonomy Tier Block** | Interactive Selector (`Tier 1`, `Tier 2`, `Tier 3`) | **Critical Governance Gate**: Dictates whether this task can run autonomously (Tier 1), requires one authorized human approver (Tier 2), or mandates dual SuperAdmin sign-off (Tier 3). Can be re-classified dynamically by authorized operators. |
-| **Blast Radius Block** | Text Tag (`Host Scope`, `Subnet Scope`, `Global`) | Defines the expected blast radius and network impact zone. Informs the approver of potential operational disruption prior to approving containment. |
-| **Description & Mitigation Scope** | Text Block | Detailed instructions and rationale explaining why the action was recommended by the AI advisor or SOC analyst. |
-| **Incident Context & Plan Switcher** | Incident Box & Dropdown | Explicitly anchors the task to its parent security incident (e.g. `INC-4223`) and allows analysts to re-assign tasks between incident mitigation plans dynamically. |
-| **Governance Sign-Off History** | Token List & Audit Table | **Regulatory & Audit Evidence**: Displays the unique UUID token, active requester, verified approver, approval timestamp, and rejection reason if denied. Guarantees non-repudiation. |
-| **Agent Dispatch Logs** | Terminal Console Output | Real-time CLI standard out / standard error captured directly from the endpoint daemon (e.g., PowerShell or Linux bash execution output) proving that the remediation command actually executed. |
-| **Dispatch to Agent** | Primary CTA Button (Golden Theme) | Cryptographically signs the task payload and transmits it over mTLS to the endpoint daemon with automatic fallback and snapshot validation. |
-| **Delete Task** | Destructive Action Button (Crimson) | Allows analysts to prune obsolete, rejected, or duplicate remediation tasks with foreign-key cascade cleanup. |
+| **Pending Authorization** | `pending` | Newly created tasks awaiting governance approval. Authorized operators click **Sign Off** to review blast radius, TTL, and AI confidence. |
+| **Authorized & Queued** | `approved` | Tasks sealed with a cryptographic approval token. Qualified operators click **Dispatch to Agent** to execute on endpoints. |
+| **Executing** | `in_progress` | Active execution phase showing live spinners while the agent creates a safety snapshot and runs the remediation script. |
+| **Executed & Audited** | `completed` | Completed actions confirmed with terminal output, exit codes, and recorded in the tamper-evident hash-chain audit ledger. |
 
 ---
 
@@ -227,14 +215,14 @@ sequenceDiagram
 
 ShieldDesk is built from the ground up for strict multi-tenancy. Every database query, fleet command, and AI context prompt is strictly bound to the authenticated caller's tenant:
 
-### Active Operator Personas & Role Hierarchy (`src/lib/permissions.ts`)
-The top navigation bar provides a live role-persona switcher (backed by `db/migrations/phase_l_rbac_roles.sql`) allowing operators to quickly evaluate system behavior across distinct privilege tiers:
-- **`system_admin` (System Admin)**: Global platform administrator with cross-tenant visibility (`VIEW_CROSS_TENANT`), user management, emergency fleet kill-switch rights, and self-approval authority for Tier 1 & Tier 2 containment tasks.
-- **`super_admin` (Super Admin)**: Tenant organization administrator with Tier 3 dual-approval authority (`approve.tier3`) and break-glass privileges.
-- **`responder` (Responder)**: Incident response engineer; signs off on Tier 1 and Tier 2 containment tasks (`approve.tier1`, `approve.tier2`) and dispatches containment commands to enrolled agents.
-- **`analyst` (Analyst)**: Security operations analyst; drafts mitigation tasks (`task.assign`), investigates incidents, and simulates attack graphs. **Strictly restricted from approving any remediation actions (`approve.*` permissions revoked).**
-- **`viewer` (Viewer)**: Read-only stakeholder; cannot approve tokens, cannot draft tasks (rejected with `403 Forbidden`), and cannot execute state-changing actions.
-- **`user` (Standard User)**: Basic tenant operator with incident and CVE read/investigation permissions; zero approval rights.
+### 4-Role RBAC Model (`src/lib/permissions.ts`)
+
+| Role | Classification | Permissions & Authority | Restrictions |
+| :--- | :--- | :--- | :--- |
+| 🔴 **`system_admin`** | **Platform Administrator** | `VIEW_CROSS_TENANT`, `MANAGE_USERS`, `incident.read`, `incident.investigate`, `cve.read`, `incident.mitigate`, `task.assign`, `approve.tier1`, `approve.tier2`, `approve.tier3` | Full control across all tenants; highest authority. |
+| 🟠 **`super_admin`** | **Company Administrator** | `MANAGE_USERS`, `incident.read`, `incident.investigate`, `cve.read`, `incident.mitigate`, `task.assign`, `approve.tier1`, `approve.tier2`, `approve.tier3` | Full company-level control; tenant-bound (no cross-tenant view). |
+| 🔵 **`responder`** | **Incident Responder** | `incident.read`, `incident.investigate`, `cve.read`, `incident.mitigate`, `task.assign`, `approve.tier1`, `approve.tier2` | Can contain active threats and dispatch tasks; **❌ Cannot approve Tier 3 break-glass**. |
+| 🟢 **`analyst`** | **SOC Analyst (Read-Only)** | `incident.read`, `incident.investigate`, `cve.read` | **Viewer only**: ❌ Cannot execute mitigations, ❌ Cannot assign tasks, ❌ Cannot edit/delete tasks, ❌ Cannot approve, ❌ Cannot dispatch. |
 
 ### Anti-Enumeration Defense
 Probing resources (incidents, plans, agent telemetry) belonging to another tenant returns `404 Not Found` rather than `403 Forbidden`, denying attackers confirmation of resource existence across tenant boundaries.

@@ -570,12 +570,12 @@ export default function FleetPage() {
       ? window.location.origin
       : "http://localhost:3000";
 
-  const nodeCommand = enrollResult
-    ? `node agent/agent-daemon.js --token ${enrollResult.token} --control-url ${serverURL}`
+  const goCommand = enrollResult
+    ? `.\\shielddesk-agent.exe -token ${enrollResult.token} -control-url ${serverURL}`
     : "";
 
-  const goCommand = enrollResult
-    ? `SHIELDDESK_ENROLL_TOKEN=${enrollResult.token} ./shielddesk-agent -control-url ${serverURL}`
+  const nodeCommand = enrollResult
+    ? `node agent/agent-daemon.js --token ${enrollResult.token} --control-url ${serverURL}`
     : "";
 
   const filteredLogs = commandLogs.filter((log) => {
@@ -800,46 +800,18 @@ export default function FleetPage() {
                     </div>
                   </div>
 
-                  {/* Option 1: Quick Connect via Node.js */}
+                  {/* Option 1: Native Go Agent Binary (Primary / Recommended) */}
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <p className="text-[11px] font-mono text-[var(--sd-text-muted)] uppercase tracking-wider font-semibold">
-                        Option 1: Quick Connect (Node.js — Recommended for this machine)
+                        Option 1: Native Go Agent (Recommended & Production-Grade)
                       </p>
                       <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                        Zero Build
+                        Go Native Binary
                       </span>
                     </div>
                     <div className="flex items-start gap-2">
                       <code className="flex-1 text-[11px] font-mono text-emerald-300 bg-[var(--sd-panel-raised)] px-3 py-2 rounded-lg border border-[var(--sd-border)] break-all select-all whitespace-pre-wrap">
-                        {nodeCommand}
-                      </code>
-                      <button
-                        onClick={() => handleCopy(nodeCommand, "node-cmd")}
-                        className="p-2 rounded-lg hover:bg-[var(--sd-panel-hover)] border border-[var(--sd-border)] transition cursor-pointer mt-0.5"
-                        title="Copy Node command"
-                      >
-                        {copied === "node-cmd" ? (
-                          <ClipboardCheck className="h-4 w-4 text-emerald-400" />
-                        ) : (
-                          <Copy className="h-4 w-4 text-[var(--sd-text-muted)]" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Option 2: Go Agent Binary */}
-                  <div className="space-y-1.5 pt-2 border-t border-[var(--sd-border)]">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[11px] font-mono text-[var(--sd-text-muted)] uppercase tracking-wider">
-                        Option 2: Native Go Agent Binary
-                      </p>
-                      <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
-                        go build -o shielddesk-agent ./agent/cmd
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <code className="flex-1 text-[11px] font-mono text-amber-300 bg-[var(--sd-panel-raised)] px-3 py-2 rounded-lg border border-[var(--sd-border)] break-all select-all whitespace-pre-wrap">
                         {goCommand}
                       </code>
                       <button
@@ -848,6 +820,34 @@ export default function FleetPage() {
                         title="Copy Go command"
                       >
                         {copied === "go-cmd" ? (
+                          <ClipboardCheck className="h-4 w-4 text-emerald-400" />
+                        ) : (
+                          <Copy className="h-4 w-4 text-[var(--sd-text-muted)]" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Option 2: Node.js Agent Daemon (Fallback) */}
+                  <div className="space-y-1.5 pt-2 border-t border-[var(--sd-border)]">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] font-mono text-[var(--sd-text-muted)] uppercase tracking-wider">
+                        Option 2: Node.js Agent Daemon (Dev / Script Fallback)
+                      </p>
+                      <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
+                        node agent/agent-daemon.js
+                      </span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <code className="flex-1 text-[11px] font-mono text-amber-300 bg-[var(--sd-panel-raised)] px-3 py-2 rounded-lg border border-[var(--sd-border)] break-all select-all whitespace-pre-wrap">
+                        {nodeCommand}
+                      </code>
+                      <button
+                        onClick={() => handleCopy(nodeCommand, "node-cmd")}
+                        className="p-2 rounded-lg hover:bg-[var(--sd-panel-hover)] border border-[var(--sd-border)] transition cursor-pointer mt-0.5"
+                        title="Copy Node command"
+                      >
+                        {copied === "node-cmd" ? (
                           <ClipboardCheck className="h-4 w-4 text-emerald-400" />
                         ) : (
                           <Copy className="h-4 w-4 text-[var(--sd-text-muted)]" />

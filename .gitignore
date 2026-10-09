@@ -49,3 +49,8 @@ tools/trivy/trivy.exe
 tools/gitleaks/
 tools/nats/
 agent/bin/
+bin/
+*.exe
+*.crt
+*.key
+

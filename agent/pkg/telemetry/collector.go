@@ -294,18 +294,27 @@ func (c *Collector) readLinuxConnections() []NetworkConn {
 // ---------------------------------------------------------------------------
 
 func (c *Collector) readWindowsMetrics() (float64, float64) {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	memPct := queryWindowsMemoryLoad()
 
-	memPct := float64(m.Alloc) / float64(m.Sys) * 100.0
-	if memPct < 15.0 {
-		memPct = 38.5
+	var cpuPct float64
+	idle, total, ok := queryWindowsSystemTimes()
+	if ok && c.prevTotal > 0 {
+		diffTotal := total - c.prevTotal
+		diffIdle := idle - c.prevIdle
+		if diffTotal > 0 {
+			cpuPct = float64(diffTotal-diffIdle) / float64(diffTotal) * 100.0
+		}
+	} else if !ok {
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+		cpuPct = float64(runtime.NumGoroutine()) * 0.8
+		if cpuPct < 2.0 {
+			cpuPct = 4.5
+		}
 	}
 
-	cpuPct := float64(runtime.NumGoroutine()) * 0.8
-	if cpuPct < 2.0 {
-		cpuPct = 4.5
-	}
+	c.prevTotal = total
+	c.prevIdle = idle
 
 	return cpuPct, memPct
 }

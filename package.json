@@ -12,6 +12,8 @@
     "setup:trivy": "powershell -ExecutionPolicy Bypass -File ./scripts/setup_trivy.ps1",
     "setup:gitleaks": "powershell -ExecutionPolicy Bypass -File ./scripts/setup_gitleaks.ps1",
     "setup:nats": "powershell -ExecutionPolicy Bypass -File ./scripts/setup_nats.ps1",
+    "agent:build": "powershell -ExecutionPolicy Bypass -Command \"Set-Location agent; go build -ldflags='-s -w' -o ../bin/shielddesk-agent.exe ./cmd; Set-Location ..\"",
+    "agent:go": "bin\\shielddesk-agent.exe",
     "start:all": "powershell -ExecutionPolicy Bypass -File ./start.ps1"
   },
   "dependencies": {

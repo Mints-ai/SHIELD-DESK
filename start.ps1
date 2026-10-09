@@ -110,6 +110,7 @@ function Stream-Jobs {
                     "GoWebhook"   { "[Go Webhook] " }
                     "GoIngest"    { "[Go Ingest ] " }
                     "GoPatch"     { "[SSH Patch ] " }
+                    "GoAgent"     { "[Go Agent  ] " }
                     default       { "[Service   ] " }
                 }
                 $col = switch ($job.Name) {
@@ -122,6 +123,7 @@ function Stream-Jobs {
                     "GoWebhook"   { "DarkYellow" }
                     "GoIngest"    { "Blue"    }
                     "GoPatch"     { "Green"   }
+                    "GoAgent"     { "Green"   }
                     default       { "White"   }
                 }
                 $lines -split "`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object {
@@ -144,7 +146,7 @@ function Stop-AllServices {
         Write-Host "  [STOPPED] $($job.Name)" -ForegroundColor DarkGray
     }
     # Kill any child processes that outlived the jobs
-    Get-Process -Name "ollama", "ingest", "threat", "webhook", "orchestrator", "nats-server" -ErrorAction SilentlyContinue |
+    Get-Process -Name "ollama", "ingest", "threat", "webhook", "orchestrator", "nats-server", "shielddesk-agent" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "  All services stopped. Goodbye!" -ForegroundColor DarkGreen
@@ -159,7 +161,7 @@ Write-Banner
 Check-Prerequisites
 
 # Ensure no orphaned microservices from previous sessions are blocking ports
-Get-Process -Name "ingest", "threat", "webhook", "orchestrator", "nats-server" -ErrorAction SilentlyContinue |
+Get-Process -Name "ingest", "threat", "webhook", "orchestrator", "nats-server", "shielddesk-agent" -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
@@ -209,8 +211,12 @@ $patchDir   = Join-Path $ROOT "ssh-patch-orchestrator"
 $patchExe   = Join-Path $patchDir "orchestrator.exe"
 $patchCmd   = if (Test-Path $patchExe) { "cmd.exe /c orchestrator.exe server --port 8006" } else { "go run ./cmd/orchestrator server --port 8006" }
 $patchJob   = Start-Service "GoPatch"     $patchCmd        $patchDir    $envMap
+$agentDir   = Join-Path $ROOT "agent"
+$agentExe   = Join-Path $ROOT "bin\shielddesk-agent.exe"
+$agentCmd   = if (Test-Path $agentExe) { "cmd.exe /c `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
+$agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
 
-$allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob)
+$allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob, $agentJob)
 if ($natsJob) { $allJobs += $natsJob }
 
 Write-Host ""
@@ -240,6 +246,7 @@ Write-Host "  |  Go Threat Engine-->  http://localhost:8003     |" -ForegroundCo
 Write-Host "  |  Go Ingest & PII -->  http://localhost:8004     |" -ForegroundColor Blue
 Write-Host "  |  SSH Patch Orch  -->  http://localhost:8006     |" -ForegroundColor Green
 Write-Host "  |  Go Webhook Svc  -->  http://localhost:8080     |" -ForegroundColor DarkYellow
+Write-Host "  |  Go Agent (EDR)  -->  Streaming FIN-WS-042      |" -ForegroundColor Green
 if ($hasNats) {
 Write-Host "  |  NATS JetStream  -->  http://localhost:8222     |" -ForegroundColor Cyan
 }
