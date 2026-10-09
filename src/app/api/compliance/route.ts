@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
-import { getComplianceSummary, exportAuditEvidencePackage } from "@/lib/compliance/iso27001";
+import { exportAuditEvidencePackage } from "@/lib/compliance/iso27001";
+import {
+  getFrameworkCompliance,
+  FrameworkId,
+} from "@/lib/compliance/frameworks";
 import { AuditExportGenerator } from "@/lib/compliance/exportGenerator";
 import { trackError } from "@/lib/observability/errorTracker";
 
@@ -16,6 +20,7 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const isExport = url.searchParams.get("export") === "true";
+    const frameworkParam = url.searchParams.get("framework") as FrameworkId | null;
 
     if (isExport) {
       const format = url.searchParams.get("format") === "csv" ? "csv" : "json";
@@ -41,8 +46,8 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const summary = await getComplianceSummary(caller);
-    return NextResponse.json(summary);
+    const frameworkData = await getFrameworkCompliance(caller, frameworkParam || "iso27001");
+    return NextResponse.json(frameworkData);
   } catch (err: unknown) {
     trackError(err, { endpoint: "/api/compliance" });
     const msg = err instanceof Error ? err.message : "Internal error";

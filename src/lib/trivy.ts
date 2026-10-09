@@ -71,8 +71,8 @@ export function getTrivyBinaryPath(): string | null {
 
   for (const dir of pathDirs) {
     for (const exe of exeNames) {
-      const fullPath = path.join(dir, exe);
-      if (fs.existsSync(fullPath)) {
+      const fullPath = path.join(/*turbopackIgnore: true*/ dir, exe);
+      if (fs.existsSync(/*turbopackIgnore: true*/ fullPath)) {
         return fullPath;
       }
     }
@@ -112,13 +112,13 @@ export async function runTrivyScan(
   let resolvedTarget = target.trim();
   if (type === "fs") {
     // If frontend sent container-oriented '/app' but host does not have '/app', fallback safely to project root
-    if ((resolvedTarget === "/app" || resolvedTarget === "\\app") && !fs.existsSync(resolvedTarget)) {
+    if ((resolvedTarget === "/app" || resolvedTarget === "\\app") && !fs.existsSync(/*turbopackIgnore: true*/ resolvedTarget)) {
       resolvedTarget = process.cwd();
     } else if (resolvedTarget === "." || resolvedTarget === "") {
       resolvedTarget = process.cwd();
     } else {
-      resolvedTarget = path.resolve(process.cwd(), resolvedTarget);
-      if (!fs.existsSync(resolvedTarget)) {
+      resolvedTarget = path.resolve(/*turbopackIgnore: true*/ process.cwd(), resolvedTarget);
+      if (!fs.existsSync(/*turbopackIgnore: true*/ resolvedTarget)) {
         throw new Error(`Target path does not exist on filesystem: ${resolvedTarget}`);
       }
     }
