@@ -14,20 +14,24 @@ import {
   clearIpFailures,
   getIpFailureCount,
 } from "@/lib/alerts/threatAlertStore";
+import { resolveClientIp } from "@/lib/network/clientIp";
 
 export async function POST(req: NextRequest) {
-  const forwarded = req.headers.get("x-forwarded-for");
-  const realIp = req.headers.get("x-real-ip");
-  const cfConnectingIp = req.headers.get("cf-connecting-ip");
-  let clientIp = forwarded ? forwarded.split(",")[0].trim() : (realIp || cfConnectingIp || "127.0.0.1");
-  if (clientIp === "::1") clientIp = "127.0.0.1";
+  let body: any = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+
+  const clientIp = await resolveClientIp(req, body?.clientIp);
 
   // Check Autonomous IP Containment (Block if >5 failed attempts recorded)
   if (isIpBlocked(clientIp)) {
     const failures = getIpFailureCount(clientIp);
     return NextResponse.json(
       {
-        error: `Access Denied: Source IP ${clientIp} has been blocked after ${failures || ">5"} failed login attempts. Contact SOC security administrator.`,
+        error: "Too many login attempts. Access is blocked. Contact security admin to unblock.",
         blocked: true,
         clientIp,
         attempts: failures,
@@ -54,12 +58,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = await req.json();
-    const { email, password, userId, mfaCode } = body;
+    const { email, password, userId, mfaCode } = body || {};
 
     let authenticatedUid: string | null = null;
     let tenantId = "acme-tenant";
-    let role: ShieldDeskRole = "user";
+    let role: ShieldDeskRole = "analyst";
+
 
     // 1. Production Email/Password Authentication
     if (email && password) {
@@ -169,7 +173,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const validUsers = ["dev-analyst", "dev-admin", "dev-other"];
+      const validUsers = ["dev-admin", "dev-super", "dev-responder", "dev-analyst"];
       if (!validUsers.includes(userId)) {
         recordThreatAlert({
           targetUser: String(userId),
@@ -180,8 +184,7 @@ export async function POST(req: NextRequest) {
       }
 
       authenticatedUid = userId;
-      if (userId === "dev-other") tenantId = "globex-tenant";
-      if (userId === "dev-admin") role = "system_admin";
+      // Role is resolved from DEV_USERS in getSessionFromRequest — no hardcoding needed here.
     } else {
       if (email) {
         recordThreatAlert({

@@ -20,12 +20,15 @@ import { ISO_27001_CONTROLS, getComplianceSummary } from "../src/lib/compliance/
 import { createSessionToken } from "../src/lib/auth/token";
 import type { SessionUser } from "../src/lib/auth/session";
 import crypto from "crypto";
+import { issueCommercialLicense } from "../src/lib/billing/licenses";
+import { issueEndpointCertificate } from "../src/lib/fleet/certificates";
+import { LicenseActivationService } from "../src/lib/licensing/licenseActivation";
 
 describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () => {
   const acmeAnalyst: SessionUser = {
     id: "dev-analyst",
     tenant_id: "acme-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   const acmeAdmin: SessionUser = {
@@ -37,7 +40,7 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
   const globexUser: SessionUser = {
     id: "dev-other",
     tenant_id: "globex-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   it("Audit Item 43: Scans API explicitly blocks demo mode in production (GET & POST)", async () => {
@@ -79,8 +82,29 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
     try {
       process.env.APP_ENV = "production";
 
+      const agent = await getEndpointAgent("FIN-WS-042", acmeAnalyst);
+      assert.ok(agent);
+      const agentId = agent.id;
+      const installationId = "launch-audit-installation-fin-ws-042";
+      const certificate = await issueEndpointCertificate({ agentId, tenantId: acmeAnalyst.tenant_id, validityDays: 1 });
+      const licenseKey = issueCommercialLicense({
+        tenantId: acmeAnalyst.tenant_id,
+        tier: "enterprise",
+        maxEndpoints: 100,
+        maxUsers: 10,
+        features: ["endpointFleet"],
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }).rawLicense;
+      await LicenseActivationService.activate({
+        tenantId: acmeAnalyst.tenant_id,
+        installationId,
+        deviceIdentity: agentId,
+        certificatePem: certificate.certificatePem,
+        licenseKey,
+      });
+
       const res = await executeAgentCommand({
-        agentId: "FIN-WS-042",
+        agentId,
         command: "take_safety_snapshot",
         tier: "Tier 1",
         caller: acmeAnalyst,

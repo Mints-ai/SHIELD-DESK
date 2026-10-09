@@ -4,6 +4,7 @@ import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
 import { hasPermission } from "@/lib/permissions";
 import { runTrivyScan, isTrivyAvailable, getOrRunTrivyScan, getLastScanResult } from "@/lib/trivy";
+import { runGitleaksScan, isGitleaksAvailable, getLastGitleaksScanResult } from "@/lib/gitleaks";
 
 /**
  * DEMO/FALLBACK DATA — returned when running in DEMO_MODE and the live scan
@@ -63,26 +64,6 @@ const MOCK_CVE_FINDINGS = [
   },
 ];
 
-const MOCK_SECRET_FINDINGS = [
-  {
-    type: "AWS Access Key",
-    source: "git_repo",
-    location: "config/aws_credentials.json",
-    snippet_masked: "[DEMO_AWS_KEY_ID_REDACTED]",
-    secret_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    risk_level: "CRITICAL",
-    action_available: "Rotate & Invalidate Key",
-  },
-  {
-    type: "GitHub Personal Token",
-    source: "env_file",
-    location: ".env.production",
-    snippet_masked: "[DEMO_GITHUB_PAT_REDACTED]",
-    secret_hash: "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-    risk_level: "HIGH",
-    action_available: "Revoke GitHub PAT",
-  },
-];
 
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -145,11 +126,13 @@ export async function GET(req: NextRequest) {
 
   const lastScan = getLastScanResult();
   const cveFindings = lastScan ? lastScan.findings : [];
+  const cachedGitleaks = getLastGitleaksScanResult();
+  const secretFindings = cachedGitleaks ? cachedGitleaks.findings : [];
   const metrics = {
     totalVulnerabilities: lastScan ? lastScan.findings.length : 0,
     critical: lastScan ? lastScan.summary.critical : 0,
     high: lastScan ? lastScan.summary.high : 0,
-    secretsExposed: 2,
+    secretsExposed: secretFindings.length,
     patchedHosts: 14,
     pendingPatches: 2,
   };
@@ -167,7 +150,7 @@ export async function GET(req: NextRequest) {
     metrics,
     findings: cveFindings,
     cveFindings,
-    secretFindings: MOCK_SECRET_FINDINGS,
+    secretFindings,
     recentScans: [
       {
         id: "scan-trivy-9012",
@@ -324,13 +307,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "secrets_scan") {
+      // 1. Try remote scan service first
       try {
         const res = await fetch(`${scanServiceUrl}/internal/secrets/scan`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             source: body.source || "git_repo",
-            content: body.content || "export AWS_ACCESS_KEY_ID=[DEMO_KEY_PAYLOAD_REDACTED]",
             location: body.location || "repo/src",
           }),
           signal: AbortSignal.timeout(3000),
@@ -340,9 +323,45 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ success: true, ...liveData });
         }
       } catch {
-        // Fallback or fail closed
+        // Remote service offline — fall through to local Gitleaks binary
       }
 
+      // 2. Use local Gitleaks binary if available
+      if (isGitleaksAvailable()) {
+        try {
+          const targetPath = body.target_path || ".";
+          const noGit = body.scan_type === "filesystem" || body.no_git === true;
+          const result = await runGitleaksScan(targetPath, {
+            redact: true,
+            noGit,
+          });
+
+          return NextResponse.json({
+            success: true,
+            status: "success",
+            dataMode: "live",
+            _demo_mode: false,
+            engine: "gitleaks-local",
+            binaryPath: result.binaryPath,
+            scannedTarget: result.scannedTarget,
+            scanDurationMs: result.scanDurationMs,
+            scanMode: result.scanMode,
+            findings_count: result.findings.length,
+            findings: result.findings,
+            secretFindings: result.findings,
+            summary: result.summary,
+            message:
+              result.findings.length === 0
+                ? "No secrets detected. Repository appears clean."
+                : `Gitleaks scan complete: ${result.findings.length} finding${result.findings.length !== 1 ? "s" : ""} detected (${result.summary.critical} critical, ${result.summary.high} high).`,
+          });
+        } catch (gitleaksErr: any) {
+          console.error("[Gitleaks local scan error]", gitleaksErr.message);
+          // Fall through to mock/fail-closed
+        }
+      }
+
+      // 3. Fail closed if production policy requires it
       if (shouldFailClosed()) {
         return NextResponse.json(
           {
@@ -353,14 +372,17 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // 4. Fallback if Gitleaks binary not available
       return NextResponse.json({
         success: true,
         status: "success",
-        _demo_mode: true,
-        findings_count: 1,
-        message: "Gitleaks scan complete. 2 credentials checked.",
-        findings: MOCK_SECRET_FINDINGS,
-        secretFindings: MOCK_SECRET_FINDINGS,
+        _demo_mode: false,
+        gitleaksAvailable: false,
+        findings_count: 0,
+        message: "Gitleaks binary not installed. Run 'npm run setup:gitleaks' to enable secrets scanning.",
+        findings: [],
+        secretFindings: [],
+        setupCommand: "npm run setup:gitleaks",
       });
     }
 

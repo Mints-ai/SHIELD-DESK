@@ -1,0 +1,43 @@
+groups:
+  - name: shielddesk-control-plane
+    rules:
+      - alert: ShieldDeskDatabaseQueryErrors
+        expr: sum(rate(shielddesk_db_query_errors_total[5m])) > 0.1
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Database query errors are elevated" }
+      - alert: ShieldDeskDatabaseP95Latency
+        expr: histogram_quantile(0.95, sum by (le) (rate(shielddesk_db_query_duration_ms_bucket[5m]))) > 1000
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "Database query p95 exceeds 1 second" }
+      - alert: ShieldDeskHeartbeatFailures
+        expr: sum(rate(shielddesk_agent_heartbeat_failures_total[5m])) > 0.2
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Agent heartbeat failures are elevated" }
+      - alert: ShieldDeskCommandExecutionFailures
+        expr: sum(rate(shielddesk_command_execution_failures_total[5m])) > 0
+        for: 2m
+        labels: { severity: warning }
+        annotations: { summary: "Endpoint command execution failures observed" }
+      - alert: ShieldDeskVerificationFailures
+        expr: sum(rate(shielddesk_verification_failures_total[5m])) > 0
+        for: 2m
+        labels: { severity: warning }
+        annotations: { summary: "Remediation verification failures observed" }
+      - alert: ShieldDeskRollbackFailures
+        expr: sum(rate(shielddesk_rollback_failures_total[5m])) > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "Rollback reported a failure" }
+      - alert: ShieldDeskAIProviderErrors
+        expr: sum(rate(shielddesk_ai_provider_errors_total[5m])) > 0.1
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "AI provider errors are elevated" }
+      - alert: ShieldDeskConnectorErrors
+        expr: sum(rate(shielddesk_connector_errors_total[5m])) > 0.1
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Connector ingestion errors are elevated" }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth/session";
-import { listEndpointAgents } from "@/lib/fleet/fleet";
+import { getLiveFleetAgents } from "@/lib/fleet/liveTelemetry";
 import { trackError } from "@/lib/observability/errorTracker";
 
 export async function GET(req: NextRequest) {
@@ -13,7 +13,33 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const agents = await listEndpointAgents(caller);
+    const { searchParams } = new URL(req.url);
+    const shouldRefresh = searchParams.get("refresh") === "true";
+
+    if (shouldRefresh) {
+      const { query } = await import("@/lib/db");
+      const isCrossTenant =
+        caller.role === "system_admin" || caller.role === "super_admin";
+      const sql = isCrossTenant
+        ? `UPDATE endpoint_agents
+           SET status = CASE
+                 WHEN status = 'isolated' THEN 'isolated'
+                 WHEN status = 'disconnected' THEN 'disconnected'
+                 ELSE status
+               END
+           WHERE kill_switch_active = false RETURNING id;`
+        : `UPDATE endpoint_agents
+           SET status = CASE
+                 WHEN status = 'isolated' THEN 'isolated'
+                 WHEN status = 'disconnected' THEN 'disconnected'
+                 ELSE status
+               END
+           WHERE tenant_id = $1 AND kill_switch_active = false RETURNING id;`;
+      const sqlParams = isCrossTenant ? [] : [caller.tenant_id];
+      await query(sql, sqlParams).catch(() => {});
+    }
+
+    const agents = await getLiveFleetAgents(caller);
     return NextResponse.json({ agents });
   } catch (err: unknown) {
     trackError(err, { endpoint: "/api/fleet" });

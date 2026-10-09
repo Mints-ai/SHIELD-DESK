@@ -38,15 +38,15 @@ export const MOCK_SSO_CONFIGS: Map<string, TenantSsoConfig> = new Map([
     },
   ],
   [
-    "globex-tenant",
+    "responder-tenant",
     {
-      tenantId: "globex-tenant",
+      tenantId: "responder-tenant",
       provider: "azure_ad",
       enabled: true,
-      issuer: "https://login.microsoftonline.com/globex-tenant-id/v2.0",
-      ssoUrl: "https://login.microsoftonline.com/globex-tenant-id/saml2",
-      domainHint: "globex.com",
-      defaultRole: "viewer",
+      issuer: "https://login.microsoftonline.com/responder-tenant-id/v2.0",
+      ssoUrl: "https://login.microsoftonline.com/responder-tenant-id/saml2",
+      domainHint: "responder.corp",
+      defaultRole: "responder",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
@@ -103,7 +103,7 @@ export function processSsoCallback(params: {
     } else if (params.externalGroups.includes("ShieldDesk-Responders") || params.externalGroups.includes("SOC-Tier2")) {
       assignedRole = "responder";
     } else if (params.externalGroups.includes("ShieldDesk-Auditors") || params.externalGroups.includes("Compliance")) {
-      assignedRole = "auditor";
+      assignedRole = "analyst";
     }
   }
 

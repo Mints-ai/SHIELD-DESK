@@ -32,6 +32,7 @@ interface PlanSummary {
 
 export default function PlansIndexPage() {
   const { activeUserId, openChatWithPrompt } = useChat();
+  const [isSampleData, setIsSampleData] = useState(false);
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSeverity, setSelectedSeverity] = useState("all");
@@ -92,12 +93,19 @@ export default function PlansIndexPage() {
           const data = await res.json();
           if (isMounted) {
             setPlans(data.plans || []);
+            setIsSampleData(data._source === "demo_fallback");
           }
         } else {
-          if (isMounted) setPlans(activeUserId === "dev-other" ? [] : fallbackPlans);
+          if (isMounted) {
+            setPlans(fallbackPlans);
+            setIsSampleData(true);
+          }
         }
       } catch {
-        if (isMounted) setPlans(activeUserId === "dev-other" ? [] : fallbackPlans);
+        if (isMounted) {
+          setPlans(fallbackPlans);
+          setIsSampleData(true);
+        }
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -119,35 +127,36 @@ export default function PlansIndexPage() {
   });
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
       <TopNavBar />
       {/* Main Content Area */}
-      <main className="sd-dashboard-content max-w-7xl mx-auto px-6 py-6 flex flex-col gap-5">
+      <main className="sd-dashboard-content min-w-0 max-w-7xl mx-auto px-6 py-6 flex flex-col gap-5">
+        {isSampleData && <p className="sd-sample-label w-fit">Sample plans · Local fallback data</p>}
 
         {/* ── Page Header Card ── */}
-        <div className="rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="h-10 w-10 rounded-xl bg-[var(--sd-pine)]/10 border border-[var(--sd-pine)]/20 flex items-center justify-center shrink-0">
               <FileText className="h-5 w-5 text-[var(--sd-pine)]" />
             </div>
             <div>
               <div className="flex items-center gap-2 mb-0.5">
-                <span className="text-[10.5px] font-bold text-[var(--sd-pine)] uppercase tracking-widest font-mono">
+                <span className="text-[11px] font-medium text-[var(--sd-pine)] uppercase tracking-widest font-mono">
                   Phase 1 Governance
                 </span>
-                <span className="text-[10px] text-[var(--sd-text-muted)]">•</span>
-                <span className="text-[10.5px] font-medium text-[var(--sd-text-muted)]">
+                <span className="text-[11px] text-[var(--sd-text-muted)]">•</span>
+                <span className="text-[11px] font-medium text-[var(--sd-text-muted)]">
                   Autonomous Mitigation Engine
                 </span>
               </div>
-              <h1 className="text-lg font-bold text-[var(--sd-text)] tracking-tight leading-none">
-                Mitigation Plans &amp; Horizon Runbooks
+              <h1 className="text-[var(--sd-text)] tracking-tight leading-none text-3xl font-light leading-tight">
+                Mitigation plans
               </h1>
             </div>
           </div>
           <button
             onClick={() => openChatWithPrompt("Generate a mitigation plan for INC-1042")}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--sd-pine)] text-[#f7f4ed] hover:bg-[var(--sd-pine-dark)] text-xs font-semibold shadow-xs transition-colors cursor-pointer shrink-0"
+            className="sd-button sd-button-primary inline-flex items-center gap-2 px-4 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition-colors cursor-pointer shrink-0"
           >
             <Plus className="h-4 w-4" />
             <span>Generate New Plan</span>
@@ -164,22 +173,23 @@ export default function PlansIndexPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by incident code, title, or action..."
-              className="w-full pl-10 pr-4 py-2 rounded-xl border border-[var(--sd-border)] bg-white text-xs text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--sd-pine)] shadow-xs"
+              className="sd-input w-full pl-10 pr-4 py-2 rounded-xl border border-[var(--sd-border)] sd-surface text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--sd-pine)] shadow-xs"
             />
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <span className="text-xs font-medium text-[var(--sd-text-muted)] flex items-center gap-1">
+          <div className="flex max-w-full flex-wrap items-center gap-2 self-start sm:self-auto">
+            <span className="text-[13px] font-medium text-[var(--sd-text-muted)] flex items-center gap-1">
               <Filter className="h-3.5 w-3.5" /> Severity:
             </span>
             {["all", "critical", "high", "medium"].map((sev) => (
               <button
                 key={sev}
                 onClick={() => setSelectedSeverity(sev)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer capitalize ${
+                aria-pressed={selectedSeverity === sev}
+                className={`px-3 py-1.5 rounded-lg text-[13px] font-medium transition-colors cursor-pointer capitalize ${
                   selectedSeverity === sev
-                    ? "bg-[var(--sd-pine)] text-[#f7f4ed] shadow-xs"
-                    : "bg-white border border-[var(--sd-border)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+                    ? "bg-[var(--sd-pine)] text-[var(--sd-on-accent)] shadow-xs"
+                    : "sd-surface border border-[var(--sd-border)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
                 }`}
               >
                 {sev}
@@ -192,17 +202,17 @@ export default function PlansIndexPage() {
         {isLoading ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <RefreshCw className="h-8 w-8 animate-spin text-[var(--sd-pine)] mb-3" />
-            <p className="text-xs text-[var(--sd-text-muted)] font-mono">
+            <p className="text-[13px] text-[var(--sd-text-muted)] font-mono">
               Loading mitigation plans...
             </p>
           </div>
         ) : filteredPlans.length === 0 ? (
-          <div className="rounded-2xl border border-[var(--sd-border)] bg-white p-12 text-center shadow-xs">
+          <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-12 text-center shadow-xs">
             <FileText className="h-10 w-10 text-[var(--sd-text-muted)] mx-auto mb-3 opacity-60" />
-            <h3 className="text-sm font-semibold text-[var(--sd-pine)]">
+            <h3 className="text-sm font-medium text-[var(--sd-pine)]">
               No mitigation plans found
             </h3>
-            <p className="text-xs text-[var(--sd-text-muted)] max-w-sm mx-auto mt-1">
+            <p className="text-[13px] text-[var(--sd-text-muted)] max-w-sm mx-auto mt-1">
               Try adjusting your search criteria or ask the autonomous co-pilot
               to generate a new plan.
             </p>
@@ -212,15 +222,15 @@ export default function PlansIndexPage() {
             {filteredPlans.map((plan) => (
               <div
                 key={plan.id}
-                className="rounded-2xl border border-[var(--sd-border)] bg-white p-5 flex flex-col justify-between hover:shadow-md hover:border-[var(--sd-pine)]/40 transition-all group shadow-xs"
+                className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 flex flex-col justify-between hover:shadow-md hover:border-[var(--sd-pine)]/40 transition-all group shadow-xs"
               >
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-[var(--sd-bg-alt)] text-[var(--sd-pine)] border border-[var(--sd-border)]">
+                    <span className="font-mono text-[13px] font-medium px-2 py-0.5 rounded bg-[var(--sd-bg-alt)] text-[var(--sd-pine)] border border-[var(--sd-border)]">
                       {plan.incident_code}
                     </span>
                     <span
-                      className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded font-mono ${
+                      className={`text-[11px] font-medium uppercase tracking-wider px-2 py-0.5 rounded font-mono ${
                         plan.incident_severity === "critical"
                           ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
                           : plan.incident_severity === "high"
@@ -232,18 +242,18 @@ export default function PlansIndexPage() {
                     </span>
                   </div>
 
-                  <h3 className="text-sm font-bold text-[var(--sd-pine)] leading-snug line-clamp-2 mb-2 group-hover:text-[var(--sd-pine-dark)]">
+                  <h3 className="text-sm font-medium text-[var(--sd-pine)] leading-snug line-clamp-2 mb-2 group-hover:text-[var(--sd-pine-dark)]">
                     {plan.incident_title}
                   </h3>
 
-                  <p className="text-xs text-[var(--sd-text-muted)] line-clamp-3 leading-relaxed mb-4">
+                  <p className="text-[13px] text-[var(--sd-text-muted)] line-clamp-3 leading-relaxed mb-4">
                     {plan.summary}
                   </p>
                 </div>
 
-                <div className="border-t border-[var(--sd-border)] pt-3.5 flex items-center justify-between text-xs">
+                <div className="border-t border-[var(--sd-border)] pt-3.5 flex items-center justify-between text-[13px]">
                   <div className="flex items-center gap-2 text-[var(--sd-text-muted)]">
-                    <span className="font-mono text-[11px] font-semibold text-[var(--sd-pine)]">
+                    <span className="font-mono text-[11px] font-medium text-[var(--sd-pine)]">
                       {plan.task_count} Tasks
                     </span>
                     <span>•</span>
@@ -254,7 +264,7 @@ export default function PlansIndexPage() {
 
                   <Link
                     href={`/dashboard/plans/${plan.id}`}
-                    className="inline-flex items-center gap-1 font-semibold text-xs text-[var(--sd-pine)] hover:underline"
+                    className="inline-flex items-center gap-1 font-medium text-[13px] text-[var(--sd-pine)] hover:underline"
                   >
                     <span>View Plan</span>
                     <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />

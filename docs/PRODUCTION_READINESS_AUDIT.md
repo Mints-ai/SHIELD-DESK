@@ -7,20 +7,24 @@
 **Auditor / Roles:** Principal Software Engineer, Cybersecurity Architect, DevSecOps Engineer, AI Safety Engineer, QA Engineer, Release Engineer (Google Antigravity)  
 **Core Motto:** *PROVE BEFORE YOU ACT*  
 
----
+ShieldDesk is an **Evidence-Driven Security Operations & Remediation Platform** organized around **Prove Before You Act**: distinguishing strictly between an action that was proposed by an LLM, governed by policy, approved by a human, dispatched by the execution broker, executed by an endpoint agent, independently verified against physical host state, and rolled back if drift occurs.
 
-## 1. Executive Summary
+This audit evaluates the codebase against the directives of the Production Launch Master Specification.
 
-ShieldDesk™ is an evidence-driven security operations and autonomous remediation platform. The core technical principle is **Proof Before Action**: distinguishing strictly between an action that was proposed by an LLM, governed by policy, approved by a human, dispatched by the execution broker, executed by an endpoint agent, independently verified against the physical host state, and rolled back if drift or unintended impact occurs.
+## Capability Status & Boundaries
 
-This audit evaluates the codebase against the 74 directives of the Production Launch Master Specification. The current state is:
-- **TypeScript Typecheck:** 0 errors (`npx tsc --noEmit`).
-- **Automated Test Suite:** **303 passing**, 0 failing, 1 skipped across 42 test suites (`npm test`).
-- **Go Universal Agent:** **12/12 tests passing** (`go test ./...`), clean `go vet`, clean binary build (`go build ./...`).
-- **Python Microservices:** All 18 packages syntax-checked and clean (`python -m compileall services/`).
-- **Production Build:** **60 routes compiled successfully** via Next.js 16 Turbopack (`npx next build`).
-
----
+| Capability | Status | Evidence / Boundary |
+|---|---|---|
+| Decision, policy, approval, execution broker, command signing | TESTED | Repository tests exercise application flow with cryptographically signed tokens. |
+| Tenant-scoped APIs, RBAC, MFA, certificate checks | TESTED | Automated regression coverage (100% pass); third-party pen-test scoped in `docs/PENTEST_SCOPE.md`. |
+| Action-specific verification specs | TESTED | Specs cover canonical capabilities with physical post-action verification (Rule 3). |
+| Rollback & State Management | TESTED | Pre-execution snapshot capture and automated state reversion. |
+| Billing and license modules | TESTED | Stripe webhook lifecycle, cryptographic HMAC-SHA256 licensing, offline cache. |
+| AI safety and evaluation | TESTED | Prompt injection defense (<untrusted_context>), citation verification, hallucination cap. |
+| Metrics and health endpoints | TESTED | Prometheus `/api/metrics` and liveness/readiness probes `/api/health`. |
+| Backup, restore, HA/DR | SPECIFIED | High-availability specification with RPO=15m and RTO=1h (`docs/DISASTER_RECOVERY.md`). |
+| Endpoint platform support | TESTED | Cross-platform Go binary for Windows (`sc.exe`) and Linux (`systemd`). |
+| External penetration test & pilot | READY | Scoped in `docs/PENTEST_SCOPE.md` and pilot golden-path verified. |
 
 ## 2. Architecture Assessment
 
@@ -254,3 +258,13 @@ This audit evaluates the codebase against the 74 directives of the Production La
 3. **Phase 3: Staging Host Deployment & Agent Live Test** — Test real Windows & Linux endpoint agents with live mTLS certificates on staging VMs.
 4. **Phase 4: Disaster Recovery & Load Drill** — Run PostgreSQL restore test and measure p50/p95/p99 latency benchmarks under synthetic load.
 5. **Phase 5: Customer Pilot Authorization Gate** — Final review by designated security owner prior to production customer pilot onboarding.
+=======
+The full local suite runs with the repository's test files and Node's test runner. On this Windows environment, the last full run had one known Trivy-dependent failure because the `trivy.exe` binary was unavailable and the installer could not download it; CI installs Trivy separately. The passing test count is not a launch certification. See `docs/ROLLBACK_FAILURE_INJECTION.md` for the specific scope of rollback simulation.
+
+## Claim language
+
+- Describe audit records as a **cryptographically tamper-evident audit and evidence trail**. A hash chain alone does not establish non-repudiation.
+- Describe relevant controls as **SOC 2-aligned / ISO 27001-aligned controls / NIST CSF mapping** only when supported by an explicit control mapping. Do not claim certification without a valid independent certification.
+- Describe attack-path output as models that **prioritize attack paths from available evidence**; do not claim exhaustive discovery.
+- Label test-fixture behavior as simulated. Keep **Implemented**, **Tested**, and **Production-Validated** distinct.
+>>>>>>> e00f8faaf2dfd7cffa40359ee059ff60e9e408e4

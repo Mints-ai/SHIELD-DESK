@@ -13,13 +13,51 @@ import {
 import { requestApprovalToken, approveActionToken } from "../src/lib/governance/approvalTokens";
 import { resetMockThrottle } from "../src/lib/governance/blastRadiusThrottle";
 import { signCommand, verifyCommandSignature } from "../src/lib/fleet/commandSigning";
+import {
+  getObservedEndpointIp,
+  normalizeEndpointIp,
+  resolveEndpointIp,
+} from "../src/lib/fleet/ipAddress";
 import type { SessionUser } from "../src/lib/auth/session";
+
+test("endpoint IP normalization preserves real addresses and rejects loopback values", () => {
+  assert.equal(normalizeEndpointIp(" 192.168.1.24 "), "192.168.1.24");
+  assert.equal(normalizeEndpointIp("::ffff:10.0.0.8"), "10.0.0.8");
+  assert.equal(normalizeEndpointIp("127.0.0.1"), null);
+  assert.equal(normalizeEndpointIp("::1"), null);
+  assert.equal(normalizeEndpointIp("not-an-ip"), null);
+});
+
+test("observed endpoint IP prefers a public proxy IP over the agent's local IP", () => {
+  const headers = new Headers({
+    "x-forwarded-for": "8.8.8.8, 10.0.0.10",
+  });
+
+  assert.equal(getObservedEndpointIp(headers), "8.8.8.8");
+  assert.equal(getObservedEndpointIp(new Headers()), null);
+  assert.equal(
+    getObservedEndpointIp(new Headers({ "x-forwarded-for": "192.168.1.20" })),
+    null
+  );
+  assert.equal(
+    getObservedEndpointIp(new Headers({ "x-forwarded-for": "198.51.100.42" })),
+    null
+  );
+  assert.equal(
+    resolveEndpointIp(new Headers({ "x-forwarded-for": "10.0.0.10" }), "8.8.4.4"),
+    "8.8.4.4"
+  );
+  assert.equal(
+    resolveEndpointIp(new Headers({ "x-forwarded-for": "8.8.8.8" }), "10.0.0.10"),
+    "8.8.8.8"
+  );
+});
 
 test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) => {
   const acmeAnalyst: SessionUser = {
     id: "dev-analyst",
     tenant_id: "acme-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   const acmeAdmin: SessionUser = {
@@ -31,7 +69,7 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
   const globexUser: SessionUser = {
     id: "dev-other",
     tenant_id: "globex-tenant",
-    role: "user",
+    role: "analyst",
   };
 
   await t.test("Tenant Isolation: acmeAnalyst sees only Acme endpoint agents", async () => {
@@ -285,4 +323,3 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
     assert.ok(body.publicKey.includes("BEGIN PUBLIC KEY"), "Must return valid PEM public key");
   });
 });
-

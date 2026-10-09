@@ -5,4 +5,6 @@ requests>=2.32.3
 anthropic>=0.28.0
 psycopg2-binary>=2.9.9
 httpx>=0.27.0
-trivy>=0.74.0  # run: npm run setup:trivy #
+trivy>=0.74.0    # run: npm run setup:trivy    # 
+gitleaks>=8.30.1 # run: npm run setup:gitleaks # 
+GoLang.Go>=1.27 # run: winget install GoLang.Go

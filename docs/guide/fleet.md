@@ -11,13 +11,15 @@ Each card displays:
 | Field | Description |
 |-------|-------------|
 | **Hostname** | Machine name |
-| **IP address** | Current IP |
+| **IP address** | Endpoint's current public/WAN IP when available; falls back to its local adapter IP when external discovery is unavailable |
 | **OS / Platform** | Windows Server, Ubuntu, macOS, etc. |
 | **Agent Status** | `online`, `offline`, `compromised`, or `isolated` |
 | **CPU and Memory** | Current utilisation |
 | **Last Seen** | Most recent heartbeat timestamp |
 
 Agents marked **COMPROMISED** or **ISOLATED** are highlighted red. Investigate immediately.
+
+The agent refreshes its detected IP periodically. Public IP discovery uses the address observed by the control-plane proxy, then an external IP lookup; local adapter IP is used only when those sources are unavailable.
 
 ## Issuing Remote Commands
 

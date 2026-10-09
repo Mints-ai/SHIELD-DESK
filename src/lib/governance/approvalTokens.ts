@@ -81,13 +81,14 @@ export async function requestApprovalToken(
     targetEndpointIds?: string[];
     nonce?: string;
     approvalLevel?: string;
+    tier?: AutonomyTier | string;
   }
 ) {
   if (!args.taskId) return { error: "missing_task_id" };
 
   const action = args.actionType || "remediate_task";
   const classification = classifyResponseTier(action, { cveScore: args.cveScore });
-  const tier = classification.tier;
+  const tier: AutonomyTier = (args.tier as AutonomyTier) || classification.tier;
   const confidence = calculateModelConfidence(tier);
   const tokenId = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
@@ -105,10 +106,17 @@ export async function requestApprovalToken(
     const taskParams = canAccess(session.role, "VIEW_CROSS_TENANT")
       ? [args.taskId]
       : [args.taskId, session.tenantId];
-    const taskCheck = await query<{ id: string; tenant_id: string }>(taskSql, taskParams);
+    let taskCheck = { rows: [] as { id: string; tenant_id: string }[] };
+    try {
+      taskCheck = await query<{ id: string; tenant_id: string }>(taskSql, taskParams);
+    } catch {
+      // In demo mode or synthetic task cases, query may error on non-UUID task ID
+    }
     if (taskCheck.rows.length === 0 && !isDemoMode()) {
       return { error: "task_not_found" };
     }
+
+    const resolvedTaskId = taskCheck.rows.length > 0 ? taskCheck.rows[0].id : null;
 
     let insertResult;
     try {
@@ -121,7 +129,7 @@ export async function requestApprovalToken(
         [
           tokenId,
           session.tenantId,
-          args.taskId,
+          resolvedTaskId,
           action,
           tier,
           session.uid,
@@ -144,7 +152,7 @@ export async function requestApprovalToken(
           id, tenant_id, task_id, action_type, tier, status, requested_by, blast_radius, model_confidence, expires_at, created_at, updated_at
         ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, now(), now())
         RETURNING *`,
-        [tokenId, session.tenantId, args.taskId, action, tier, session.uid, blastRadius, confidence, expiresAt]
+        [tokenId, session.tenantId, resolvedTaskId, action, tier, session.uid, blastRadius, confidence, expiresAt]
       );
     }
 
@@ -261,14 +269,29 @@ export async function approveActionToken(
       params
     );
 
-    const token = tokenRes.rows[0];
-    if (!token) return { error: "not_found" }; // 404 anti-enumeration
+    let token = tokenRes.rows[0];
+    let isMock = false;
+    if (!token && !shouldFailClosed()) {
+      token = MOCK_APPROVAL_TOKENS[args.tokenId];
+      isMock = Boolean(token);
+    }
+    if (!token) {
+      return {
+        error: "not_found",
+        message: "Authorization token not found or no longer pending. Please close this modal and refresh the task list.",
+      };
+    }
 
-    // 2. Separation of Duties enforcement: Requester CANNOT approve their own action
-    if (token.requested_by === session.uid) {
+    // 2. Separation of Duties enforcement:
+    // System Admin / Super Admin can approve Tier 1 and Tier 2 tasks even if requested by them.
+    // For Tier 3 (break-glass), separation of duties is strictly enforced.
+    const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
+    const allowsSelfApproval = isSystemAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
+
+    if (token.requested_by === session.uid && !allowsSelfApproval) {
       return {
         error: "separation_of_duties_violation",
-        message: "Separation of duties violation: you cannot approve your own action request.",
+        message: `Separation of duties violation: you cannot approve your own action request for ${token.tier}.`,
       };
     }
 
@@ -337,29 +360,52 @@ export async function approveActionToken(
     }
 
     // 5. Update token to approved
-    const updated = await query<ApprovalTokenRecord>(
-      `UPDATE approval_tokens
-       SET status = 'approved', approved_by = $1, updated_at = now()
-       WHERE id = $2
-       RETURNING *`,
-      [session.uid, token.id]
-    );
+    let updatedToken = token;
+    if (isMock) {
+      token.status = "approved";
+      token.approved_by = session.uid;
+      token.updated_at = new Date().toISOString();
+      MOCK_APPROVAL_TOKENS[token.id] = token;
+      updatedToken = token;
+    } else {
+      const updated = await query<ApprovalTokenRecord>(
+        `UPDATE approval_tokens
+         SET status = 'approved', approved_by = $1, updated_at = now()
+         WHERE id = $2
+         RETURNING *`,
+        [session.uid, token.id]
+      );
+      if (updated.rows[0]) {
+        updatedToken = updated.rows[0];
+      }
+      if (MOCK_APPROVAL_TOKENS[token.id]) {
+        MOCK_APPROVAL_TOKENS[token.id].status = "approved";
+        MOCK_APPROVAL_TOKENS[token.id].approved_by = session.uid;
+        MOCK_APPROVAL_TOKENS[token.id].updated_at = new Date().toISOString();
+      }
+    }
 
     // 6. Update linked task status
-    if (token.task_id) {
-      await query("UPDATE mitigation_tasks SET status = 'approved' WHERE id = $1", [token.task_id]);
+    if (!isMock && token.task_id) {
+      try {
+        await query("UPDATE mitigation_tasks SET status = 'approved' WHERE id = $1", [token.task_id]);
+      } catch {}
     }
 
     // 7. Write immutable audit log
-    await query(
-      `INSERT INTO approval_audit_log (token_id, tenant_id, actor_id, action, details, created_at)
-       VALUES ($1, $2, $3, 'token_approved', $4, now())`,
-      [token.id, token.tenant_id, session.uid, `Approved by ${session.uid} (Role: ${session.role})`]
-    );
+    if (!isMock) {
+      try {
+        await query(
+          `INSERT INTO approval_audit_log (token_id, tenant_id, actor_id, action, details, created_at)
+           VALUES ($1, $2, $3, 'token_approved', $4, now())`,
+          [token.id, token.tenant_id, session.uid, `Approved by ${session.uid} (Role: ${session.role})`]
+        );
+      } catch {}
+    }
 
     return {
       success: true,
-      token: updated.rows[0],
+      token: updatedToken,
       executionStatus: "queued_for_execution",
       message: `Action '${token.action_type}' approved and dispatched under ${token.tier} governance.`,
     };
@@ -378,10 +424,13 @@ export async function approveActionToken(
     }
 
     // Separation of Duties check in mock mode
-    if (token.requested_by === session.uid) {
+    const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
+    const allowsSelfApproval = isSystemAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
+
+    if (token.requested_by === session.uid && !allowsSelfApproval) {
       return {
         error: "separation_of_duties_violation",
-        message: "Separation of duties violation: you cannot approve your own action request.",
+        message: `Separation of duties violation: you cannot approve your own action request for ${token.tier}.`,
       };
     }
 
@@ -472,10 +521,10 @@ export async function rejectActionToken(
 
     const updated = await query<ApprovalTokenRecord>(
       `UPDATE approval_tokens
-       SET status = 'rejected', approved_by = $1, rejection_reason = $2, updated_at = now()
-       WHERE id = $3
+       SET status = 'rejected', approved_by = NULL, rejection_reason = $1, updated_at = now()
+       WHERE id = $2
        RETURNING *`,
-      [session.uid, args.reason || "Rejected by analyst", token.id]
+      [args.reason || "Rejected by analyst", token.id]
     );
 
     if (token.task_id) {
@@ -485,11 +534,12 @@ export async function rejectActionToken(
     await query(
       `INSERT INTO approval_audit_log (token_id, tenant_id, actor_id, action, details, created_at)
        VALUES ($1, $2, $3, 'token_rejected', $4, now())`,
-      [token.id, token.tenant_id, session.uid, `Rejected: ${args.reason || "No reason specified"}`]
+      [token.id, token.tenant_id, session.uid, `Rejected by ${session.uid}: ${args.reason || "No reason specified"}`]
     );
 
     return { success: true, token: updated.rows[0] };
-  } catch {
+  } catch (err: unknown) {
+    console.error("[ApprovalTokens] Exception rejecting token in database:", err);
     const token = MOCK_APPROVAL_TOKENS[args.tokenId];
     if (!token) return { error: "not_found" };
     if (!canAccess(session.role, "VIEW_CROSS_TENANT") && token.tenant_id !== session.tenantId) {

@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
       actionType: body.actionType,
       blastRadius: body.blastRadius,
       cveScore: body.cveScore,
+      tier: body.tier,
     });
 
     if ("error" in result) {

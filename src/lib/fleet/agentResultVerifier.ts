@@ -23,6 +23,7 @@ export interface AgentResultVerificationResult {
 }
 
 export class AgentResultVerifier {
+  private static readonly MAX_RESULT_AGE_MS = 5 * 60 * 1000;
   /**
    * Produces deterministic canonical string of an agent's execution result.
    */
@@ -82,6 +83,16 @@ export class AgentResultVerifier {
       return {
         verified: false,
         reason: "Missing result signature: unauthenticated execution report rejected under fail-closed security policy.",
+        canonicalPayload: canonical,
+        computedStateDigest: payload.hostStateDigest,
+      };
+    }
+
+    const timestampMs = Date.parse(payload.executionTimestamp);
+    if (!Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > this.MAX_RESULT_AGE_MS) {
+      return {
+        verified: false,
+        reason: "Execution result timestamp is invalid or outside the accepted five-minute freshness window.",
         canonicalPayload: canonical,
         computedStateDigest: payload.hostStateDigest,
       };

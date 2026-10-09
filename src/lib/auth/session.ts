@@ -40,7 +40,22 @@ export async function getSessionFromRequest(
     bearerToken = authHeader.substring(7).trim();
   }
 
-  // 1. Check Cookie (shielddesk_session)
+  // 1. In dev/test environments, check X-ShieldDesk-User header first to support persona switching
+  if (isDevPersonaAllowed()) {
+    const devHeaderUid = req.headers.get("X-ShieldDesk-User");
+    if (devHeaderUid && Object.prototype.hasOwnProperty.call(DEV_USERS, devHeaderUid)) {
+      const devUser = DEV_USERS[devHeaderUid as keyof typeof DEV_USERS];
+      if (devUser) {
+        return {
+          uid: devHeaderUid,
+          tenantId: devUser.tenantId,
+          role: devUser.role,
+        };
+      }
+    }
+  }
+
+  // 2. Check Cookie (shielddesk_session)
   let cookieToken: string | null = null;
   const cookieHeader = req.headers.get("cookie") || "";
   const match = cookieHeader.match(/shielddesk_session=([^;]+)/);
@@ -50,7 +65,7 @@ export async function getSessionFromRequest(
 
   const token = bearerToken || cookieToken;
 
-  // 2. Cryptographic Session Token Verification (ShieldDesk Signed Token)
+  // 3. Cryptographic Session Token Verification (ShieldDesk Signed Token)
   if (token) {
     const verifiedPayload = verifySessionToken(token);
     if (verifiedPayload) {
@@ -83,21 +98,6 @@ export async function getSessionFromRequest(
         }
       } catch (err: unknown) {
         console.error("[Auth] Exception during Supabase token verification:", err);
-      }
-    }
-  }
-
-  // 4. Check X-ShieldDesk-User header (Dev & Test mode ONLY — strictly disabled in production)
-  if (isDevPersonaAllowed()) {
-    const devHeaderUid = req.headers.get("X-ShieldDesk-User");
-    if (devHeaderUid && Object.prototype.hasOwnProperty.call(DEV_USERS, devHeaderUid)) {
-      const devUser = DEV_USERS[devHeaderUid as keyof typeof DEV_USERS];
-      if (devUser) {
-        return {
-          uid: devHeaderUid,
-          tenantId: devUser.tenantId,
-          role: devUser.role,
-        };
       }
     }
   }

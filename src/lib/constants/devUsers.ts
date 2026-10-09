@@ -1,6 +1,7 @@
 import type { ShieldDeskRole } from "@/lib/permissions";
 
-export type DevUserId = "dev-analyst" | "dev-admin" | "dev-other";
+export type DevUserId = "dev-admin" | "dev-super" | "dev-responder" | "dev-analyst";
+
 
 export interface DevUserMetadata {
   id: DevUserId;
@@ -13,31 +14,40 @@ export interface DevUserMetadata {
 }
 
 export const DEV_USERS: Record<DevUserId, DevUserMetadata> = {
-  "dev-analyst": {
-    id: "dev-analyst",
-    label: "Analyst",
-    role: "user",
-    tenantId: "acme-tenant",
-    tenantName: "Acme Corp",
-    email: "analyst@acme.corp",
-    description: "Standard SOC Analyst (Acme Corp)",
-  },
   "dev-admin": {
     id: "dev-admin",
     label: "System Admin",
     role: "system_admin",
     tenantId: "acme-tenant",
-    tenantName: "Acme Corp (Global Admin)",
+    tenantName: "Acme Corp",
     email: "admin@acme.corp",
-    description: "Cross-Tenant Administrator (All Tenants)",
+    description: "Platform-wide administrator with cross-tenant visibility and Tier 3 approval authority",
   },
-  "dev-other": {
-    id: "dev-other",
-    label: "Globex Analyst",
-    role: "user",
-    tenantId: "globex-tenant",
-    tenantName: "Globex Corp",
-    email: "analyst@globex.corp",
-    description: "External Tenant Analyst (Isolation Test)",
+  "dev-super": {
+    id: "dev-super",
+    label: "Super Admin",
+    role: "super_admin",
+    tenantId: "acme-tenant",
+    tenantName: "Acme Corp",
+    email: "superadmin@acme.corp",
+    description: "Company-level administrator — full approval authority within tenant",
+  },
+  "dev-responder": {
+    id: "dev-responder",
+    label: "Responder",
+    role: "responder",
+    tenantId: "acme-tenant",
+    tenantName: "Acme Corp",
+    email: "responder@acme.corp",
+    description: "Incident Responder — can approve Tier 1 & Tier 2 containment actions",
+  },
+  "dev-analyst": {
+    id: "dev-analyst",
+    label: "Analyst",
+    role: "analyst",
+    tenantId: "acme-tenant",
+    tenantName: "Acme Corp",
+    email: "analyst@acme.corp",
+    description: "SOC Analyst — investigate & draft plans, cannot approve actions",
   },
 };

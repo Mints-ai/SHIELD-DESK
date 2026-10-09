@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 import { query } from "@/lib/db";
 import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
 import { recordHashChainEvent } from "@/lib/fleet/fleet";
+import { parseYaraRule } from "@/lib/detection/yara/parser";
+import { evaluateYaraRule } from "@/lib/detection/yara/evaluator";
+import { getYaraRules, recordYaraMatch } from "@/lib/detection/yara/store";
+import type { YaraRuleRecord, YaraRuleAst, YaraMatchResult } from "@/lib/detection/yara/types";
 
 export interface DetectionRule {
   id: string;
@@ -158,6 +162,22 @@ export interface CorrelatedIncident {
 
 export const IN_MEMORY_CORRELATED_INCIDENTS: CorrelatedIncident[] = [];
 
+// AST Cache for compiled YARA rules
+const YARA_AST_CACHE = new Map<string, { raw: string; ast: YaraRuleAst }>();
+
+function getOrCompileYaraAst(rawContent: string, ruleId: string): YaraRuleAst | null {
+  const cached = YARA_AST_CACHE.get(ruleId);
+  if (cached && cached.raw === rawContent) {
+    return cached.ast;
+  }
+  const res = parseYaraRule(rawContent);
+  if (res.success && res.ast) {
+    YARA_AST_CACHE.set(ruleId, { raw: rawContent, ast: res.ast });
+    return res.ast;
+  }
+  return null;
+}
+
 /**
  * Evaluates an incoming batch of telemetry events from an endpoint agent against detection rules.
  * When a critical or high-severity threat matches, automatically correlates and creates an incident in the SOC pipeline.
@@ -169,12 +189,122 @@ export async function evaluateTelemetryBatch(
   const matches: DetectionMatch[] = [];
   const hostname = context.hostname || "UNKNOWN-HOST";
 
+  // Load active YARA rules for this tenant
+  let dynamicYaraRules: YaraRuleRecord[] = [];
+  try {
+    dynamicYaraRules = await getYaraRules(context.tenantId);
+  } catch {
+    // Non-fatal
+  }
+
   for (const event of events) {
     const combinedPayload: Record<string, unknown> = {
       ...event.payload,
       eventType: event.eventType,
     };
 
+    // 1. Evaluate Dynamic Native YARA Rules
+    if (dynamicYaraRules.length > 0) {
+      // Gather payload inspection strings
+      const candidateStrings: string[] = [];
+      const addString = (val: unknown) => {
+        if (typeof val === "string" && val.length > 0) {
+          candidateStrings.push(val);
+        }
+      };
+
+      addString(combinedPayload.content);
+      addString(combinedPayload.fileContent);
+      addString(combinedPayload.content_preview);
+      addString(combinedPayload.commandLine);
+      addString(combinedPayload.cmd);
+      addString(combinedPayload.command);
+      addString(combinedPayload.memoryDump);
+      addString(combinedPayload.payload);
+      addString(combinedPayload.path);
+      addString(combinedPayload.filePath);
+      addString(combinedPayload.file_path);
+      addString(combinedPayload.fileName);
+      addString(combinedPayload.file_name);
+      // Fallback: full JSON serialized event string
+      candidateStrings.push(JSON.stringify(combinedPayload));
+
+      for (const yRule of dynamicYaraRules) {
+        if (!yRule.enabled) continue;
+        const ast = getOrCompileYaraAst(yRule.raw_content, yRule.rule_id);
+        if (!ast) continue;
+
+        let bestMatch: YaraMatchResult | null = null;
+        for (const candidate of candidateStrings) {
+          const evalRes = evaluateYaraRule(ast, candidate);
+          if (evalRes.matched) {
+            bestMatch = evalRes;
+            break;
+          }
+        }
+
+        if (bestMatch && bestMatch.matched) {
+          yRule.matches_today = (yRule.matches_today || 0) + 1;
+          const targetPath = String(
+            combinedPayload.filePath ||
+              combinedPayload.file_path ||
+              combinedPayload.path ||
+              combinedPayload.fileName ||
+              combinedPayload.file_name ||
+              yRule.target ||
+              "telemetry-stream"
+          );
+
+          const yaraMatchRecord: DetectionMatch = {
+            ruleId: yRule.rule_id,
+            ruleName: yRule.name,
+            category: yRule.category,
+            severity: yRule.severity,
+            matchedAt: new Date().toISOString(),
+            agentId: context.agentId,
+            tenantId: context.tenantId,
+            hostname,
+            evidence: {
+              ...combinedPayload,
+              yara_match: {
+                rule_id: yRule.rule_id,
+                matched_strings: bestMatch.matches,
+                execution_time_ms: bestMatch.executionTimeMs,
+              },
+            },
+          };
+
+          // Correlate into incident for High & Critical threats
+          let createdIncidentId: string | undefined;
+          try {
+            const incident = await correlateDetectionToIncident(yaraMatchRecord);
+            yaraMatchRecord.incidentId = incident.id;
+            yaraMatchRecord.incidentCode = incident.incident_code;
+            createdIncidentId = incident.id;
+          } catch (err) {
+            console.error("[DetectionEngine] Failed to correlate YARA incident:", err);
+          }
+
+          // Record match into YARA match ledger
+          try {
+            await recordYaraMatch({
+              tenantId: context.tenantId,
+              ruleId: yRule.rule_id,
+              agentId: context.agentId,
+              filePath: targetPath,
+              matchedStrings: bestMatch.matches,
+              incidentId: createdIncidentId,
+            });
+          } catch (err) {
+            console.error("[DetectionEngine] Failed to record YARA match in store:", err);
+          }
+
+          matches.push(yaraMatchRecord);
+        }
+      }
+    }
+
+    // 2. Evaluate Built-in Sigma / Behavioral Rules
     for (const rule of ACTIVE_DETECTION_RULES) {
       if (!rule.enabled) continue;
 

@@ -120,7 +120,7 @@ export function MfaSetupPanel({ initialEnrolled = false }: MfaSetupPanelProps) {
           {enrolled ? <ShieldCheck className="h-5 w-5" /> : <Fingerprint className="h-5 w-5" />}
         </div>
         <div>
-          <h2 className="text-sm font-bold text-[var(--sd-text)]">
+          <h2 className="text-sm font-medium text-[var(--sd-text)]">
             Two-Factor Authentication (TOTP)
           </h2>
           <p className="text-xs text-[var(--sd-text-muted)]">
@@ -129,7 +129,7 @@ export function MfaSetupPanel({ initialEnrolled = false }: MfaSetupPanelProps) {
         </div>
         <span
           className={cn(
-            "ml-auto px-2 py-0.5 rounded text-[10px] font-bold font-mono uppercase tracking-wider",
+            "ml-auto px-2 py-0.5 rounded text-[11px] font-medium font-mono uppercase tracking-wider",
             enrolled
               ? "bg-[var(--sd-success-dim)] text-[var(--sd-success)] border border-[var(--sd-success-border)]"
               : "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
@@ -157,7 +157,7 @@ export function MfaSetupPanel({ initialEnrolled = false }: MfaSetupPanelProps) {
           <button
             onClick={startEnrollment}
             disabled={loading}
-            className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/90 text-[#f7f4ed] text-xs font-bold transition cursor-pointer disabled:opacity-50"
+            className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/90 text-[var(--sd-on-accent)] text-xs font-medium transition cursor-pointer disabled:opacity-50"
           >
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <QrCode className="h-3.5 w-3.5" />}
             <span>Enable MFA</span>
@@ -190,7 +190,7 @@ export function MfaSetupPanel({ initialEnrolled = false }: MfaSetupPanelProps) {
             <button
               onClick={confirmCode}
               disabled={loading || code.length !== 6}
-              className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/90 text-[#f7f4ed] text-xs font-bold transition cursor-pointer disabled:opacity-50"
+              className="flex items-center justify-center gap-2 w-full py-2 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/90 text-[var(--sd-on-accent)] text-xs font-medium transition cursor-pointer disabled:opacity-50"
             >
               {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
               <span>Verify & Activate MFA</span>
@@ -244,7 +244,7 @@ export function MfaSetupPanel({ initialEnrolled = false }: MfaSetupPanelProps) {
             <button
               onClick={disableMfa}
               disabled={loading || disableCode.length !== 6}
-              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-[var(--sd-danger)] text-white text-xs font-bold transition cursor-pointer disabled:opacity-50"
+              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl bg-[var(--sd-danger)] text-[var(--sd-on-accent)] text-xs font-medium transition cursor-pointer disabled:opacity-50"
             >
               {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
               <span>Confirm Disable</span>

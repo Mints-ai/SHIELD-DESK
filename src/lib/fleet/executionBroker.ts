@@ -5,6 +5,9 @@ import { signCommand, verifyCommandSignature } from "./commandSigning";
 import { getApprovalToken } from "@/lib/governance/approvalTokens";
 import { AgentResultVerifier, SignedAgentResultPayload } from "./agentResultVerifier";
 import { MTLSGuard } from "./mtlsGuard";
+import { MetricsRegistry } from "@/lib/observability/metrics";
+import { LicenseActivationService } from "@/lib/licensing/licenseActivation";
+import { isProduction } from "@/lib/config/environment";
 
 export type CommandLifecycleState =
   | "REQUESTED"
@@ -122,6 +125,10 @@ export class ExecutionBroker {
   public static async dispatchCommand(req: DispatchCommandRequest): Promise<DispatchResult> {
     const commandId = req.commandId || `cmd-${crypto.randomBytes(8).toString("hex")}`;
     const nonce = crypto.randomBytes(16).toString("hex");
+
+    if (isProduction() && !(await LicenseActivationService.isDeviceActive(req.tenantId, req.agentId))) {
+      return { success: false, commandId, dispatchToken: "", signature: "", nonce, state: "FAILED", error: "Active tenant-bound agent license activation is required before command dispatch.", expiresAt: "" };
+    }
 
     // 1. Pre-execution Snapshot Verification (Rule 2)
     if ((req.tier === "Tier 2" || req.tier === "Tier 3") && !req.snapshotId) {
@@ -267,6 +274,8 @@ export class ExecutionBroker {
       },
     });
 
+    MetricsRegistry.increment("shielddesk_commands_dispatched_total", 1, { tier: req.tier });
+
     return {
       success: true,
       commandId,
@@ -290,6 +299,16 @@ export class ExecutionBroker {
     if (!tokenCheck.valid) {
       return { success: false, reason: tokenCheck.reason };
     }
+
+    // Recheck device and kill-switch state at delivery time to close the dispatch/delivery race.
+    const deviceCheck = await MTLSGuard.validateClientCertificate({ agentId, tenantId: tokenCheck.token!.tenantId });
+    if (!deviceCheck.allowed) {
+      tokenCheck.token!.isConsumed = true;
+      return { success: false, reason: `mTLS device check failed: ${deviceCheck.reason}` };
+    }
+
+    // Consume synchronously before any asynchronous persistence so concurrent/replayed delivery is rejected.
+    tokenCheck.token!.isConsumed = true;
 
     this.inMemoryCommandStates.set(commandId, "DELIVERED");
 
@@ -321,6 +340,7 @@ export class ExecutionBroker {
     });
 
     if (!mtlsCheck.allowed) {
+      MetricsRegistry.increment("shielddesk_agent_result_rejections_total", 1, { reason: "mtls" });
       return {
         success: false,
         state: "FAILED",
@@ -331,6 +351,7 @@ export class ExecutionBroker {
     // 2. Verify Cryptographic Result Signature
     const verification = await AgentResultVerifier.verifyResult(resultPayload, options);
     if (!verification.verified) {
+      MetricsRegistry.increment("shielddesk_agent_result_rejections_total", 1, { reason: "signature_or_freshness" });
       return {
         success: false,
         state: "FAILED",
@@ -340,6 +361,7 @@ export class ExecutionBroker {
 
     // 3. Mark Command EXECUTED
     const finalState: CommandLifecycleState = resultPayload.exitCode === 0 ? "EXECUTED" : "FAILED";
+    MetricsRegistry.increment(resultPayload.exitCode === 0 ? "shielddesk_commands_executed_total" : "shielddesk_command_execution_failures_total");
     this.inMemoryCommandStates.set(resultPayload.commandId, finalState);
 
     // 4. Update Database

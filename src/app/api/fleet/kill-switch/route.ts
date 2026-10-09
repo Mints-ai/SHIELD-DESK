@@ -14,15 +14,22 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { agentId, active = true } = body;
+    const agentId = body.agentId;
+    const active = body.active !== undefined ? Boolean(body.active) : Boolean(body.enable);
+
+    const { setLiveKillSwitch } = await import("@/lib/fleet/liveTelemetry");
+    setLiveKillSwitch(active, caller.tenant_id);
 
     const result = await triggerKillSwitch({
       agentId,
-      active: Boolean(active),
+      active,
       caller,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      killSwitchActive: active,
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Internal error";
     if (msg.includes("UNAUTHORIZED_KILL_SWITCH")) {

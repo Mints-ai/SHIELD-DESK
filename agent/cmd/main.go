@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -41,6 +43,10 @@ var (
 
 	seenNoncesMu sync.Mutex
 	seenNonces   = make(map[string]time.Time)
+
+	endpointIPCacheMu sync.Mutex
+	endpointIPCache   string
+	endpointIPCacheAt time.Time
 )
 
 func isNonceReplayed(nonce string) bool {
@@ -85,6 +91,7 @@ type CommandResultPayload struct {
 
 func main() {
 	flag.Parse()
+	*controlURL = strings.TrimRight(*controlURL, "/")
 
 	if *hostname == "" {
 		h, err := os.Hostname()
@@ -525,11 +532,14 @@ func enrollWithControlPlane(client *http.Client, controlURL, token, hostname str
 	if osType != "windows" && osType != "darwin" {
 		osType = "linux"
 	}
+	endpointIP := getEndpointIP(client, controlURL)
+	log.Printf("[Enrollment] Detected endpoint IP: %s", endpointIP)
 	payload := map[string]string{
 		"token":        token,
 		"hostname":     hostname,
 		"osType":       osType,
 		"agentVersion": version,
+		"ipAddress":    endpointIP,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -575,6 +585,7 @@ func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cp
 		"memoryUsage": mem,
 		"eps":         eps,
 		"status":      "connected",
+		"ipAddress":   getEndpointIP(client, controlURL),
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -596,6 +607,78 @@ func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cp
 	if resp.StatusCode == 423 {
 		log.Printf("[Heartbeat Alert] Kill switch is active for agent %s. Host commands blocked.", agentID)
 	}
+}
+
+func getEndpointIP(client *http.Client, controlPlaneURL string) string {
+	endpointIPCacheMu.Lock()
+	if time.Since(endpointIPCacheAt) < 5*time.Minute && !endpointIPCacheAt.IsZero() {
+		ip := endpointIPCache
+		endpointIPCacheMu.Unlock()
+		return ip
+	}
+	endpointIPCacheMu.Unlock()
+
+	discoveryURLs := []string{
+		strings.TrimRight(controlPlaneURL, "/") + "/api/agent/my-ip",
+		"https://api.ipify.org?format=json",
+		"https://api64.ipify.org?format=json",
+	}
+	for _, discoveryURL := range discoveryURLs {
+		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			var result struct {
+				IP string `json:"ip"`
+			}
+			decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+			resp.Body.Close()
+			if decodeErr == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 && isPublicEndpointIP(result.IP) {
+				cancel()
+				return cacheEndpointIP(result.IP)
+			}
+		}
+		cancel()
+	}
+
+	return cacheEndpointIP(getLocalEndpointIP())
+}
+
+func isPublicEndpointIP(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast()
+}
+
+func getLocalEndpointIP() string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range interfaces {
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip, _, err := net.ParseCIDR(address.String())
+			if err == nil && ip.To4() != nil && !ip.IsLoopback() {
+				return ip.String()
+			}
+		}
+	}
+	return ""
+}
+
+func cacheEndpointIP(ip string) string {
+	endpointIPCacheMu.Lock()
+	defer endpointIPCacheMu.Unlock()
+	endpointIPCache = ip
+	endpointIPCacheAt = time.Now()
+	return ip
 }
 
 func flushTelemetry(client *http.Client, controlURL, agentID string, events []telemetry.Event) {

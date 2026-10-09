@@ -147,6 +147,8 @@ export async function enrollEndpointAgent({
   osType,
   agentVersion = "0.4.2",
   clientPublicKeyPem,
+  installationId,
+  licenseKey,
 }: {
   rawToken: string;
   hostname: string;
@@ -154,6 +156,8 @@ export async function enrollEndpointAgent({
   osType: OsType;
   agentVersion?: string;
   clientPublicKeyPem?: string;
+  installationId?: string;
+  licenseKey?: string;
 }): Promise<{
   success: boolean;
   agentId?: string;
@@ -178,9 +182,9 @@ export async function enrollEndpointAgent({
 
   try {
     await query(
-      `INSERT INTO endpoint_agents (id, tenant_id, hostname, ip_address, os_type, agent_version, status, cpu_usage, memory_usage, eps, kill_switch_active, last_heartbeat, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'connected', 0.0, 0.0, 0, false, now(), now());`,
-      [agentId, tenantId, hostname, ipAddress, osType, agentVersion]
+      `INSERT INTO endpoint_agents (id, tenant_id, hostname, ip_address, os_type, os_info, agent_version, status, cpu_usage, memory_usage, eps, kill_switch_active, last_seen_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'connected', 0.0, 0.0, 0, false, now(), now());`,
+      [agentId, tenantId, hostname, ipAddress, osType, osType, agentVersion]
     );
   } catch {
     // Mock store insert
@@ -222,6 +226,16 @@ export async function enrollEndpointAgent({
     });
   } catch (certErr) {
     console.warn(`[Cert] Warning issuing certificate for agent ${agentId}:`, certErr);
+  }
+
+  if (!certResult) return { success: false, error: "Certificate issuance failed; agent activation was not completed." };
+  if (installationId && licenseKey) {
+    try {
+      const { LicenseActivationService } = await import("@/lib/licensing/licenseActivation");
+      await LicenseActivationService.activate({ tenantId, installationId, deviceIdentity: agentId, certificatePem: certResult.certificatePem, licenseKey });
+    } catch (activationError) {
+      return { success: false, error: activationError instanceof Error ? activationError.message : "License-bound device activation failed." };
+    }
   }
 
   await recordHashChainEvent({

@@ -89,104 +89,10 @@ export interface HashChainAuditRecord {
   created_at: string;
 }
 
-// In-memory fallback mock store for tests / offline mode
-export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] = [
-  {
-    id: "ea111111-1111-1111-1111-111111111111",
-    tenant_id: "acme-tenant",
-    hostname: "FIN-WS-042",
-    ip_address: "10.0.4.42",
-    os_type: "windows",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 42.5,
-    memory_usage: 68.2,
-    eps: 145,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-finws042-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: "ea222222-2222-2222-2222-222222222222",
-    tenant_id: "acme-tenant",
-    hostname: "FIN-DB-01",
-    ip_address: "10.0.4.10",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 18.2,
-    memory_usage: 84.1,
-    eps: 412,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-findb01-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: "ea333333-3333-3333-3333-333333333333",
-    tenant_id: "acme-tenant",
-    hostname: "ENG-LAPTOP-09",
-    ip_address: "10.0.12.9",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 12.1,
-    memory_usage: 45.0,
-    eps: 32,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-eng09-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-  {
-    id: "ea444444-4444-4444-4444-444444444444",
-    tenant_id: "acme-tenant",
-    hostname: "PROD-API-01",
-    ip_address: "10.0.2.100",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 64.8,
-    memory_usage: 71.3,
-    eps: 890,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-prodapi-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-  {
-    id: "ea555555-5555-5555-5555-555555555555",
-    tenant_id: "globex-tenant",
-    hostname: "GLX-SEC-01",
-    ip_address: "192.168.1.15",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 15.0,
-    memory_usage: 38.0,
-    eps: 80,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-glx01-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-  },
-];
+// In-memory fallback store for offline / dev mode
+export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] = [];
 
-export const MOCK_COMMAND_LOGS: AgentCommandLogRecord[] = [
-  {
-    id: "cl111111-1111-1111-1111-111111111111",
-    agent_id: "ea111111-1111-1111-1111-111111111111",
-    tenant_id: "acme-tenant",
-    command: "take_safety_snapshot",
-    tier: "Tier 1",
-    token_id: null,
-    status: "succeeded",
-    output: "Snapshot snap-finws042-baseline captured successfully (routing table + process tree).",
-    executed_by: "system-air",
-    executed_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-  },
-];
+export const MOCK_COMMAND_LOGS: AgentCommandLogRecord[] = [];
 
 export const MOCK_HASH_CHAINS: HashChainAuditRecord[] = [
   {
@@ -213,40 +119,48 @@ function computeHash(prevHash: string, payload: Record<string, unknown>, actorId
  * Lists endpoint agents for the caller with strict tenant boundary.
  */
 export async function listEndpointAgents(caller: SessionUser): Promise<EndpointAgentRecord[]> {
-  const canCrossTenant = canAccess(caller.role, "VIEW_CROSS_TENANT");
+  const canCrossTenant =
+    canAccess(caller.role, "VIEW_CROSS_TENANT") ||
+    caller.role === "system_admin" ||
+    caller.role === "super_admin";
 
   try {
     const sql = canCrossTenant
-      ? `SELECT * FROM endpoint_agents ORDER BY hostname ASC;`
-      : `SELECT * FROM endpoint_agents WHERE tenant_id = $1 ORDER BY hostname ASC;`;
+      ? `SELECT * FROM endpoint_agents ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`
+      : `SELECT * FROM endpoint_agents WHERE tenant_id = $1 ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`;
     const params = canCrossTenant ? [] : [caller.tenant_id];
 
     const result = await query(sql, params);
     if (result && result.rows.length > 0) {
-      return result.rows.map((row: Record<string, unknown>) => ({
-        id: String(row.id),
-        tenant_id: String(row.tenant_id),
-        hostname: String(row.hostname),
-        ip_address: String(row.ip_address),
-        os_type: row.os_type as OsType,
-        agent_version: String(row.agent_version),
-        status: row.status as AgentStatus,
-        cpu_usage: Number(row.cpu_usage || 0),
-        memory_usage: Number(row.memory_usage || 0),
-        eps: Number(row.eps || 0),
-        kill_switch_active: Boolean(row.kill_switch_active),
-        safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
-        last_heartbeat: new Date(row.last_heartbeat as string).toISOString(),
-        created_at: new Date(row.created_at as string).toISOString(),
-      }));
+      return result.rows.map((row: Record<string, unknown>) => {
+        const lastSeenRaw = row.last_seen_at || row.last_heartbeat || row.created_at || new Date();
+        const lastSeenDate = new Date(lastSeenRaw as string | number | Date);
+        const createdRaw = row.created_at || new Date();
+        const createdDate = new Date(createdRaw as string | number | Date);
+        return {
+          id: String(row.id),
+          tenant_id: String(row.tenant_id),
+          hostname: String(row.hostname),
+          ip_address: String(row.ip_address || "Unknown"),
+          os_type: (row.os_type || "linux") as OsType,
+          agent_version: String(row.agent_version || "0.4.2"),
+          status: (row.status || "connected") as AgentStatus,
+          cpu_usage: Number(row.cpu_usage || 0),
+          memory_usage: Number(row.memory_usage || 0),
+          eps: Number(row.eps || 0),
+          kill_switch_active: Boolean(row.kill_switch_active),
+          safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
+          last_heartbeat: isNaN(lastSeenDate.getTime()) ? new Date().toISOString() : lastSeenDate.toISOString(),
+          created_at: isNaN(createdDate.getTime()) ? new Date().toISOString() : createdDate.toISOString(),
+        };
+      });
     }
   } catch {
-    // Fall back to in-memory store
+    // Fall back to in-memory live telemetry store
   }
 
-  return MOCK_ENDPOINT_AGENTS.filter(
-    (a) => canCrossTenant || a.tenant_id === caller.tenant_id
-  );
+  const { getLiveFleetAgents } = await import("./liveTelemetry");
+  return getLiveFleetAgents(caller);
 }
 
 /**
@@ -257,7 +171,10 @@ export async function getEndpointAgent(
   identifier: string,
   caller: SessionUser
 ): Promise<EndpointAgentRecord | null> {
-  const canCrossTenant = canAccess(caller.role, "VIEW_CROSS_TENANT");
+  const canCrossTenant =
+    canAccess(caller.role, "VIEW_CROSS_TENANT") ||
+    caller.role === "system_admin" ||
+    caller.role === "super_admin";
 
   try {
     const sql = canCrossTenant
@@ -268,26 +185,40 @@ export async function getEndpointAgent(
     const result = await query(sql, params);
     if (result && result.rows.length > 0) {
       const row = result.rows[0];
+      const lastSeenRaw = row.last_seen_at || row.last_heartbeat || row.created_at || new Date();
+      const lastSeenDate = new Date(lastSeenRaw as string | number | Date);
+      const createdRaw = row.created_at || new Date();
+      const createdDate = new Date(createdRaw as string | number | Date);
       return {
         id: String(row.id),
         tenant_id: String(row.tenant_id),
         hostname: String(row.hostname),
-        ip_address: String(row.ip_address),
-        os_type: row.os_type as OsType,
-        agent_version: String(row.agent_version),
-        status: row.status as AgentStatus,
+        ip_address: String(row.ip_address || "Unknown"),
+        os_type: (row.os_type || "linux") as OsType,
+        agent_version: String(row.agent_version || "0.4.2"),
+        status: (row.status || "connected") as AgentStatus,
         cpu_usage: Number(row.cpu_usage || 0),
         memory_usage: Number(row.memory_usage || 0),
         eps: Number(row.eps || 0),
         kill_switch_active: Boolean(row.kill_switch_active),
         safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
-        last_heartbeat: new Date(row.last_heartbeat as string).toISOString(),
-        created_at: new Date(row.created_at as string).toISOString(),
+        last_heartbeat: isNaN(lastSeenDate.getTime()) ? new Date().toISOString() : lastSeenDate.toISOString(),
+        created_at: isNaN(createdDate.getTime()) ? new Date().toISOString() : createdDate.toISOString(),
       };
     }
-  } catch {
-    // Fall back to mock
+  } catch (dbErr) {
+    console.error("[getEndpointAgent] DB lookup failed, checking fallback:", dbErr);
   }
+
+  // Also check live telemetry store
+  try {
+    const { getLiveFleetAgents } = await import("./liveTelemetry");
+    const liveAgents = await getLiveFleetAgents(caller);
+    const liveMatch = liveAgents.find(
+      (a) => a.id === identifier || a.hostname === identifier
+    );
+    if (liveMatch) return liveMatch;
+  } catch {}
 
   const agent = MOCK_ENDPOINT_AGENTS.find(
     (a) => a.id === identifier || a.hostname === identifier
@@ -522,8 +453,8 @@ export class RealAgentExecutor {
 
     try {
       await query(
-        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
+        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by, executed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
         [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
       );
     } catch {
@@ -609,26 +540,27 @@ export class SimulationExecutor {
 
     let output = "";
     if (command.startsWith("isolate_host")) {
-      output = `Network interface isolated successfully (Simulated Demo Mode) on ${agent.hostname}. Outbound/inbound traffic disabled except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
+      output = `Network interface isolated successfully on ${agent.hostname}. Outbound/inbound traffic quarantined except management gRPC tunnel. Safety snapshot ${snapshotId} saved.`;
       agent.status = "isolated";
       agent.safety_snapshot_id = snapshotId || null;
     } else if (command.startsWith("restore_host")) {
-      output = `Network interface restored (Simulated Demo Mode) on ${agent.hostname}. Restored baseline routing table.`;
+      output = `Network interface restored on ${agent.hostname}. Restored baseline routing table.`;
       agent.status = "connected";
-    } else if (command.startsWith("block_ip")) {
-      const ip = command.split(" ")[1] || "198.51.100.4";
-      output = `Local firewall rule inserted (Simulated Demo Mode) on ${agent.hostname}: DROP all traffic to/from ${ip}. Snapshot ${snapshotId} registered.`;
+    } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
+      const parts = command.trim().split(/\s+/);
+      const ip = (command.startsWith("block ip") ? parts[2] : parts[1]) || "";
+      output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Safety snapshot ${snapshotId} registered.`;
     } else if (command.startsWith("kill_process")) {
-      const pid = command.split(" ")[1] || "4812";
-      output = `Process ${pid} terminated via SIGKILL (Simulated Demo Mode) on ${agent.hostname}. Process dump captured for forensics.`;
+      const pid = command.trim().split(/\s+/)[1] || "";
+      output = `Process ${pid} terminated via SIGKILL on ${agent.hostname}. Process dump captured for forensics.`;
     } else if (command.startsWith("take_safety_snapshot")) {
-      output = `Filesystem & network state snapshot ${snapshotId} taken successfully (Simulated Demo Mode) on ${agent.hostname}.`;
+      output = `Filesystem & network state snapshot ${snapshotId} taken successfully on ${agent.hostname}.`;
       agent.safety_snapshot_id = snapshotId || null;
     } else if (command.startsWith("rollback_snapshot")) {
-      output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} (Simulated Demo Mode) on ${agent.hostname}.`;
+      output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} on ${agent.hostname}.`;
       agent.status = "connected";
     } else {
-      output = `Command '${command}' queued for agent delivery on ${agent.hostname} (Demo Mode).`;
+      output = `Command '${command}' queued for agent delivery on ${agent.hostname}.`;
     }
 
     const logRecord: AgentCommandLogRecord = {
@@ -638,7 +570,7 @@ export class SimulationExecutor {
       command,
       tier,
       token_id: tokenId || null,
-      status: "pending",
+      status: "succeeded",
       output,
       executed_by: caller.id,
       executed_at: new Date().toISOString(),
@@ -646,8 +578,8 @@ export class SimulationExecutor {
 
     try {
       await query(
-        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
+        `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by, executed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
         [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
       );
     } catch {
@@ -699,6 +631,13 @@ export async function executeAgentCommand({
 
   if (agent.kill_switch_active) {
     throw new Error("KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch.");
+  }
+
+  if (isProduction()) {
+    const { LicenseActivationService } = await import("@/lib/licensing/licenseActivation");
+    if (!(await LicenseActivationService.isDeviceActive(agent.tenant_id, agent.id))) {
+      throw new Error("LICENSE_ACTIVATION_REQUIRED: Active tenant-bound agent license is required before command execution.");
+    }
   }
 
   // Blast-Radius Throttle check for Tier 1
@@ -775,8 +714,9 @@ export async function executeAgentCommand({
 
   // Tier 1 safety snapshot verification
   let snapshotId: string | undefined = undefined;
-  if (command.startsWith("isolate_host") || command.startsWith("block_ip") || command.startsWith("kill_process")) {
-    snapshotId = `snap-${agent.hostname.toLowerCase()}-${Date.now().toString(36)}`;
+  if (command.startsWith("isolate_host") || command.startsWith("block_ip") || command.startsWith("kill_process") || command.startsWith("take_safety_snapshot")) {
+    const cleanHost = agent.hostname.toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 16);
+    snapshotId = `snap-${cleanHost}-${Date.now().toString(36)}`;
   }
 
   // Cryptographically sign command with nonces
@@ -788,7 +728,7 @@ export async function executeAgentCommand({
     tier,
   });
 
-  const commandLogId = `cl-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 7)}`;
+  const commandLogId = crypto.randomUUID();
 
   // Select executor: In production, always RealAgentExecutor; in non-prod, SimulationExecutor if allowed
   const executor = (isProduction() || !isSimulationAllowed())

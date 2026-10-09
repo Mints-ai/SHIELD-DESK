@@ -20,6 +20,7 @@ import {
 import { DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { cn } from "@/lib/utils";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import { ThemeSwitch } from "@/components/navigation/ThemeSwitch";
 
 function LoginForm() {
   const router = useRouter();
@@ -38,8 +39,17 @@ function LoginForm() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [devPersonasAllowed, setDevPersonasAllowed] = useState(false);
+  const [clientIp, setClientIp] = useState<string>("");
 
   useEffect(() => {
+    // Detect genuine public client IP
+    fetch("https://api.ipify.org?format=json")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.ip) setClientIp(data.ip);
+      })
+      .catch(() => {});
+
     fetch("/api/health")
       .then((res) => res.json())
       .then((data) => {
@@ -61,12 +71,17 @@ function LoginForm() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    const authHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(clientIp ? { "x-client-ip": clientIp } : {}),
+    };
+
     try {
       if (authMode === "register") {
         const res = await fetch("/api/auth/signup", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password, organizationName: orgName }),
+          headers: authHeaders,
+          body: JSON.stringify({ email, password, organizationName: orgName, clientIp }),
         });
         const data = await res.json();
         if (res.ok) {
@@ -88,16 +103,17 @@ function LoginForm() {
             try {
               const threatRes = await fetch("/api/threats", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: authHeaders,
                 body: JSON.stringify({
                   action: "record_login_failure",
                   email,
+                  clientIp: clientIp || undefined,
                   reason: `Supabase Auth: ${error.message}`,
                 }),
               });
               const threatData = await threatRes.json();
               if (threatData?.isBlocked) {
-                setErrorMessage(`🚫 IP BLOCKED: Source IP is blocked due to excessive failed attempts (>5). Contact SOC administrator.`);
+                setErrorMessage("Too many login attempts. Contact security admin to unblock.");
               } else {
                 setErrorMessage(`Supabase Auth: ${error.message}`);
               }
@@ -112,15 +128,15 @@ function LoginForm() {
       } else if (authMode === "credentials") {
         const res = await fetch("/api/auth/login", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password, mfaCode: mfaCode || undefined }),
+          headers: authHeaders,
+          body: JSON.stringify({ email, password, mfaCode: mfaCode || undefined, clientIp: clientIp || undefined }),
         });
         const data = await res.json();
         if (res.ok) {
           router.push(redirectTarget);
         } else {
           if (data.blocked) {
-            setErrorMessage(`🚫 ${data.error || "IP Address Blocked: Excessive failed login attempts (>5). Contact your SOC administrator."}`);
+            setErrorMessage("Too many login attempts. Contact security admin to unblock.");
           } else if (data.mfaRequired) {
             setMfaRequired(true);
             setErrorMessage("Enter your 6-digit TOTP code from your authenticator app.");
@@ -132,15 +148,15 @@ function LoginForm() {
         // Quick Persona Login (only available when devPersonasAllowed is true)
         const res = await fetch("/api/auth/login", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: selectedUser, mfaCode }),
+          headers: authHeaders,
+          body: JSON.stringify({ userId: selectedUser, mfaCode, clientIp: clientIp || undefined }),
         });
         const data = await res.json();
         if (res.ok) {
           router.push(redirectTarget);
         } else {
           if (data.blocked) {
-            setErrorMessage(`🚫 ${data.error || "IP Address Blocked: Excessive failed login attempts (>5)."}`);
+            setErrorMessage("Too many login attempts. Contact security admin to unblock.");
           } else {
             setErrorMessage(data.error || "Authentication failed");
           }
@@ -154,26 +170,27 @@ function LoginForm() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col justify-center items-center p-4 font-sans selection:bg-[var(--sd-pine)] selection:text-[#f7f4ed] relative">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col justify-center items-center p-4 font-sans selection:bg-[var(--sd-pine)] selection:text-[var(--sd-on-accent)] relative">
       {/* Background ambient radial glow */}
       <div className="fixed inset-0 pointer-events-none sd-ambient-glow" />
+      <div className="fixed top-4 right-4 z-20"><ThemeSwitch /></div>
 
       <div className="relative w-full max-w-md flex flex-col gap-6 z-10">
         {/* Brand Header */}
         <div className="flex flex-col items-center text-center gap-3">
-          <div className="h-16 w-16 rounded-2xl bg-white border border-[var(--sd-border)] p-1.5 flex items-center justify-center shadow-lg shadow-[var(--sd-pine)]/15 overflow-hidden">
+          <div className="h-16 w-16 rounded-2xl sd-surface border border-[var(--sd-border)] p-1.5 flex items-center justify-center shadow-lg shadow-[var(--sd-pine)]/15 overflow-hidden">
             <img src="/logo.png" alt="ShieldDesk" className="h-full w-full object-contain" />
           </div>
           <div>
             <div className="flex items-center justify-center gap-2">
-              <h1 className="text-2xl font-bold tracking-tight text-[var(--sd-text)]">
-                Shield<span className="text-[#a48858]">Desk</span><span className="text-[10px] text-[#a48858] align-super">™</span>
+              <h1 className="tracking-tight text-[var(--sd-text)] text-3xl font-light leading-tight">
+                Shield<span className="text-[var(--sd-wheat)]">Desk</span><span className="text-[11px] text-[var(--sd-wheat)] align-super">™</span>
               </h1>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[var(--sd-panel)] text-[var(--sd-pine)] border border-[var(--sd-border)] uppercase tracking-wider font-mono shadow-xs">
+              <span className="px-2 py-0.5 rounded text-[11px] font-medium sd-surface text-[var(--sd-pine)] border border-[var(--sd-border)] uppercase tracking-wider font-mono shadow-xs">
                 SOC v2.5
               </span>
             </div>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
               AI-Powered Security Operations · A Product by Mints Global
             </p>
           </div>
@@ -192,7 +209,7 @@ function LoginForm() {
             className={cn(
               "py-1.5 rounded-lg font-medium transition cursor-pointer text-center",
               authMode === "credentials"
-                ? "bg-[var(--sd-panel)] text-[var(--sd-text)] shadow-xs font-semibold"
+                ? "sd-surface text-[var(--sd-text)] shadow-xs font-medium"
                 : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
             )}
           >
@@ -204,7 +221,7 @@ function LoginForm() {
             className={cn(
               "py-1.5 rounded-lg font-medium transition cursor-pointer text-center flex items-center justify-center gap-1",
               authMode === "supabase"
-                ? "bg-[var(--sd-panel)] text-[var(--sd-pine)] shadow-xs font-semibold"
+                ? "sd-surface text-[var(--sd-pine)] shadow-xs font-medium"
                 : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
             )}
           >
@@ -217,7 +234,7 @@ function LoginForm() {
             className={cn(
               "py-1.5 rounded-lg font-medium transition cursor-pointer text-center",
               authMode === "register"
-                ? "bg-[var(--sd-panel)] text-[var(--sd-text)] shadow-xs font-semibold"
+                ? "sd-surface text-[var(--sd-text)] shadow-xs font-medium"
                 : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
             )}
           >
@@ -230,7 +247,7 @@ function LoginForm() {
               className={cn(
                 "py-1.5 rounded-lg font-medium transition cursor-pointer text-center",
                 authMode === "quick"
-                  ? "bg-[var(--sd-panel)] text-[var(--sd-text)] shadow-xs font-semibold"
+                  ? "sd-surface text-[var(--sd-text)] shadow-xs font-medium"
                   : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
               )}
             >
@@ -240,9 +257,9 @@ function LoginForm() {
         </div>
 
         {/* Login Card */}
-        <div className="p-6 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] shadow-xl backdrop-blur-md flex flex-col gap-5">
+        <div className="p-6 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xl flex flex-col gap-5">
           <div className="border-b border-[var(--sd-border)] pb-3">
-            <h2 className="text-sm font-bold text-[var(--sd-text)]">
+            <h2 className="text-sm font-medium text-[var(--sd-text)]">
               {authMode === "register"
                 ? "Register New Tenant Organization"
                 : authMode === "supabase"
@@ -251,7 +268,7 @@ function LoginForm() {
                     ? "Operator Sign In"
                     : "Quick Persona Switcher"}
             </h2>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-0.5">
               {authMode === "register"
                 ? "Provision a dedicated tenant workspace with automated autonomy tiers."
                 : authMode === "supabase"
@@ -263,14 +280,14 @@ function LoginForm() {
           </div>
 
           {errorMessage && (
-            <div className="p-3 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] text-xs flex items-center gap-2">
+            <div className="p-3 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] text-[13px] flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--sd-danger)]" />
               <span>{errorMessage}</span>
             </div>
           )}
 
           {successMessage && (
-            <div className="p-3 rounded-xl border border-[var(--sd-pine)]/30 bg-[var(--sd-panel-raised)] text-[var(--sd-pine)] text-xs flex items-center gap-2">
+            <div className="p-3 rounded-xl border border-[var(--sd-pine)]/30 bg-[var(--sd-panel-raised)] text-[var(--sd-pine)] text-[13px] flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--sd-pine)]" />
               <span>{successMessage}</span>
             </div>
@@ -279,7 +296,7 @@ function LoginForm() {
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             {authMode === "register" && (
               <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
+                <label className="text-[11px] font-medium text-[var(--sd-text)] flex items-center gap-1.5">
                   <Building2 className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
                   <span>Organization Name</span>
                 </label>
@@ -289,7 +306,7 @@ function LoginForm() {
                   placeholder="e.g. Acme Cybersecurity Corp"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  className="bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)]"
+                  className="sd-input bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-[13px] focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)]"
                 />
               </div>
             )}
@@ -300,14 +317,14 @@ function LoginForm() {
                   <Cloud className="h-3.5 w-3.5" />
                   SHIELD-DESK (dpuotfxyfqvwggewczhs)
                 </span>
-                <span className="font-mono text-[10px]">Cloud Auth Active</span>
+                <span className="font-mono text-[11px]">Cloud Auth Active</span>
               </div>
             )}
 
             {(authMode === "credentials" || authMode === "register" || authMode === "supabase") && (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[11px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
+                  <label className="text-[11px] font-medium text-[var(--sd-text)] flex items-center gap-1.5">
                     <Mail className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
                     <span>Corporate Email</span>
                   </label>
@@ -317,12 +334,12 @@ function LoginForm() {
                     placeholder="analyst@enterprise.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)]"
+                    className="sd-input bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-[13px] focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)]"
                   />
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[11px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
+                  <label className="text-[11px] font-medium text-[var(--sd-text)] flex items-center gap-1.5">
                     <KeyRound className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
                     <span>Master Password</span>
                   </label>
@@ -332,7 +349,7 @@ function LoginForm() {
                     placeholder="••••••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)] font-mono"
+                    className="sd-input bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-[13px] focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)] font-mono"
                   />
                 </div>
               </>
@@ -340,7 +357,7 @@ function LoginForm() {
 
             {authMode === "quick" && devPersonasAllowed && (
               <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
+                <label className="text-[11px] font-medium text-[var(--sd-text)] flex items-center gap-1.5">
                   <UserCheck className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
                   <span>Select Test Identity</span>
                 </label>
@@ -353,9 +370,9 @@ function LoginForm() {
                         key={userId}
                         onClick={() => setSelectedUser(userId)}
                         className={cn(
-                          "p-3 rounded-xl border transition-all duration-150 cursor-pointer flex items-center justify-between text-xs",
+                          "p-3 rounded-xl border transition-all duration-150 cursor-pointer flex items-center justify-between text-[13px]",
                           isSelected
-                            ? "border-[var(--sd-pine)] bg-[var(--sd-panel-raised)] text-[var(--sd-text)] font-semibold shadow-xs"
+                            ? "border-[var(--sd-pine)] bg-[var(--sd-panel-raised)] text-[var(--sd-text)] font-medium shadow-xs"
                             : "border-[var(--sd-border)] bg-[var(--sd-bg)]/60 hover:bg-[var(--sd-panel-raised)] text-[var(--sd-text-muted)]"
                         )}
                       >
@@ -363,16 +380,18 @@ function LoginForm() {
                           <div
                             className={cn(
                               "h-2 w-2 rounded-full",
-                              userId === "dev-admin"
-                                ? "bg-[#9333ea]"
-                                : userId === "dev-other"
-                                  ? "bg-[#d97706]"
-                                  : "bg-[var(--sd-pine-bright)]"
+                              u.role === "system_admin"
+                                ? "bg-[var(--sd-wheat)]"
+                                : u.role === "super_admin"
+                                  ? "bg-[#f59e0b]"
+                                  : u.role === "responder"
+                                    ? "bg-[#60a5fa]"
+                                    : "bg-[var(--sd-pine-bright)]"
                             )}
                           />
                           <div className="flex flex-col">
                             <span className="font-medium text-[var(--sd-text)]">{u.label}</span>
-                            <span className="text-[10px] text-[var(--sd-text-muted)] font-normal">
+                            <span className="text-[11px] text-[var(--sd-text-muted)] font-normal">
                               Tenant: {u.tenantName} ({u.role})
                             </span>
                           </div>
@@ -388,11 +407,11 @@ function LoginForm() {
             {/* MFA Verification */}
             <div className="flex flex-col gap-1.5 pt-1">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-[var(--sd-text)] flex items-center gap-1.5">
+                <label className="text-[11px] font-medium text-[var(--sd-text)] flex items-center gap-1.5">
                   <Fingerprint className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
                   <span>TOTP / Authenticator App</span>
                 </label>
-                <span className="text-[10px] text-[var(--sd-pine)] font-mono font-semibold">
+                <span className="text-[11px] text-[var(--sd-pine)] font-mono font-medium">
                   {mfaRequired ? "Code required ↓" : "Optional if enrolled"}
                 </span>
               </div>
@@ -404,7 +423,7 @@ function LoginForm() {
                 onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 maxLength={6}
                 placeholder={mfaRequired ? "Enter 6-digit code" : "Leave blank if not enrolled"}
-                className="bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-sm font-mono tracking-widest text-center focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)] selection:bg-[var(--sd-pine)] selection:text-[#f7f4ed]"
+                className="sd-input bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-sm font-mono tracking-widest text-center focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)] selection:bg-[var(--sd-pine)] selection:text-[var(--sd-on-accent)]"
               />
             </div>
 
@@ -428,7 +447,7 @@ function LoginForm() {
             <button
               type="submit"
               disabled={loading}
-              className="mt-1 w-full py-2.5 px-4 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/90 text-[#f7f4ed] text-xs font-bold transition flex items-center justify-center gap-2 shadow-lg shadow-[var(--sd-pine)]/15 cursor-pointer disabled:opacity-50"
+              className="sd-button sd-button-primary mt-1 w-full py-2.5 px-4 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition flex items-center justify-center gap-2 shadow-lg shadow-[var(--sd-pine)]/15 cursor-pointer disabled:opacity-50"
             >
               <span>
                 {loading
@@ -446,7 +465,7 @@ function LoginForm() {
         <div className="text-center">
           <Link
             href="/onboarding"
-            className="text-xs text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] inline-flex items-center gap-1.5 font-medium transition"
+            className="text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] inline-flex items-center gap-1.5 font-medium transition"
           >
             <Compass className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
             <span>Setting up a new SOC team? Follow Guided Fleet Onboarding</span>
@@ -455,7 +474,7 @@ function LoginForm() {
         </div>
 
         {/* Security Footer Notice */}
-        <div className="text-center text-[10px] text-[var(--sd-text-dim)] flex items-center justify-center gap-2 font-mono">
+        <div className="text-center text-[11px] text-[var(--sd-text-dim)] flex items-center justify-center gap-2 font-mono">
           <Lock className="h-3 w-3" />
           <span>mTLS Encrypted &bull; ISO 27001 &amp; SOC 2 Readiness Architecture</span>
         </div>
@@ -468,7 +487,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[var(--sd-bg)] flex items-center justify-center text-xs text-[var(--sd-text-muted)] font-mono">
+        <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] flex items-center justify-center text-[13px] text-[var(--sd-text-muted)] font-mono">
           Loading ShieldDesk Gate...
         </div>
       }

@@ -175,6 +175,7 @@ export class ClosedLoopOrchestrator {
       firewallDropActive: params.action.includes("block_ip") || params.action.includes("isolate"),
       blockedIps: actionTarget ? [actionTarget] : [],
       runningProcesses: [],
+      controlPlaneHealth: "healthy",
       status: params.action.includes("isolate") ? "isolated" : "connected",
       ...(params.parameters?.evidenceOverride as Record<string, unknown> || {}),
     };

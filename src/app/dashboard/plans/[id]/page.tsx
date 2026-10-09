@@ -143,11 +143,11 @@ export default function PlanViewerPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
+      <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
         <TopNavBar />
-        <main className="flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3">
+        <main className="sd-dashboard-content min-w-0 flex min-h-[calc(100vh-4rem)] flex-col items-center justify-center gap-3">
           <RefreshCw className="h-6 w-6 animate-spin text-[var(--sd-pine-bright)]" />
-          <span className="text-xs text-[var(--sd-text-muted)] font-mono">Loading mitigation plan...</span>
+          <span className="text-[13px] text-[var(--sd-text-muted)] font-mono">Loading mitigation plan...</span>
         </main>
       </div>
     );
@@ -155,16 +155,16 @@ export default function PlanViewerPage() {
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
+      <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)]">
         <TopNavBar />
-        <main className="flex min-h-[calc(100vh-4rem)] items-center justify-center p-6">
-          <div className="max-w-md w-full p-6 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] text-center space-y-4">
+        <main className="sd-dashboard-content min-w-0 flex min-h-[calc(100vh-4rem)] items-center justify-center p-6">
+          <div className="max-w-md w-full p-6 rounded-2xl border border-[var(--sd-border)] sd-surface text-center space-y-4">
             <AlertCircle className="h-10 w-10 text-[var(--sd-danger)] mx-auto" />
-            <h2 className="text-sm font-bold text-[var(--sd-beige-light)]">Inaccessible or Not Found</h2>
-            <p className="text-xs text-[var(--sd-text-muted)]">{error || "Could not retrieve plan data."}</p>
+            <h2 className="text-sm font-medium text-[var(--sd-beige-light)]">Inaccessible or Not Found</h2>
+            <p className="text-[13px] text-[var(--sd-text-muted)]">{error || "Could not retrieve plan data."}</p>
             <Link
               href="/"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--sd-panel-raised)] text-xs font-semibold text-[var(--sd-beige)] hover:bg-[var(--sd-panel-hover)] transition"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[var(--sd-panel-raised)] text-[13px] font-medium text-[var(--sd-beige)] hover:bg-[var(--sd-panel-hover)] transition"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Return to SOC Console
             </Link>
@@ -180,16 +180,16 @@ export default function PlanViewerPage() {
   const longTermTasks = tasks.filter((t) => t.horizon === "long_term");
 
   return (
-    <div className="min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] font-sans print:p-0 print:bg-white print:text-black">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] font-sans print:p-0 print:bg-white print:text-black">
       <div className="print:hidden">
         <TopNavBar />
       </div>
-      <div className="sd-dashboard-content max-w-5xl mx-auto p-6 md:p-10 space-y-6">
+      <div className="sd-dashboard-content min-w-0 max-w-5xl mx-auto p-6 md:p-10 space-y-6">
         {/* Navigation & Action Bar */}
-        <div className="flex items-center justify-between print:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
           <Link
             href="/"
-            className="flex items-center gap-2 text-xs font-semibold text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] transition"
+            className="flex items-center gap-2 text-[13px] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] transition"
           >
             <ArrowLeft className="h-4 w-4 text-[var(--sd-pine)]" />
             <span>Return to Incident Queue</span>
@@ -198,7 +198,7 @@ export default function PlanViewerPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={handlePrint}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-[var(--sd-border)] bg-white hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-pine)] transition cursor-pointer shadow-xs"
+              className="sd-button flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[var(--sd-border)] sd-surface hover:bg-[var(--sd-panel-hover)] text-[13px] font-medium text-[var(--sd-pine)] transition cursor-pointer shadow-xs"
             >
               <Printer className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
               <span>Print / Export PDF</span>
@@ -209,25 +209,25 @@ export default function PlanViewerPage() {
                   `Review mitigation plan ${plan.id} for incident ${plan.incident_code}`
                 )
               }
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[var(--sd-pine)] hover:bg-[var(--sd-pine-dark)] text-[#f7f4ed] text-xs font-semibold transition cursor-pointer shadow-xs"
+              className="sd-button sd-button-primary flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer shadow-xs"
             >
-              <Sparkles className="h-3.5 w-3.5 text-[#e6dbbf]" />
+              <Sparkles className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
               <span>Ask AI Co-Pilot</span>
             </button>
           </div>
         </div>
 
         {/* Plan Header Card */}
-        <div className="p-6 md:p-8 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs space-y-4">
+        <div className="p-6 md:p-8 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--sd-border)] pb-4">
             <div className="flex items-center gap-3">
-              <span className="rounded-md bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] px-2.5 py-1 font-mono text-xs font-bold text-[var(--sd-pine)]">
+              <span className="rounded-md bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] px-2.5 py-1 font-mono text-[13px] font-medium text-[var(--sd-pine)]">
                 {plan.incident_code}
               </span>
-              <span className="rounded-md bg-[var(--sd-danger-dim)] border border-[var(--sd-danger-border)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[var(--sd-danger)]">
+              <span className="rounded-md bg-[var(--sd-danger-dim)] border border-[var(--sd-danger-border)] px-2 py-0.5 text-[11px] font-medium uppercase tracking-wider text-[var(--sd-danger)]">
                 {plan.incident_severity}
               </span>
-              <span className="rounded-md bg-white border border-[var(--sd-border)] px-2 py-0.5 text-[10px] font-semibold text-[var(--sd-pine)] font-mono shadow-xs">
+              <span className="rounded-md sd-surface border border-[var(--sd-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--sd-pine)] font-mono shadow-xs">
                 Plan v{plan.version} &bull; {plan.status.toUpperCase()}
               </span>
             </div>
@@ -237,10 +237,10 @@ export default function PlanViewerPage() {
           </div>
 
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-[var(--sd-pine)]">
+            <h1 className="tracking-tight text-[var(--sd-text)] text-3xl font-light leading-tight">
               {plan.incident_title}
             </h1>
-            <p className="text-xs text-[var(--sd-text-muted)] mt-2 leading-relaxed max-w-4xl">
+            <p className="text-[13px] text-[var(--sd-text-muted)] mt-2 leading-relaxed max-w-4xl">
               {plan.summary}
             </p>
           </div>
@@ -249,15 +249,15 @@ export default function PlanViewerPage() {
         {/* 3 Horizon Task Sections */}
         <div className="space-y-6">
           {/* Horizon 1: Immediate Containment */}
-          <div className="p-6 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs space-y-4">
+          <div className="p-6 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-4">
             <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-[var(--sd-danger)]" />
-                <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                <h2 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
                   Horizon 1: Immediate Containment & Isolation (&lt; 1 Hour)
                 </h2>
               </div>
-              <span className="text-[11px] font-mono text-[var(--sd-text-muted)] font-semibold">
+              <span className="text-[11px] font-mono text-[var(--sd-text-muted)] font-medium">
                 {immediateTasks.length} Actions
               </span>
             </div>
@@ -266,16 +266,16 @@ export default function PlanViewerPage() {
               {immediateTasks.map((t) => (
                 <div
                   key={t.id}
-                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] flex flex-col md:flex-row md:items-center justify-between gap-3 text-[13px]"
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <AutonomyTierBadge tier={t.tier} size="sm" />
-                      <span className="font-semibold text-[var(--sd-text)]">{t.title}</span>
+                      <span className="font-medium text-[var(--sd-text)]">{t.title}</span>
                     </div>
                     <p className="text-[11px] text-[var(--sd-text-muted)]">{t.description}</p>
                     {t.blast_radius && (
-                      <span className="text-[10px] text-[var(--sd-text-muted)] font-mono block">
+                      <span className="text-[11px] text-[var(--sd-text-muted)] font-mono block">
                         Blast Radius: {t.blast_radius}
                       </span>
                     )}
@@ -283,18 +283,18 @@ export default function PlanViewerPage() {
 
                   <div className="flex items-center gap-2 shrink-0">
                     {t.status === "completed" ? (
-                      <span className="flex items-center gap-1 text-[var(--sd-success)] font-semibold text-[11px]">
+                      <span className="flex items-center gap-1 text-[var(--sd-success)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Completed
                       </span>
                     ) : t.status === "approved" ? (
-                      <span className="flex items-center gap-1 text-[var(--sd-pine)] font-semibold text-[11px]">
+                      <span className="flex items-center gap-1 text-[var(--sd-pine)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approved
                       </span>
                     ) : (
                       <button
                         onClick={() => handleRequestApproval(t)}
                         disabled={actionLoadingId === t.id}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-bold cursor-pointer transition shadow-xs disabled:opacity-50"
+                        className="sd-button flex items-center gap-1 px-3 py-1.5 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-medium cursor-pointer transition shadow-xs disabled:opacity-50"
                       >
                         <Lock className="h-3 w-3" />
                         <span>Sign Off Action</span>
@@ -307,15 +307,15 @@ export default function PlanViewerPage() {
           </div>
 
           {/* Horizon 2: Short-Term Remediation */}
-          <div className="p-6 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs space-y-4">
+          <div className="p-6 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-4">
             <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-[var(--sd-warning)]" />
-                <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                <h2 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
                   Horizon 2: Short-Term Remediation & Patching (&lt; 24-48 Hours)
                 </h2>
               </div>
-              <span className="text-[11px] font-mono text-[var(--sd-text-muted)] font-semibold">
+              <span className="text-[11px] font-mono text-[var(--sd-text-muted)] font-medium">
                 {shortTermTasks.length} Actions
               </span>
             </div>
@@ -324,21 +324,21 @@ export default function PlanViewerPage() {
               {shortTermTasks.map((t) => (
                 <div
                   key={t.id}
-                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] flex flex-col md:flex-row md:items-center justify-between gap-3 text-[13px]"
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <AutonomyTierBadge tier={t.tier} size="sm" />
-                      <span className="font-semibold text-[var(--sd-text)]">{t.title}</span>
+                      <span className="font-medium text-[var(--sd-text)]">{t.title}</span>
                       {t.cve_id && (
-                        <span className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-[var(--sd-pine)] border border-[var(--sd-border)] font-semibold">
+                        <span className="rounded sd-surface px-1.5 py-0.5 font-mono text-[11px] text-[var(--sd-pine)] border border-[var(--sd-border)] font-medium">
                           {t.cve_id}
                         </span>
                       )}
                     </div>
                     <p className="text-[11px] text-[var(--sd-text-muted)]">{t.description}</p>
                     {t.blast_radius && (
-                      <span className="text-[10px] text-[var(--sd-text-muted)] font-mono block">
+                      <span className="text-[11px] text-[var(--sd-text-muted)] font-mono block">
                         Blast Radius: {t.blast_radius}
                       </span>
                     )}
@@ -346,18 +346,18 @@ export default function PlanViewerPage() {
 
                   <div className="flex items-center gap-2 shrink-0">
                     {t.status === "completed" ? (
-                      <span className="flex items-center gap-1 text-[var(--sd-success)] font-semibold text-[11px]">
+                      <span className="flex items-center gap-1 text-[var(--sd-success)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Completed
                       </span>
                     ) : t.status === "approved" ? (
-                      <span className="flex items-center gap-1 text-[var(--sd-pine)] font-semibold text-[11px]">
+                      <span className="flex items-center gap-1 text-[var(--sd-pine)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approved
                       </span>
                     ) : (
                       <button
                         onClick={() => handleRequestApproval(t)}
                         disabled={actionLoadingId === t.id}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-bold cursor-pointer transition shadow-xs disabled:opacity-50"
+                        className="sd-button flex items-center gap-1 px-3 py-1.5 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-medium cursor-pointer transition shadow-xs disabled:opacity-50"
                       >
                         <Lock className="h-3 w-3" />
                         <span>Sign Off Action</span>
@@ -370,15 +370,15 @@ export default function PlanViewerPage() {
           </div>
 
           {/* Horizon 3: Long-Term Hardening */}
-          <div className="p-6 rounded-2xl border border-[var(--sd-border)] bg-white shadow-xs space-y-4">
+          <div className="p-6 rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-4">
             <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-[var(--sd-pine)]" />
-                <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                <h2 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
                   Horizon 3: Long-Term Architectural Hardening (&lt; 7-30 Days)
                 </h2>
               </div>
-              <span className="text-[11px] font-mono text-[var(--sd-text-muted)] font-semibold">
+              <span className="text-[11px] font-mono text-[var(--sd-text-muted)] font-medium">
                 {longTermTasks.length} Actions
               </span>
             </div>
@@ -387,16 +387,16 @@ export default function PlanViewerPage() {
               {longTermTasks.map((t) => (
                 <div
                   key={t.id}
-                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                  className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] flex flex-col md:flex-row md:items-center justify-between gap-3 text-[13px]"
                 >
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <AutonomyTierBadge tier={t.tier} size="sm" />
-                      <span className="font-semibold text-[var(--sd-text)]">{t.title}</span>
+                      <span className="font-medium text-[var(--sd-text)]">{t.title}</span>
                     </div>
                     <p className="text-[11px] text-[var(--sd-text-muted)]">{t.description}</p>
                     {t.blast_radius && (
-                      <span className="text-[10px] text-[var(--sd-text-muted)] font-mono block">
+                      <span className="text-[11px] text-[var(--sd-text-muted)] font-mono block">
                         Blast Radius: {t.blast_radius}
                       </span>
                     )}
@@ -404,18 +404,18 @@ export default function PlanViewerPage() {
 
                   <div className="flex items-center gap-2 shrink-0">
                     {t.status === "completed" ? (
-                      <span className="flex items-center gap-1 text-[var(--sd-success)] font-semibold text-[11px]">
+                      <span className="flex items-center gap-1 text-[var(--sd-success)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Completed
                       </span>
                     ) : t.status === "approved" ? (
-                      <span className="flex items-center gap-1 text-[var(--sd-pine)] font-semibold text-[11px]">
+                      <span className="flex items-center gap-1 text-[var(--sd-pine)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approved
                       </span>
                     ) : (
                       <button
                         onClick={() => handleRequestApproval(t)}
                         disabled={actionLoadingId === t.id}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-bold cursor-pointer transition shadow-xs disabled:opacity-50"
+                        className="sd-button flex items-center gap-1 px-3 py-1.5 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] hover:bg-[var(--sd-warning-border)] text-[11px] font-medium cursor-pointer transition shadow-xs disabled:opacity-50"
                       >
                         <Lock className="h-3 w-3" />
                         <span>Sign Off Action</span>

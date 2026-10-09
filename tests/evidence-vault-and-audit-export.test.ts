@@ -19,7 +19,7 @@ test("ShieldDesk Phase 7: SOC 2 & ISO 27001 Cryptographic Evidence Vault", async
   const auditorUser: SessionUser = {
     id: "usr-soc2-auditor",
     tenant_id: "acme-tenant",
-    role: "auditor",
+    role: "analyst",
   };
 
   await t.test("Merkle Tree & Inclusion Proofs: Computes root and validates inclusion", () => {
