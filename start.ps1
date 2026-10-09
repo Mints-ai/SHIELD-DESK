@@ -101,6 +101,7 @@ function Stream-Jobs {
             $lines = Receive-Job $job -ErrorAction SilentlyContinue
             if ($lines) {
                 $prefix = switch ($job.Name) {
+                    "NATS"        { "[NATS      ] " }
                     "Ollama"      { "[Ollama    ] " }
                     "PythonBrain" { "[Python AI ] " }
                     "NextJS"      { "[Next.js   ] " }
@@ -112,6 +113,7 @@ function Stream-Jobs {
                     default       { "[Service   ] " }
                 }
                 $col = switch ($job.Name) {
+                    "NATS"        { "Cyan"    }
                     "Ollama"      { "Magenta" }
                     "PythonBrain" { "Yellow"  }
                     "NextJS"      { "Cyan"    }
@@ -142,7 +144,7 @@ function Stop-AllServices {
         Write-Host "  [STOPPED] $($job.Name)" -ForegroundColor DarkGray
     }
     # Kill any child processes that outlived the jobs
-    Get-Process -Name "ollama", "ingest", "threat", "webhook", "orchestrator" -ErrorAction SilentlyContinue |
+    Get-Process -Name "ollama", "ingest", "threat", "webhook", "orchestrator", "nats-server" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "  All services stopped. Goodbye!" -ForegroundColor DarkGreen
@@ -157,7 +159,7 @@ Write-Banner
 Check-Prerequisites
 
 # Ensure no orphaned microservices from previous sessions are blocking ports
-Get-Process -Name "ingest", "threat", "webhook", "orchestrator" -ErrorAction SilentlyContinue |
+Get-Process -Name "ingest", "threat", "webhook", "orchestrator", "nats-server" -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
@@ -170,6 +172,22 @@ if ($hasTrivy) {
     Write-Status "OK" "Trivy Engine" "native scanner detected" "Green"
 } else {
     Write-Host "  [WARN] Trivy binary missing. Run 'npm run setup:trivy' to download scanner." -ForegroundColor Yellow
+}
+
+# Verify NATS JetStream server readiness
+$natsLocal = Join-Path $ROOT "tools\nats\nats-server.exe"
+$hasNats = (Get-Command "nats-server" -ErrorAction SilentlyContinue) -or (Test-Path $natsLocal)
+$natsJob = $null
+if ($hasNats) {
+    Write-Status "OK" "NATS Engine" "server binary detected" "Green"
+    $natsExe = if (Test-Path $natsLocal) { $natsLocal } else { "nats-server" }
+    $natsData = Join-Path $ROOT "tools\nats\data"
+    if (!(Test-Path $natsData)) { New-Item -ItemType Directory -Force -Path $natsData | Out-Null }
+    $natsCmd = "cmd.exe /c `"`"$natsExe`" -js -sd `"$natsData`" -p 4222 -m 8222`""
+    $natsJob = Start-Service "NATS" $natsCmd $ROOT $envMap
+    Wait-ForPort 4222 "NATS JetStream" 20 | Out-Null
+} else {
+    Write-Host "  [INFO] NATS server not found. Run 'npm run setup:nats' to activate distributed streaming." -ForegroundColor DarkYellow
 }
 
 $ollamaJob  = Start-Service "Ollama"      "ollama serve"   $ROOT        $envMap
@@ -193,6 +211,7 @@ $patchCmd   = if (Test-Path $patchExe) { "cmd.exe /c orchestrator.exe server --p
 $patchJob   = Start-Service "GoPatch"     $patchCmd        $patchDir    $envMap
 
 $allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob)
+if ($natsJob) { $allJobs += $natsJob }
 
 Write-Host ""
 Write-Host "  Waiting for all ports to open..." -ForegroundColor DarkGray
@@ -221,6 +240,9 @@ Write-Host "  |  Go Threat Engine-->  http://localhost:8003     |" -ForegroundCo
 Write-Host "  |  Go Ingest & PII -->  http://localhost:8004     |" -ForegroundColor Blue
 Write-Host "  |  SSH Patch Orch  -->  http://localhost:8006     |" -ForegroundColor Green
 Write-Host "  |  Go Webhook Svc  -->  http://localhost:8080     |" -ForegroundColor DarkYellow
+if ($hasNats) {
+Write-Host "  |  NATS JetStream  -->  http://localhost:8222     |" -ForegroundColor Cyan
+}
 Write-Host "  |  Trivy Scanner   -->  Embedded (/api/scans)     |" -ForegroundColor Green
 Write-Host "  |  Ollama LLM      -->  http://localhost:11434    |" -ForegroundColor Magenta
 Write-Host "  +-------------------------------------------------+" -ForegroundColor DarkGreen
