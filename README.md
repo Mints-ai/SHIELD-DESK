@@ -3,7 +3,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16.3.5-black?style=flat&logo=next.js)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19.2.8-blue?style=flat&logo=react)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Zero%20Errors-brightgreen?style=flat&logo=typescript)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/Tests-350%20Passed%20%7C%2051%20Suites-brightgreen?style=flat)]()
+[![Tests](https://img.shields.io/badge/Tests-350%2B%20Passed%20%7C%2052%20Suites-brightgreen?style=flat)]()
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql)](https://www.postgresql.org/)
 [![Sentry](https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry)](https://sentry.io/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
@@ -49,6 +49,10 @@
 ### 8. 4-Step Self-Service Enterprise Onboarding
 ![ShieldDesk Onboarding Wizard](docs/screenshots/onboarding-wizard.png)
 *Zero-friction organizational onboarding wizard generating tenant-scoped API keys, one-line universal PowerShell/Bash agent installation commands, and SaaS quota provisioning.*
+
+### 9. Enterprise Sign-In Gate & Operator Authentication
+![ShieldDesk Enterprise Sign-In Gate](docs/screenshots/sign-in-screen.png)
+*Distraction-free authentication portal featuring corporate credentials, hardware MFA / TOTP token verification, tenant onboarding links, and autonomous containment SLA consent governance.*
 
 ---
 
@@ -436,6 +440,11 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 | `GET`, `POST` | `/api/threats` | Authenticated tenant user | BFF gateway delegating to Go Threat Engine (:8003) for authoritative rules, 3σ baselines, and containment |
 | `POST` | `/api/ingest/webhooks` | HMAC / API Key | Validates signature, scrubs PII/secrets, and normalizes alerts into incidents |
 | `GET` | `/api/compliance` | Authenticated tenant user | Generates SOC 2, ISO 27001, and NIST CSF compliance posture reports |
+| `POST` | `/api/compliance/scan` | `compliance.scan` | Triggers multi-framework automated control scans (ISO 27001, SOC 2, NIST CSF, HIPAA, PCI-DSS) |
+| `POST` | `/api/compliance/verify` | Authenticated tenant user | Cryptographically validates control evidence Merkle hash-chain attestations |
+| `GET`, `POST` | `/api/compliance/control/[id]` | `compliance.read/audit` | Retrieves control evidence bundles, automated test telemetry, and auditor sign-offs |
+| `GET`, `POST` | `/api/compliance/policies` | `admin`, `auditor` | Manages organizational security policy vault entries and versioned signature hashes |
+| `GET`, `POST` | `/api/compliance/report` | Authenticated tenant user | Generates audit-ready compliance posture reports (JSON, CSV, PDF) |
 | `GET` | `/api/reports/scorecard` | Authenticated tenant user | Aggregates executive security risk scorecards |
 | `POST` | `/api/auth/login` | Public (Rate-limited) | Authenticates credentials, verifies MFA TOTP, sets secure session cookie |
 | `POST` | `/api/auth/signup` | Public (Rate-limited) | Provisions a new tenant organization and primary administrator |
@@ -501,6 +510,7 @@ ShieldDesk persists state across a resilient PostgreSQL schema designed with Row
 - **`phase_j_agent_license_activation.sql`**: Hardware fingerprint and license entitlement binding tables.
 - **`phase_k_yara_malware_rules.sql`**: YARA and Sigma detection rule definitions and tenant subscriptions.
 - **`phase_l_rbac_roles.sql`**: Unified 6-tier RBAC role definitions and fine-grained permissions matrix.
+- **`phase_l_compliance_vault.sql`**: Continuous multi-framework control catalog, tenant scan histories, evidence bundles, and cryptographic hash-chain verification logs.
 
 ---
 
@@ -580,7 +590,7 @@ cd services/threat && go run .             # Go Threat Engine (:8003)
 ShieldDesk maintains rigorous automated test suites across both TypeScript/Node.js (covering Phases A through L) and Go:
 
 ```bash
-# 1. Run TypeScript Test Suite (49 test suites across all phases)
+# 1. Run TypeScript Test Suite (350+ tests across 52 test suites)
 npm test
 
 # 2. Run Go Threat Engine Test Suite (6 tests, 100% passing)
@@ -593,6 +603,9 @@ npx tsc --noEmit
 
 ### Test Suite Highlights:
 - `services/threat/http_server_test.go` (6 tests): Health endpoint validation, tenant-isolated state containment, 60-second sliding-window anomaly calculation, HTTP containment block/unblock, cross-tenant isolation enforcement (`TestIsIPBlockedAndAlerts`), and detection engine pipeline.
+- `tests/compliance-api.test.ts` (6 tests): End-to-end multi-framework scan triggering, control evidence attachment, auditor sign-off, and policy vault operations.
+- `tests/compliance-export-integrity.test.ts` (5 tests): Cryptographic Merkle tree verification, SHA-256 tamper detection on exported evidence bundles, and RFC-4180 CSV compliance.
+- `tests/compliance-frameworks.test.ts` (4 tests): Multi-framework mapping validation across ISO 27001:2022, SOC 2 Type II, NIST CSF 2.0, HIPAA Security Rule, and PCI-DSS v4.0.
 - `tests/trivy.test.ts` (5 tests): Deterministic binary discovery, CWE-78 CLI flag injection prevention, nonexistent filesystem path guards, live filesystem scan execution, and container `/app` path normalization.
 - `tests/agent-remediation-api.test.ts` (6 tests): Remote agent command queueing, pre-flight snapshot requirements, kill-switch locking, and blast-radius throttle downgrade.
 - `tests/approval-tokens.test.ts` (7 tests): Tier 2 single approval, Tier 3 dual named SuperAdmin approval, anti-replay, and DB Separation of Duties constraints.
@@ -619,7 +632,7 @@ npx tsc --noEmit
 ```text
 shielddesk/
 ├── docs/
-│   ├── screenshots/               # Production UI walkthrough captures (Workspace & Scorecard)
+│   ├── screenshots/               # 9 Production UI walkthrough captures (Workspace, Scorecard, Matrix, etc.)
 │   ├── launch-gates/              # Public launch readiness gate documents (Pilot, OS matrix, Legal)
 │   ├── GAP_ANALYSIS.md            # Comprehensive spec-to-code gap matrix across Phases A–I
 │   ├── PRODUCTION_READINESS_AUDIT.md # Evidence-based readiness evaluation and capability statuses
@@ -642,7 +655,7 @@ shielddesk/
 │   │   │   ├── scim/              # RFC 7644 SCIM 2.0 enterprise identity provisioning (/v2/Users, /v2/Groups)
 │   │   │   ├── v1/                # Advanced engines (twin, decisions, remediation, compliance, ai)
 │   │   │   ├── ingest/            # Authenticated alert webhook ingest
-│   │   │   ├── compliance/        # Compliance posture reporting (SOC2, ISO27001)
+│   │   │   ├── compliance/        # Continuous audit routes (/control/[id], /policies, /report, /scan, /verify)
 │   │   │   └── reports/           # Executive risk scorecards
 │   │   ├── dashboard/             # SOC operational interfaces
 │   │   │   ├── tasks/             # Kanban board with tier-gated approvals
@@ -650,12 +663,13 @@ shielddesk/
 │   │   │   ├── fleet/             # Endpoint agent fleet manager
 │   │   │   ├── scanner/           # Live Trivy vulnerability & secret leak posture
 │   │   │   ├── threats/           # Threat detection & rule configuration
-│   │   │   ├── compliance/        # Regulatory framework scorecards
+│   │   │   ├── compliance/        # Multi-framework compliance matrix & audit vault
 │   │   │   └── risk-scorecard/    # Executive risk metrics & posture index
 │   │   ├── login/                 # Public login, tenant registration, & MFA gate (chat widget suppressed)
 │   │   ├── onboarding/            # 4-step guided organization & agent onboarding
 │   │   └── page.tsx               # Root SOC overview console (Incident Workspace)
-│   ├── components/                # React UI components (AI chat, governance, navigation)
+│   ├── components/                # React UI components (AI chat, governance, compliance modals, navigation)
+│   │   └── compliance/            # FrameworkSelector, ComplianceScanBanner, Evidence & Policy modals
 │   ├── proxy.ts                   # Edge security middleware: header spoofing defense & route guard
 │   └── lib/
 │       ├── auth/                  # HMAC session tokens, scrypt passwords, Supabase SSR, TOTP
@@ -666,7 +680,7 @@ shielddesk/
 │       ├── security-twin/         # PostgreSQL CTE graph queries & sync pipeline
 │       ├── decision-engine/       # Evidence Engine with SHA-256 hashes & decision records
 │       ├── verification-engine/   # Deterministic host verification & continuous recheck schedules
-│       ├── compliance/            # Merkle tree evidence vault & RFC-4180 export generator
+│       ├── compliance/            # Framework mappings (ISO/SOC2/NIST/HIPAA), scanners, verifiers, Merkle vaults
 │       ├── ai/                    # LLM Gateway, prompt registry, evaluation lab benchmark suite
 │       ├── gitleaks.ts            # Gitleaks secret scanner execution engine & parser
 │       ├── trivy.ts               # Aqua Trivy vulnerability scanner execution engine & parser
@@ -692,9 +706,9 @@ shielddesk/
 │   └── llm-gateway/               # Prompt versioning & AI evaluation harness
 ├── db/
 │   ├── schema.sql                 # Core DDL: 20 tables, constraints, RLS policies
-│   ├── migrations/                # 13 Phase migrations (launch_readiness_001 to phase_l_rbac_roles)
+│   ├── migrations/                # 14 Phase migrations (launch_readiness_001 to phase_l_compliance_vault)
 │   └── seed.sql                   # Endpoint agent, incident, and audit fixtures
-├── tests/                         # Node.js native test harness (49 test suites covering phases A–L)
+├── tests/                         # Node.js native test harness (350+ tests across 52 test suites)
 ├── sentry.client.config.ts        # Client Sentry error and performance monitoring
 ├── sentry.server.config.ts        # Server Sentry error tracking
 ├── sentry.edge.config.ts          # Edge Sentry error tracking
