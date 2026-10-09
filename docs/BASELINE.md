@@ -14,7 +14,7 @@
 | Pipeline Component | Command Executed | Exit Code | Result Summary | Status |
 | :--- | :--- | :---: | :--- | :--- |
 | **TypeScript Typecheck** | `npx tsc --noEmit` | **0** | Zero type errors across all server and client files | **PASS (GREEN)** |
-| **Node Test Suite** | `npm test` (`tsx --test "tests/*.test.ts"`) | **0** | **303 passing**, 0 failing, 1 skipped (42 suites, 7.05s) | **PASS (GREEN)** |
+| **Node Test Suite** | `npm test` (`tsx --test "tests/*.test.ts"`) | **0** | **350 passing**, 0 failing, 1 skipped (51 suites, 7.5s) | **PASS (GREEN)** |
 | **Go Static Analysis** | `go vet ./...` (in `agent/`) | **0** | Clean, zero vet errors | **PASS (GREEN)** |
 | **Go Handler & Agent Tests** | `go test -v ./...` (in `agent/`) | **0** | **12/12 passing** (crypto, handlers, telemetry) | **PASS (GREEN)** |
 | **Go Agent Binary Build** | `go build -v ./...` (in `agent/`) | **0** | Universal endpoint agent compiled cleanly | **PASS (GREEN)** |
@@ -40,13 +40,13 @@
 
 ---
 
-## 3. Comprehensive Test Suite Breakdown (303 Tests Passing)
+## 3. Comprehensive Test Suite Breakdown (350 Tests Passing)
 
-The test suite executed 42 suites containing **304 tests**:
-- **Passing:** 303
+The test suite executed 51 suites containing **351 tests**:
+- **Passing:** 350
 - **Failing:** 0
 - **Skipped:** 1 (Host-dependent Trivy binary scan on Windows host without Trivy)
-- **Duration:** 7.05 seconds
+- **Duration:** 7.5 seconds
 
 ### Verified Test Suites:
 1. `tests/agent-capabilities-and-replay-defense.test.ts` — 5/5 passing

@@ -15,7 +15,7 @@ This report delivers the authoritative production-readiness attestation for Shie
 
 Across comprehensive static analysis, AST compilation, cryptographic validation, and end-to-end automated testing:
 - **TypeScript Typecheck:** 0 errors across entire workspace (`npx tsc --noEmit`).
-- **Node.js Automated Test Suite:** **303 passed**, 0 failed, 1 skipped across 42 test suites (`npm test`).
+- **Node.js Automated Test Suite:** **350 passed**, 0 failed, 1 skipped across 51 test suites (`npm test`).
 - **Go Endpoint Agent:** **12/12 passed**, 0 failed (`go test -v ./...`), clean compilation (`go build`).
 - **Python Microservices:** 100% clean AST compilation across all 18 microservice packages (`python -m compileall services/`).
 - **Next.js Production Build:** Clean production bundle with **60 routes compiled** (`npx next build`).
@@ -46,7 +46,7 @@ The platform satisfies all baseline security invariants: strict multi-tenant iso
   - `decision-engine`, `policy-engine`, `verification-engine`, `rollback-engine`
   - `security-twin`, `attack-path`, `blast-radius`, `evidence-vault`
   - `llm-gateway`, `connectors` (Wazuh, CrowdStrike Falcon, MS Defender, Sentinel)
-- **Total Automated Test Suites:** 42 suites, 303 discrete test cases in `tests/`.
+- **Total Automated Test Suites:** 51 suites, 350 discrete test cases in `tests/`.
 
 ---
 
@@ -55,7 +55,7 @@ The platform satisfies all baseline security invariants: strict multi-tenant iso
 | Pipeline Stage | Command | Result | Duration | Artifacts / Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | **Type Check** | `npx tsc --noEmit` | **PASS (0 errors)** | 3.2s | Clean strict TypeScript evaluation |
-| **Node.js Tests** | `npm test` | **PASS (303 passed, 0 failed, 1 skipped)** | 7.05s | 42 test files executing in parallel |
+| **Node.js Tests** | `npm test` | **PASS (350 passed, 0 failed, 1 skipped)** | 7.5s | 51 test suites executing in parallel |
 | **Go Agent Unit Tests** | `go test -v ./...` | **PASS (12 passed, 0 failed)** | 0.8s | Package `pkg/runner` & agent core |
 | **Go Agent Build** | `go build ./...` | **PASS (Binary compiled)** | 1.1s | Statically compiled Go executable |
 | **Python Services** | `python -m compileall services/` | **PASS (0 syntax errors)** | 0.4s | 18 service packages validated |

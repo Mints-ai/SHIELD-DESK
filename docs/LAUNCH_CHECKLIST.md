@@ -12,7 +12,7 @@
 | Gate ID | Area | Critical Control | Status | Automated Attestation / Proof |
 | :---: | :--- | :--- | :---: | :--- |
 | **G-01** | **Build & Types** | Zero TypeScript compilation errors (`tsc --noEmit`) | `PASS` | `npx tsc --noEmit` exits 0 clean |
-| **G-02** | **Test Suite** | Node.js comprehensive test suite (42 suites, 303 tests) | `PASS` | `npm test` -> 303 passed, 0 failed |
+| **G-02** | **Test Suite** | Node.js comprehensive test suite (51 suites, 350 tests) | `PASS` | `npm test` -> 350 passed, 0 failed |
 | **G-03** | **Endpoint Agent** | Universal Go agent compilation & unit tests | `PASS` | `go test -v ./...` (12/12) & `go build` clean |
 | **G-04** | **Microservices** | Python microservice syntax & AST validation | `PASS` | `python -m compileall services/` clean |
 | **G-05** | **Frontend Production** | Next.js 16 SSR & Turbopack production bundle | `PASS` | `npx next build` -> 60 routes compiled |
@@ -32,7 +32,7 @@
 ## 2. Deployment Runbook & Final Sign-Off
 
 1. **Pre-Deployment:**
-   - [x] All 303 automated tests pass.
+   - [x] All 350 automated tests pass.
    - [x] Environment variable schema strictly enforced (`src/config/schema.ts`).
    - [x] Database migrations verified against target PostgreSQL instance.
 2. **Deployment Execution:**

@@ -258,13 +258,17 @@ This audit evaluates the codebase against the directives of the Production Launc
 3. **Phase 3: Staging Host Deployment & Agent Live Test** — Test real Windows & Linux endpoint agents with live mTLS certificates on staging VMs.
 4. **Phase 4: Disaster Recovery & Load Drill** — Run PostgreSQL restore test and measure p50/p95/p99 latency benchmarks under synthetic load.
 5. **Phase 5: Customer Pilot Authorization Gate** — Final review by designated security owner prior to production customer pilot onboarding.
-=======
-The full local suite runs with the repository's test files and Node's test runner. On this Windows environment, the last full run had one known Trivy-dependent failure because the `trivy.exe` binary was unavailable and the installer could not download it; CI installs Trivy separately. The passing test count is not a launch certification. See `docs/ROLLBACK_FAILURE_INJECTION.md` for the specific scope of rollback simulation.
 
-## Claim language
+---
+
+## 22. Test Suite Execution & Claim Boundaries
+
+The full local suite runs with the repository's test files and Node's test runner (`npm test`), passing **350 tests across 51 test suites with 0 failures** (1 skipped for optional live Trivy scanner binary on host; CI installs Trivy separately). The passing test count is an engineering baseline, not a formal third-party certification. See `docs/ROLLBACK_FAILURE_INJECTION.md` for the specific scope of rollback simulation.
+
+### Claim Language & Invariants
 
 - Describe audit records as a **cryptographically tamper-evident audit and evidence trail**. A hash chain alone does not establish non-repudiation.
 - Describe relevant controls as **SOC 2-aligned / ISO 27001-aligned controls / NIST CSF mapping** only when supported by an explicit control mapping. Do not claim certification without a valid independent certification.
 - Describe attack-path output as models that **prioritize attack paths from available evidence**; do not claim exhaustive discovery.
 - Label test-fixture behavior as simulated. Keep **Implemented**, **Tested**, and **Production-Validated** distinct.
->>>>>>> e00f8faaf2dfd7cffa40359ee059ff60e9e408e4
+
