@@ -117,7 +117,12 @@ describe("Trivy Vulnerability Scanner Suite", () => {
     }
   });
 
-  test("Chatbot RBAC: Routes Trivy scan query with role-based formatting and scanner redirection", async () => {
+  test("Chatbot RBAC: Routes Trivy scan query with role-based formatting and scanner redirection", async (t) => {
+    if (!isTrivyAvailable()) {
+      t.skip("Skipping chatbot live scan RBAC test: Trivy scanner binary not installed on host.");
+      return;
+    }
+
     // 1. Test as Admin
     const reqAdmin = new NextRequest("http://localhost:3000/api/chat", {
       method: "POST",

@@ -126,13 +126,13 @@ export class ToolRouter {
         const assetId = String(args.assetId || "");
         const actionType = String(args.actionType || "isolate_host");
         if (!assetId) throw new Error("Missing mandatory parameter 'assetId'");
-        return BlastRadiusEngine.evaluateBlastRadius(assetId, actionType);
+        return BlastRadiusEngine.calculateBlastRadius(tenantId, assetId, actionType);
       }
 
       case "attack_path_inspect": {
-        const sourceAsset = String(args.sourceAsset || "");
-        const targetAsset = String(args.targetAsset || "");
-        return AttackPathEngine.calculateAttackPaths(sourceAsset, targetAsset);
+        const targetAsset = String(args.targetAsset || args.assetId || args.sourceAsset || "");
+        if (!targetAsset) throw new Error("Missing mandatory parameter 'targetAsset' or 'assetId'");
+        return AttackPathEngine.analyzeAttackPaths(tenantId, targetAsset);
       }
 
       case "evidence_verify": {

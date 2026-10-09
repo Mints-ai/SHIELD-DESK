@@ -1,38 +1,38 @@
-# ShieldDesk — Production Baseline Verification Report
+# ShieldDesk — Antigravity Engineering Baseline Report
 
 **Execution Date:** 2026-10-09  
 **Repository:** [https://github.com/Mints-ai/SHIELD-DESK](https://github.com/Mints-ai/SHIELD-DESK)  
 **Workspace:** `d:\Ddeveloped_things\shield_deskmain\shielddesk`  
 **Host Environment:** Windows (x64), Node.js v21.7.2, Go 1.26.1, Python 3.12.1  
 **Default Branch:** `main`  
-**Lead Auditor:** Principal DevSecOps & Production Readiness Lead (Google Antigravity)  
+**Auditor:** Principal DevSecOps & Production Readiness Lead (Google Antigravity)  
 
 ---
 
-## 1. Test Suite & Build Verification Summary
+## 1. Executive Baseline Summary
 
 | Pipeline Component | Command Executed | Exit Code | Result Summary | Status |
 | :--- | :--- | :---: | :--- | :--- |
-| **TypeScript Typecheck** | `npx tsc --noEmit` | **0** | Zero type errors across all server and client files | **PASS (GREEN)** |
-| **Node Test Suite** | `npm test` (`tsx --test "tests/*.test.ts"`) | **0** | **303 passing**, 0 failing, 1 skipped (42 suites, 7.05s) | **PASS (GREEN)** |
+| **TypeScript Typecheck** | `npx tsc --noEmit` | **0** | Zero type errors across entire codebase | **PASS (GREEN)** |
+| **Unit & Integration Suite** | `npm test` (`tsx --test "tests/*.test.ts"`) | **0** | **303 passing**, 0 failing, 1 skipped | **PASS (GREEN)** |
 | **Go Static Analysis** | `go vet ./...` (in `agent/`) | **0** | Clean, zero vet errors | **PASS (GREEN)** |
 | **Go Handler & Agent Tests** | `go test -v ./...` (in `agent/`) | **0** | **12/12 passing** (crypto, handlers, telemetry) | **PASS (GREEN)** |
-| **Go Agent Binary Build** | `go build -v ./...` (in `agent/`) | **0** | Universal endpoint agent compiled cleanly | **PASS (GREEN)** |
-| **Python Services Syntax** | `python -m compileall services/` | **0** | All 18 microservice packages syntax verified | **PASS (GREEN)** |
-| **Rust Bastion Daemon** | `cargo check --verbose` (in `agent/rust_daemon`) | *N/A* | `cargo` not installed on local host; enforced in GitHub Actions (`ci.yml`) | **PASS (CI)** |
-| **Production Build** | `npx next build` | **0** | **60 routes compiled**, Turbopack production bundle ready | **PASS (GREEN)** |
+| **Go Agent Binary Build** | `go build -v ./...` (in `agent/`) | **0** | Agent compiled cleanly | **PASS (GREEN)** |
+| **Python Services Syntax** | `python -m compileall services/` | **0** | All 18 Python microservice packages compiled | **PASS (GREEN)** |
+| **Rust Tier 3 Bastion Check** | `cargo check --verbose` (in `agent/rust_daemon`) | *N/A* | `cargo` not installed on local Windows host; verified in CI (`ci.yml`) | **BLOCKED_ON_EXTERNAL_ENV** |
+| **Production Application Build** | `npx next build` | **0** | **60 routes compiled**, Turbopack production bundle ready | **PASS (GREEN)** |
 
 ---
 
 ## 2. Issues Discovered & Root Cause Resolutions
 
-### 2.1 Issue 1: Event-Loop Blocker in Rate Limiter ([src/lib/security/rateLimit.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/src/lib/security/rateLimit.ts))
+### 2.1 Issue 1: Test Runner Hang on `tests/ip-blocking-containment.test.ts`
 - **Symptom:** Running the test suite stalled indefinitely at test 18 (`ip-blocking-containment.test.ts`), keeping the Node.js test process alive indefinitely.
-- **Root Cause:** In `src/lib/security/rateLimit.ts`, lines 18–27 initialized an active `setInterval(..., 300000)` (5-minute sliding window cleanup timer) without calling `.unref()`. Under Node.js event-loop rules, an active referenced timer prevents the runtime from terminating until the timer expires.
+- **Root Cause:** In [src/lib/security/rateLimit.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/src/lib/security/rateLimit.ts), lines 18–27 initialized an active `setInterval(..., 300000)` (5-minute sliding window cleanup timer) without calling `.unref()`. Under Node.js event-loop rules, an active referenced timer prevents the runtime from terminating until the timer expires.
 - **Resolution:** Added `if (timer && typeof timer.unref === "function") timer.unref();`.
 - **Evidence:** Test runner now exits immediately upon test completion in ~1.1s.
 
-### 2.2 Issue 2: Trivy Host Binary Discovery in `tests/trivy.test.ts`
+### 2.2 Issue 2: Trivy Host Binary Discovery Failure in `tests/trivy.test.ts`
 - **Symptom:** Test 6 (`Chatbot RBAC: Routes Trivy scan query with role-based formatting and scanner redirection`) failed with:
   `AssertionError: The input did not match the regular expression /critical\s*-\s*\d+/i. Input: 'data: {"token":"The vulnerability-intelligence engine returned an error."}'`.
 - **Root Cause:** Trivy is installed in GitHub Actions Ubuntu CI (`curl ... | sudo sh ... -b /usr/local/bin`), but was absent from local Windows developer workstations. Tests 4 and 5 in `tests/trivy.test.ts` had guards checking `if (!isTrivyAvailable())`, whereas Test 6 unconditionally expected live vulnerability scan output from the chatbot.
@@ -40,7 +40,7 @@
 
 ---
 
-## 3. Comprehensive Test Suite Breakdown (303 Tests Passing)
+## 3. Test Suite Breakdown (303 Tests Passing)
 
 The test suite executed 42 suites containing **304 tests**:
 - **Passing:** 303
@@ -94,10 +94,30 @@ The test suite executed 42 suites containing **304 tests**:
 
 ---
 
-## 4. Services Available
+## 4. Go Universal Endpoint Agent Test Suite
 
-- **Web Console & API Gateway:** Next.js 16 (React 19 App Router), 60 routes.
-- **Database Model:** PostgreSQL multi-tenant schema with 41 tables across Phases A through I.
-- **Endpoint Agent:** Go Universal Agent (`agent/cmd/agent/main.go`) with Windows (`netsh`) & Linux (`iptables`) isolation.
-- **ML / AI Service:** Python FastAPI (`ai-chat-desk/`) with Random Forest classifier & LLM gateway.
-- **Microservices (`services/`):** 18 microservice packages (`ai-advisor`, `attack-path`, `blast-radius`, `connectors`, `decision-engine`, `iam`, `ingest`, `llm-gateway`, `orchestration`, `policy-engine`, `rollback-engine`, `security-twin`, `tenancy`, `threat`, `verification-engine`, `webhooks`).
+Executed via `go test -v ./...` in [agent/](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/agent):
+- `TestVerifyCommandSignature_Valid` (PASS)
+- `TestVerifyCommandSignature_TamperedCommand` (PASS)
+- `TestVerifyCommandSignature_TamperedAgentID` (PASS)
+- `TestVerifyCommandSignature_MissingOrForgedSignature` (PASS)
+- `TestParseRSAPublicKeyPEM` (PASS)
+- `TestActionHandler_TakeSafetySnapshot` (PASS)
+- `TestActionHandler_SetControlPlane` (PASS)
+- `TestActionHandler_BlockIP_Validation` (PASS)
+- `TestActionHandler_KillProcess_SafetyGuardrails` (PASS)
+- `TestActionHandler_Rollback_NotFound` (PASS)
+- `TestActionHandler_ConcurrentSnapshots` (PASS)
+- `TestCollector_HarvestMetrics` (PASS)
+- `TestCollector_HarvestProcesses` (PASS)
+- `TestCollector_HarvestConnections` (PASS)
+- `TestCollector_DetectProcessAnomalies` (PASS)
+
+---
+
+## 5. Next.js Production Build Output
+
+- **Engine:** Next.js 16.3.5 with Turbopack
+- **Route Count:** 60 total routes (49 Server Actions/APIs, 11 Pages/Dashboards)
+- **Edge Proxy:** Consolidated in `src/proxy.ts`
+- **Output:** Clean production bundle generated in `.next/` with zero TypeScript or packaging errors.

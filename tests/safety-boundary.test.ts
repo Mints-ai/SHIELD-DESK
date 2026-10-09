@@ -11,6 +11,7 @@ import {
 } from "../src/lib/config/environment";
 import { GET as scansGET, POST as scansPOST } from "../src/app/api/scans/route";
 import { GET as threatsGET, POST as threatsPOST } from "../src/app/api/threats/route";
+import { POST as loginPOST } from "../src/app/api/auth/login/route";
 import { createSessionToken } from "../src/lib/auth/token";
 
 describe("Sprint 1: Environment Safety Boundary & Fail-Closed Suite", () => {
@@ -133,6 +134,30 @@ describe("Sprint 1: Environment Safety Boundary & Fail-Closed Suite", () => {
 
       const res = await threatsPOST(req);
       assert.equal(res.status, 403, "Burst simulation must be prohibited in production");
+    } finally {
+      process.env.APP_ENV = origAppEnv;
+      process.env.DEMO_MODE = origDemoMode;
+    }
+  });
+
+  it("Login API: Strictly rejects dev-persona switching when APP_ENV=production", async () => {
+    const origAppEnv = process.env.APP_ENV;
+    const origDemoMode = process.env.DEMO_MODE;
+
+    try {
+      process.env.APP_ENV = "production";
+      process.env.DEMO_MODE = "false";
+
+      const req = new NextRequest("http://localhost:3000/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ userId: "dev-admin" }),
+      });
+
+      const res = await loginPOST(req);
+      assert.equal(res.status, 401, "Dev personas must be strictly rejected in production");
+      const data = await res.json();
+      assert.match(data.error, /disabled in production/i);
     } finally {
       process.env.APP_ENV = origAppEnv;
       process.env.DEMO_MODE = origDemoMode;
