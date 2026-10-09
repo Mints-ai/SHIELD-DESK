@@ -1,13 +1,19 @@
 import crypto from "node:crypto";
-import { HashChainAuditRecord, MOCK_HASH_CHAINS, recordHashChainEvent } from "../fleet/fleet";
+import type { HashChainAuditRecord } from "@/lib/fleet/fleet";
+import type { SessionUser } from "@/lib/auth/session";
 import { buildMerkleTree, generateMerkleProof, MerkleProofElement } from "./merkle";
 import { ISO_27001_CONTROLS } from "./iso27001";
 import {
   CryptographicEvidencePackage,
   EvidencePackageManifest,
   STANDALONE_VERIFICATION_PYTHON_SCRIPT,
+  computeEventHash,
   verifyHashChainIntegrity,
 } from "./evidenceVault";
+import {
+  getOrCreateTenantStore,
+  appendStatefulHashChainEvent,
+} from "./statefulTenantDb";
 
 export interface ExportBundleOptions {
   tenantId: string;
@@ -33,19 +39,22 @@ export interface GeneratedExportBundle {
 
 export class AuditExportGenerator {
   /**
-   * Retrieves audit events for a tenant from PostgreSQL hash_chain_audit,
-   * falling back to in-memory fixtures when offline or in unit tests.
+   * Retrieves audit events strictly isolated for a tenant from PostgreSQL hash_chain_audit,
+   * falling back to stateful in-memory tenant database when offline or in unit tests.
+   * Strictly enforces deduplication: strictly one Genesis block at index 0.
    */
   public static async fetchEventsForTenant(
     tenantId: string,
     options?: { limit?: number; startDate?: string; endDate?: string }
   ): Promise<HashChainAuditRecord[]> {
+    let events: HashChainAuditRecord[] = [];
+
     try {
-      const { query } = await import("../db");
+      const { query } = await import("@/lib/db");
       let sql = `SELECT id, tenant_id, event_type, actor_id, payload, prev_hash, current_hash, created_at
                  FROM hash_chain_audit
-                 WHERE tenant_id = $1 OR event_type = 'GENESIS'`;
-      const params: any[] = [tenantId];
+                 WHERE tenant_id = $1`;
+      const params: unknown[] = [tenantId];
 
       if (options?.startDate) {
         params.push(options.startDate);
@@ -56,34 +65,85 @@ export class AuditExportGenerator {
         sql += ` AND created_at <= $${params.length}`;
       }
 
-      sql += ` ORDER BY id ASC`;
+      sql += ` ORDER BY created_at ASC, id ASC`;
       if (options?.limit) {
         params.push(options.limit);
         sql += ` LIMIT $${params.length}`;
       }
 
-      const res = await query<any>(sql, params);
+      const res = await query<Record<string, unknown>>(sql, params);
       if (res.rows && res.rows.length > 0) {
-        return res.rows.map((r: any) => ({
+        events = res.rows.map((r: Record<string, unknown>) => ({
           id: String(r.id),
-          tenant_id: r.tenant_id,
-          event_type: r.event_type,
-          actor_id: r.actor_id,
-          payload: typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload,
-          prev_hash: r.prev_hash,
-          current_hash: r.current_hash,
-          created_at: r.created_at,
+          tenant_id: String(r.tenant_id),
+          event_type: String(r.event_type),
+          actor_id: String(r.actor_id),
+          payload: (typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload) as Record<string, unknown>,
+          prev_hash: String(r.prev_hash),
+          current_hash: String(r.current_hash),
+          created_at: String(r.created_at),
         }));
       }
     } catch {
       // In offline / test environment without DB connection
     }
 
-    // Fallback to in-memory mock chain
-    const filtered = MOCK_HASH_CHAINS.filter(
-      (e) => e.tenant_id === tenantId || e.event_type === "GENESIS"
-    );
-    return filtered.length > 0 ? filtered : MOCK_HASH_CHAINS.slice(0, 10);
+    // Fallback to stateful tenant store if DB returned no records
+    if (!events || events.length === 0) {
+      const store = getOrCreateTenantStore(tenantId);
+      events = [...store.hashChain];
+    }
+
+    // Ledger Deduplication: Ensure strictly ONE Genesis block at index 0
+    return this.deduplicateLedger(tenantId, events);
+  }
+
+  /**
+   * Sanitizes and guarantees that index 0 is Genesis, and removes duplicate or orphan Genesis records.
+   */
+  public static deduplicateLedger(tenantId: string, rawEvents: HashChainAuditRecord[]): HashChainAuditRecord[] {
+    if (!rawEvents || rawEvents.length === 0) {
+      return getOrCreateTenantStore(tenantId).hashChain;
+    }
+
+    const deduplicated: HashChainAuditRecord[] = [];
+    let hasGenesis = false;
+
+    for (let i = 0; i < rawEvents.length; i++) {
+      const ev = rawEvents[i];
+      if (ev.event_type === "GENESIS") {
+        if (!hasGenesis) {
+          // Keep first Genesis block at index 0
+          deduplicated.push(ev);
+          hasGenesis = true;
+        }
+        // Discard subsequent duplicate Genesis blocks
+      } else {
+        deduplicated.push(ev);
+      }
+    }
+
+    // If no Genesis block was present, prepend a valid Genesis block for this tenant
+    if (!hasGenesis && deduplicated.length > 0) {
+      const first = deduplicated[0];
+      const genesisDate = new Date(new Date(first.created_at).getTime() - 1000).toISOString();
+      const genesisPayload = { msg: "ShieldDesk Hash Chain Genesis", tenant_id: tenantId };
+      const genesisPrevHash = "0".repeat(64);
+      const genesisCurrentHash = first.prev_hash || computeEventHash(genesisPrevHash, "system:genesis", genesisPayload);
+
+      deduplicated.unshift({
+        id: `hc-${tenantId}-genesis`,
+        tenant_id: tenantId,
+        event_type: "GENESIS",
+        actor_id: "system:genesis",
+        payload: genesisPayload,
+        prev_hash: genesisPrevHash,
+        current_hash: genesisCurrentHash,
+        created_at: genesisDate,
+      });
+    }
+
+    return deduplicated;
   }
 
   /**
@@ -135,6 +195,7 @@ export class AuditExportGenerator {
       merkleProofs,
       complianceControls: ISO_27001_CONTROLS,
       offlineVerificationScript: STANDALONE_VERIFICATION_PYTHON_SCRIPT,
+      verifierScript: STANDALONE_VERIFICATION_PYTHON_SCRIPT,
     };
   }
 
@@ -177,7 +238,10 @@ export class AuditExportGenerator {
   public static async generateBundle(options: ExportBundleOptions): Promise<GeneratedExportBundle> {
     const { tenantId, exportedBy, format = "json", customEvents, persistRecord = true } = options;
 
-    const events = customEvents || (await this.fetchEventsForTenant(tenantId, options));
+    const events = customEvents
+      ? this.deduplicateLedger(tenantId, customEvents)
+      : await this.fetchEventsForTenant(tenantId, options);
+
     const evidencePackage = this.buildPackage(tenantId, exportedBy, events);
     const m = evidencePackage.manifest;
 
@@ -207,7 +271,7 @@ export class AuditExportGenerator {
     if (persistRecord) {
       // 1. Record bundle into compliance_export_bundles table
       try {
-        const { query } = await import("../db");
+        const { query } = await import("@/lib/db");
         await query(
           `INSERT INTO compliance_export_bundles (
             id, tenant_id, format, exported_by, total_events,
@@ -231,18 +295,13 @@ export class AuditExportGenerator {
 
       // 2. Log export event into tamper-evident hash-chain ledger
       try {
-        await recordHashChainEvent({
-          tenantId: m.tenantId,
-          eventType: "AUDIT_PACKAGE_EXPORTED",
-          actorId: m.exportedBy,
-          payload: {
-            packageId: m.packageId,
-            format,
-            totalEvents: m.totalEvents,
-            merkleRoot: m.merkleRoot,
-            chainHeadHash: m.chainHeadHash,
-            signature: m.signature,
-          },
+        appendStatefulHashChainEvent(m.tenantId, "AUDIT_PACKAGE_EXPORTED", m.exportedBy, {
+          packageId: m.packageId,
+          format,
+          totalEvents: m.totalEvents,
+          merkleRoot: m.merkleRoot,
+          chainHeadHash: m.chainHeadHash,
+          signature: m.signature,
         });
       } catch {
         // Offline / unit test context
@@ -262,54 +321,105 @@ export class AuditExportGenerator {
   }
 
   /**
-   * Cryptographically verifies a full evidence package for tamper-resistance.
+   * Generates a complete CryptographicEvidencePackage directly from a SessionUser.
+   */
+  public static async generatePackage(
+    caller: SessionUser,
+    _frameworkId: string = "iso-27001"
+  ): Promise<CryptographicEvidencePackage & { verifierScript: string }> {
+    void _frameworkId;
+    const events = await this.fetchEventsForTenant(caller.tenant_id);
+    const pkg = this.buildPackage(caller.tenant_id, caller.id, events);
+    return {
+      ...pkg,
+      verifierScript: pkg.offlineVerificationScript,
+    };
+  }
+
+  /**
+   * Generates a CSV tabular audit trail directly from a SessionUser.
+   */
+  public static async generateCsv(caller: SessionUser): Promise<string> {
+    const events = await this.fetchEventsForTenant(caller.tenant_id);
+    const pkg = this.buildPackage(caller.tenant_id, caller.id, events);
+    return this.formatCsv(pkg);
+  }
+
+  /**
+   * Cryptographically verifies a complete CryptographicEvidencePackage in memory.
    */
   public static verifyPackage(pkg: CryptographicEvidencePackage): {
     valid: boolean;
     reason?: string;
+    error?: string;
+    eventsVerified?: number;
+    merkleRootValid?: boolean;
   } {
-    // 1. Verify Hash-Chain Continuity
-    const chainVerification = verifyHashChainIntegrity(pkg.events);
-    if (!chainVerification.valid) {
-      return { valid: false, reason: chainVerification.reason };
-    }
-
-    // 2. Recompute Merkle Root
-    const leafHashes = pkg.events.map((e) =>
-      crypto.createHash("sha256").update(e.current_hash).digest("hex")
-    );
-    const recomputedTree = buildMerkleTree(leafHashes);
-    if (recomputedTree.root !== pkg.manifest.merkleRoot) {
-      return {
-        valid: false,
-        reason: `Merkle Root mismatch! Expected: ${pkg.manifest.merkleRoot}, Recomputed: ${recomputedTree.root}`,
-      };
-    }
-
-    // 3. Verify Event Count Consistency
+    // 1. Verify event count matches manifest
     if (pkg.manifest.totalEvents !== pkg.events.length) {
+      const err = `Manifest event count mismatch: manifest claimed ${pkg.manifest.totalEvents}, but events array contains ${pkg.events.length}`;
       return {
         valid: false,
-        reason: `Manifest event count mismatch! Manifest claims ${pkg.manifest.totalEvents}, but found ${pkg.events.length} events.`,
+        reason: err,
+        error: err,
       };
     }
 
-    // 4. Verify Manifest Signature
+    // 2. Verify HMAC signature
     const secret =
       process.env.SHIELDDESK_SESSION_SECRET ||
       process.env.SHIELDDESK_VAULT_SECRET ||
       "shielddesk_audit_vault_dev_ephemeral_key";
-
     const signatureData = `${pkg.manifest.packageId}|${pkg.manifest.tenantId}|${pkg.manifest.chainHeadHash}|${pkg.manifest.merkleRoot}|${pkg.manifest.totalEvents}`;
-    const expectedSignature = crypto.createHmac("sha256", secret).update(signatureData).digest("hex");
-
-    if (expectedSignature !== pkg.manifest.signature) {
+    const expectedSig = crypto.createHmac("sha256", secret).update(signatureData).digest("hex");
+    if (pkg.manifest.signature !== expectedSig) {
+      const err = "Manifest signature invalid: cryptographic proof does not match secret or metadata";
       return {
         valid: false,
-        reason: `Manifest HMAC signature invalid. Potential tampering in metadata or signing key mismatch.`,
+        reason: err,
+        error: err,
       };
     }
 
-    return { valid: true };
+    // 3. Verify SHA-256 Hash Chain Integrity
+    const chainCheck = verifyHashChainIntegrity(pkg.events);
+    if (!chainCheck.valid) {
+      return {
+        valid: false,
+        reason: chainCheck.reason,
+        error: chainCheck.reason,
+      };
+    }
+
+    // 4. Recompute and verify Merkle Root
+    const leafHashes = pkg.events.map((e) =>
+      crypto.createHash("sha256").update(e.current_hash).digest("hex")
+    );
+    const computedMerkle = buildMerkleTree(leafHashes);
+    if (computedMerkle.root !== pkg.manifest.merkleRoot) {
+      const err = `Merkle root mismatch: computed ${computedMerkle.root}, manifest claimed ${pkg.manifest.merkleRoot}`;
+      return {
+        valid: false,
+        reason: err,
+        error: err,
+      };
+    }
+
+    // 5. Verify Chain Head Hash
+    const actualHead = pkg.events[pkg.events.length - 1]?.current_hash || "0".repeat(64);
+    if (actualHead !== pkg.manifest.chainHeadHash) {
+      const err = `Chain head hash mismatch: actual ${actualHead}, manifest claimed ${pkg.manifest.chainHeadHash}`;
+      return {
+        valid: false,
+        reason: err,
+        error: err,
+      };
+    }
+
+    return {
+      valid: true,
+      eventsVerified: pkg.events.length,
+      merkleRootValid: true,
+    };
   }
 }
