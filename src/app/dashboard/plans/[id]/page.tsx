@@ -52,7 +52,12 @@ interface MitigationPlanData {
 export default function PlanViewerPage() {
   const params = useParams();
   const planId = params?.id as string;
-  const { activeUserId, openChatWithPrompt } = useChat();
+  const { activeUserId, activeUser, openChatWithPrompt } = useChat();
+  const canSignOff = (tier: string) => {
+    if (activeUser.role === "system_admin" || activeUser.role === "super_admin") return true;
+    if (activeUser.role === "responder") return tier === "Tier 1" || tier === "Tier 2";
+    return false;
+  };
 
   const [data, setData] = useState<MitigationPlanData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -290,7 +295,7 @@ export default function PlanViewerPage() {
                       <span className="flex items-center gap-1 text-[var(--sd-pine)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approved
                       </span>
-                    ) : (
+                    ) : canSignOff(t.tier) ? (
                       <button
                         onClick={() => handleRequestApproval(t)}
                         disabled={actionLoadingId === t.id}
@@ -299,6 +304,10 @@ export default function PlanViewerPage() {
                         <Lock className="h-3 w-3" />
                         <span>Sign Off Action</span>
                       </button>
+                    ) : (
+                      <span className="text-[11px] font-mono text-[var(--sd-text-dim)] italic">
+                        {activeUser.role === "analyst" ? "View Only · Awaiting Sign-off" : "Tier 3 requires Admin Sign-off"}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -353,7 +362,7 @@ export default function PlanViewerPage() {
                       <span className="flex items-center gap-1 text-[var(--sd-pine)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approved
                       </span>
-                    ) : (
+                    ) : canSignOff(t.tier) ? (
                       <button
                         onClick={() => handleRequestApproval(t)}
                         disabled={actionLoadingId === t.id}
@@ -362,6 +371,10 @@ export default function PlanViewerPage() {
                         <Lock className="h-3 w-3" />
                         <span>Sign Off Action</span>
                       </button>
+                    ) : (
+                      <span className="text-[11px] font-mono text-[var(--sd-text-dim)] italic">
+                        {activeUser.role === "analyst" ? "View Only · Awaiting Sign-off" : "Tier 3 requires Admin Sign-off"}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -411,7 +424,7 @@ export default function PlanViewerPage() {
                       <span className="flex items-center gap-1 text-[var(--sd-pine)] font-medium text-[11px]">
                         <CheckCircle2 className="h-3.5 w-3.5" /> Approved
                       </span>
-                    ) : (
+                    ) : canSignOff(t.tier) ? (
                       <button
                         onClick={() => handleRequestApproval(t)}
                         disabled={actionLoadingId === t.id}
@@ -420,6 +433,10 @@ export default function PlanViewerPage() {
                         <Lock className="h-3 w-3" />
                         <span>Sign Off Action</span>
                       </button>
+                    ) : (
+                      <span className="text-[11px] font-mono text-[var(--sd-text-dim)] italic">
+                        {activeUser.role === "analyst" ? "View Only · Awaiting Sign-off" : "Tier 3 requires Admin Sign-off"}
+                      </span>
                     )}
                   </div>
                 </div>

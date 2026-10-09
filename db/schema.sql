@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS mitigation_tasks (
   status        text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'in_progress', 'completed')),
   blast_radius  text,
   cve_id        text,
+  assigned_to   text REFERENCES users(id),
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_mitigation_tasks_plan ON mitigation_tasks (plan_id);

@@ -25,7 +25,7 @@ export async function GET(
     const sql = isCrossTenant
       ? `
         SELECT t.id, t.plan_id, t.tenant_id, t.horizon, t.title, t.description,
-               t.tier, t.status, t.blast_radius, t.cve_id, t.created_at,
+               t.tier, t.status, t.blast_radius, t.cve_id, t.assigned_to, t.created_at,
                i.incident_code, i.title as incident_title, i.severity as incident_severity,
                p.version as plan_version, p.status as plan_status
         FROM mitigation_tasks t
@@ -36,7 +36,7 @@ export async function GET(
       `
       : `
         SELECT t.id, t.plan_id, t.tenant_id, t.horizon, t.title, t.description,
-               t.tier, t.status, t.blast_radius, t.cve_id, t.created_at,
+               t.tier, t.status, t.blast_radius, t.cve_id, t.assigned_to, t.created_at,
                i.incident_code, i.title as incident_title, i.severity as incident_severity,
                p.version as plan_version, p.status as plan_status
         FROM mitigation_tasks t
@@ -109,6 +109,14 @@ export async function PATCH(
     return NextResponse.json({ error: "Task ID is required" }, { status: 400 });
   }
 
+  // Analysts are read-only viewers and cannot edit tasks
+  if (session.role === "analyst") {
+    return NextResponse.json(
+      { error: "INSUFFICIENT_ROLE: Analysts have read-only access and cannot edit tasks." },
+      { status: 403 }
+    );
+  }
+
   try {
     const body = await req.json();
     const isCrossTenant = canAccess(session.role, "VIEW_CROSS_TENANT");
@@ -154,10 +162,16 @@ export async function PATCH(
       ? body.tier
       : currentTask.tier;
 
+    const newAssignedTo = body.assignedTo !== undefined
+      ? (body.assignedTo ? String(body.assignedTo).trim() : null)
+      : body.assigned_to !== undefined
+        ? (body.assigned_to ? String(body.assigned_to).trim() : null)
+        : currentTask.assigned_to;
+
     const updateSql = `
       UPDATE mitigation_tasks
-      SET status = $1, title = $2, description = $3, horizon = $4, blast_radius = $5, plan_id = $6, tier = $7
-      WHERE id = $8
+      SET status = $1, title = $2, description = $3, horizon = $4, blast_radius = $5, plan_id = $6, tier = $7, assigned_to = $8
+      WHERE id = $9
       RETURNING *;
     `;
 
@@ -169,10 +183,19 @@ export async function PATCH(
       newBlastRadius,
       newPlanId,
       newTier,
+      newAssignedTo,
       id,
     ]);
 
     const updatedTask = updateRes.rows[0];
+
+    // Synchronize pending approval tokens if the autonomy tier was updated
+    if (body.tier && ["Tier 1", "Tier 2", "Tier 3"].includes(body.tier)) {
+      await query(
+        "UPDATE approval_tokens SET tier = $1, updated_at = now() WHERE task_id = $2 AND status = 'pending'",
+        [newTier, id]
+      ).catch((err) => console.error("Failed to update pending token tier:", err));
+    }
 
     // If marked completed, check if all tasks under the parent plan are completed
     if (newStatus === "completed" && updatedTask?.plan_id) {
@@ -221,6 +244,14 @@ export async function DELETE(
   const { id } = await params;
   if (!id) {
     return NextResponse.json({ error: "Task ID is required" }, { status: 400 });
+  }
+
+  // Analysts are read-only viewers and cannot delete tasks
+  if (session.role === "analyst") {
+    return NextResponse.json(
+      { error: "INSUFFICIENT_ROLE: Analysts have read-only access and cannot delete tasks." },
+      { status: 403 }
+    );
   }
 
   try {

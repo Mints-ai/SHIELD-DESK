@@ -174,7 +174,7 @@ export function TopNavBar() {
               <Lock size={16} /><span>{pendingTokens.length}</span>
             </button>
           )}
-          {envMeta.devPersonasAllowed && <div className="sd-profile"><span className="sd-avatar" aria-hidden="true">{activeUser.label.split(" ").map((word) => word[0]).slice(0,2).join("")}</span><div><select aria-label="Active operator persona" value={activeUserId} onChange={(event) => setActiveUserId(event.target.value as DevUserId)}>{(Object.keys(DEV_USERS) as DevUserId[]).map((id) => <option key={id} value={id}>{DEV_USERS[id].label}</option>)}</select><p className="sd-profile-caption">{activeUser.tenantName}</p></div></div>}
+          {envMeta.devPersonasAllowed && <div className="sd-profile"><span className="sd-avatar" aria-hidden="true">{activeUser.label.split(" ").map((word) => word[0]).slice(0,2).join("")}</span><div><select aria-label="Active operator persona" value={activeUserId} onChange={(event) => setActiveUserId(event.target.value as DevUserId)} className="outline-none focus:outline-none focus:ring-0 focus-visible:outline-none border-none shadow-none cursor-pointer bg-transparent" style={{ outline: "none", border: "none", boxShadow: "none" }}>{(Object.keys(DEV_USERS) as DevUserId[]).map((id) => <option key={id} value={id}>{DEV_USERS[id].label}</option>)}</select><p className="sd-profile-caption">{activeUser.tenantName}</p></div></div>}
           <Link href="/login" className="sd-button !px-3" aria-label="Sign in"><LogIn size={16} /><span className="sd-signin-label">Sign in</span></Link>
         </div>
       </header>

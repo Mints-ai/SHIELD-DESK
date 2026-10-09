@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   Server,
   ShieldAlert,
+  UserCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
@@ -30,6 +31,7 @@ import { AutonomyTierBadge } from "@/components/governance/AutonomyTierBadge";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
 import { GlassDialog } from "@/components/ui/GlassDialog";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
+import { DEV_USERS, type DevUserId } from "@/lib/constants/devUsers";
 
 interface MitigationTaskItem {
   id: string;
@@ -41,6 +43,7 @@ interface MitigationTaskItem {
   status: "pending" | "approved" | "rejected" | "in_progress" | "completed";
   blast_radius?: string;
   cve_id?: string | null;
+  assigned_to?: string | null;
   incident_code?: string;
   created_at?: string;
 }
@@ -67,8 +70,19 @@ export default function SOCTaskBoardPage() {
   const detailDialogId = useId();
   const { activeUserId, activeUser } = useChat();
 
+  const canEditTask = activeUser.role !== "analyst";
   const canAssignTask = activeUser.role !== "analyst";
-
+  const canDispatch = activeUser.role === "system_admin" || activeUser.role === "super_admin" || activeUser.role === "responder";
+  // Responders can approve Tier 1 & Tier 2; Admins can approve all tiers; Analysts cannot approve any tier
+  const canUserSignOffTask = (taskTier?: string) => {
+    if (activeUser.role === "system_admin" || activeUser.role === "super_admin") {
+      return true;
+    }
+    if (activeUser.role === "responder") {
+      return taskTier === "Tier 1" || taskTier === "Tier 2";
+    }
+    return false;
+  };
 
   const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);
@@ -83,6 +97,7 @@ export default function SOCTaskBoardPage() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskTier, setNewTaskTier] = useState<"Tier 1" | "Tier 2" | "Tier 3">("Tier 2");
   const [newTaskPlanId, setNewTaskPlanId] = useState("");
+  const [newTaskAssignedTo, setNewTaskAssignedTo] = useState<string>("dev-responder");
   const [availablePlans, setAvailablePlans] = useState<
     Array<{
       id: string;
@@ -207,6 +222,7 @@ export default function SOCTaskBoardPage() {
             taskId: task.id,
             actionType: task.title,
             blastRadius: task.blast_radius || "Host Scope",
+            tier: task.tier,
           }),
         });
         const createBody = await createRes.json();
@@ -214,7 +230,11 @@ export default function SOCTaskBoardPage() {
       }
 
       if (token) {
-        setActiveModalToken(token);
+        const syncedToken: ApprovalTokenRecord = {
+          ...token,
+          tier: (task.tier as any) || token.tier,
+        };
+        setActiveModalToken(syncedToken);
         setIsModalOpen(true);
       }
     } catch (err) {
@@ -420,6 +440,7 @@ export default function SOCTaskBoardPage() {
           horizon: "immediate",
           blastRadius: "Target Workstation Scope",
           planId: newTaskPlanId || undefined,
+          assignedTo: newTaskAssignedTo || undefined,
         }),
       });
 
@@ -636,6 +657,22 @@ export default function SOCTaskBoardPage() {
               </select>
             </div>
 
+            {/* Assignee Selector */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className="text-[11px] font-mono text-[var(--sd-text-muted)] uppercase">Assignee:</span>
+              <select
+                value={newTaskAssignedTo}
+                onChange={(e) => setNewTaskAssignedTo(e.target.value)}
+                className="bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded-xl px-2.5 py-1.5 text-xs text-[var(--sd-wheat)] font-semibold outline-none cursor-pointer"
+              >
+                <option value="dev-responder">Responder</option>
+                <option value="dev-admin">System Admin</option>
+                <option value="dev-super">Super Admin</option>
+                <option value="dev-analyst">Analyst</option>
+                <option value="">Unassigned</option>
+              </select>
+            </div>
+
             {/* Target Mitigation Plan Selector */}
             {availablePlans.length > 0 && (
               <div className="flex items-center gap-1.5 shrink-0 max-w-[280px]">
@@ -724,6 +761,13 @@ export default function SOCTaskBoardPage() {
                           {task.description}
                         </p>
 
+                        {task.assigned_to && (
+                          <div className="flex items-center gap-1.5 text-[10.5px] font-mono text-[var(--sd-wheat)]/85 bg-[#c8aa6f]/10 border border-[#c8aa6f]/20 rounded-md px-2 py-0.5 w-fit">
+                            <UserCheck className="h-3 w-3 text-[var(--sd-wheat)]" />
+                            <span>Assigned: {DEV_USERS[task.assigned_to as DevUserId]?.label || task.assigned_to.replace("dev-", "")}</span>
+                          </div>
+                        )}
+
                         <div className="pt-2 border-t border-[var(--sd-border)] flex items-center justify-between text-[11px]">
                           <span className="text-[var(--sd-text-muted)] font-mono truncate max-w-[110px]">
                             {task.blast_radius || "Host Scope"}
@@ -731,33 +775,47 @@ export default function SOCTaskBoardPage() {
 
                           {/* Column-Specific Action Controls */}
                           {task.status === "pending" && (
-                            <button
-                              onClick={(e) => handleOpenApproval(task, e)}
-                              className="flex items-center gap-1 px-3 py-1 rounded-full border border-[#c8aa6f]/50 bg-[#c8aa6f]/15 text-[#e3d5bb] hover:bg-[#c8aa6f]/25 text-[11px] font-medium cursor-pointer transition shadow-xs"
-                            >
-                              <Lock className="h-3 w-3 text-[#c8aa6f]" />
-                              <span>Sign Off</span>
-                            </button>
+                            canUserSignOffTask(task.tier) ? (
+                              <button
+                                onClick={(e) => handleOpenApproval(task, e)}
+                                className="flex items-center gap-1 px-3 py-1 rounded-full border border-[#c8aa6f]/50 bg-[#c8aa6f]/15 text-[#e3d5bb] hover:bg-[#c8aa6f]/25 text-[11px] font-medium cursor-pointer transition shadow-xs"
+                              >
+                                <Lock className="h-3 w-3 text-[#c8aa6f]" />
+                                <span>Sign Off</span>
+                              </button>
+                            ) : (
+                              <span className="text-[11px] font-mono text-[var(--sd-text-dim)] italic">
+                                {activeUser.role === "responder" && (task.tier === "Tier 2" || task.tier === "Tier 3")
+                                  ? "Requires Admin Sign-off"
+                                  : "Awaiting Sign-off"}
+                              </span>
+                            )
                           )}
 
                           {task.status === "approved" && (
-                            <button
-                              onClick={(e) => handleExecuteTask(task, e)}
-                              disabled={executingTaskId === task.id}
-                              className="flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] text-[11px] font-bold shadow-[0_2px_10px_rgba(160,127,58,0.3)] transition cursor-pointer disabled:opacity-50"
-                            >
-                              {executingTaskId === task.id ? (
-                                <>
-                                  <RefreshCw className="h-3 w-3 animate-spin text-[#171208]" />
-                                  <span>Dispatching…</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Play className="h-3 w-3 fill-current" />
-                                  <span>Dispatch</span>
-                                </>
-                              )}
-                            </button>
+                            canDispatch ? (
+                              <button
+                                onClick={(e) => handleExecuteTask(task, e)}
+                                disabled={executingTaskId === task.id}
+                                className="flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] text-[11px] font-bold shadow-[0_2px_10px_rgba(160,127,58,0.3)] transition cursor-pointer disabled:opacity-50"
+                              >
+                                {executingTaskId === task.id ? (
+                                  <>
+                                    <RefreshCw className="h-3 w-3 animate-spin text-[#171208]" />
+                                    <span>Dispatching…</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="h-3 w-3 fill-current" />
+                                    <span>Dispatch</span>
+                                  </>
+                                )}
+                              </button>
+                            ) : (
+                              <span className="text-[11px] font-mono text-[var(--sd-text-dim)] italic">
+                                Authorized · Awaiting Dispatch
+                              </span>
+                            )
                           )}
 
                           {task.status === "in_progress" && (
@@ -881,6 +939,30 @@ export default function SOCTaskBoardPage() {
 
             <div className="space-y-1.5">
               <label
+                htmlFor={`${taskDialogId}-assignee`}
+                className="text-[11px] font-medium uppercase tracking-wider text-[var(--sd-text-muted)] font-mono"
+              >
+                Assign Task To
+              </label>
+              <select
+                id={`${taskDialogId}-assignee`}
+                value={newTaskAssignedTo}
+                onChange={(e) => setNewTaskAssignedTo(e.target.value)}
+                className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
+              >
+                <option value="dev-responder">Responder (dev-responder)</option>
+                <option value="dev-admin">System Admin (dev-admin)</option>
+                <option value="dev-super">Super Admin (dev-super)</option>
+                <option value="dev-analyst">SOC Analyst (dev-analyst)</option>
+                <option value="">Unassigned</option>
+              </select>
+              <p className="text-[10.5px] text-[var(--sd-text-muted)]">
+                Assign this task to an operator responsible for execution and verification.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label
                 htmlFor={`${taskDialogId}-plan`}
                 className="text-[11px] font-medium uppercase tracking-wider text-[var(--sd-text-muted)] font-mono"
               >
@@ -961,6 +1043,11 @@ export default function SOCTaskBoardPage() {
                     {selectedTask.title}
                   </h3>
                   <AutonomyTierBadge tier={selectedTask.tier} size="sm" showLabel={false} />
+                  {!canEditTask && (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-[var(--sd-text-dim)]">
+                      Read-Only
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-[var(--sd-text-muted)] mt-0.5 font-mono">
                   Task ID: {selectedTask.id}
@@ -999,18 +1086,24 @@ export default function SOCTaskBoardPage() {
                 <span className="text-[10px] uppercase font-mono text-[var(--sd-text-muted)] block">
                   Autonomy Tier
                 </span>
-                <select
-                  value={selectedTask.tier}
-                  onChange={async (e) => {
-                    const newTier = e.target.value;
-                    await handleUpdateTier(selectedTask.id, newTier);
-                  }}
-                  className="mt-1 w-full bg-[var(--sd-panel-raised)] text-xs text-[var(--sd-wheat)] font-semibold border border-[var(--sd-border)] rounded-lg px-2 py-1 outline-none font-mono cursor-pointer"
-                >
-                  <option value="Tier 1">Tier 1 — Automatic</option>
-                  <option value="Tier 2">Tier 2 — Human Sign-off</option>
-                  <option value="Tier 3">Tier 3 — Dual Sign-off</option>
-                </select>
+                {canEditTask ? (
+                  <select
+                    value={selectedTask.tier}
+                    onChange={async (e) => {
+                      const newTier = e.target.value;
+                      await handleUpdateTier(selectedTask.id, newTier);
+                    }}
+                    className="mt-1 w-full bg-[var(--sd-panel-raised)] text-xs text-[var(--sd-wheat)] font-semibold border border-[var(--sd-border)] rounded-lg px-2 py-1 outline-none font-mono cursor-pointer"
+                  >
+                    <option value="Tier 1">Tier 1 — Automatic</option>
+                    <option value="Tier 2">Tier 2 — Human Sign-off</option>
+                    <option value="Tier 3">Tier 3 — Dual Sign-off</option>
+                  </select>
+                ) : (
+                  <p className="font-semibold text-xs mt-1 text-[var(--sd-wheat)] font-mono">
+                    {selectedTask.tier}
+                  </p>
+                )}
               </div>
               <div className="p-3 rounded-xl sd-surface border border-[var(--sd-border)]">
                 <span className="text-[10px] uppercase font-mono text-[var(--sd-text-muted)]">
@@ -1020,6 +1113,59 @@ export default function SOCTaskBoardPage() {
                   {selectedTask.blast_radius || "Host Scope"}
                 </p>
               </div>
+            </div>
+
+            {/* Task Assignee Selector */}
+            <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--sd-pine-dim)] text-[var(--sd-wheat)] border border-[var(--sd-border)]">
+                  <UserCheck className="h-3.5 w-3.5" />
+                </div>
+                <div>
+                  <span className="text-[10.5px] uppercase font-mono text-[var(--sd-text-muted)] block">
+                    Assigned Operator
+                  </span>
+                  <span className="text-xs font-semibold text-[var(--sd-text)]">
+                    {selectedTask.assigned_to
+                      ? DEV_USERS[selectedTask.assigned_to as DevUserId]?.label || selectedTask.assigned_to
+                      : "Unassigned"}
+                  </span>
+                </div>
+              </div>
+              {canEditTask && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10.5px] font-mono text-[var(--sd-text-muted)] uppercase">
+                    Re-assign:
+                  </span>
+                  <select
+                    value={selectedTask.assigned_to || ""}
+                    onChange={async (e) => {
+                      const newAssignee = e.target.value || null;
+                      try {
+                        await fetch(`/api/tasks/${encodeURIComponent(selectedTask.id)}`, {
+                          method: "PATCH",
+                          headers: {
+                            "Content-Type": "application/json",
+                            "X-ShieldDesk-User": activeUserId,
+                          },
+                          body: JSON.stringify({ assignedTo: newAssignee }),
+                        });
+                        setSelectedTask((prev) => prev ? { ...prev, assigned_to: newAssignee } : null);
+                        setTasks((prev) => prev.map((t) => t.id === selectedTask.id ? { ...t, assigned_to: newAssignee } : t));
+                      } catch (err) {
+                        console.error("Failed to re-assign task:", err);
+                      }
+                    }}
+                    className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-wheat)] font-semibold border border-[var(--sd-border)] rounded-lg px-2.5 py-1.5 outline-none font-mono cursor-pointer"
+                  >
+                    <option value="dev-responder">Responder (dev-responder)</option>
+                    <option value="dev-admin">System Admin (dev-admin)</option>
+                    <option value="dev-super">Super Admin (dev-super)</option>
+                    <option value="dev-analyst">Analyst (dev-analyst)</option>
+                    <option value="">Unassigned</option>
+                  </select>
+                </div>
+              )}
             </div>
 
             {/* Description */}
@@ -1058,28 +1204,30 @@ export default function SOCTaskBoardPage() {
                 )}
               </div>
 
-              {/* Plan Switcher Dropdown */}
-              <div className="pt-2 border-t border-[var(--sd-border-subtle)] flex items-center justify-between gap-2 text-xs">
-                <span className="text-[10.5px] font-mono text-[var(--sd-text-muted)] uppercase">
-                  Re-assign to Plan:
-                </span>
-                <select
-                  value={selectedTask.plan_id || ""}
-                  onChange={async (e) => {
-                    const newPlanId = e.target.value;
-                    if (!newPlanId || newPlanId === selectedTask.plan_id) return;
-                    await handleUpdatePlan(selectedTask.id, newPlanId);
-                  }}
-                  className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-pine)] border border-[var(--sd-border)] rounded-lg px-2.5 py-1 outline-none font-mono cursor-pointer max-w-[280px] truncate"
-                >
-                  <option value="">Select Target Plan...</option>
-                  {availablePlans.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.incident_code} ({p.incident_title.slice(0, 24)}…)
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* Plan Switcher Dropdown (Editable roles only) */}
+              {canEditTask && (
+                <div className="pt-2 border-t border-[var(--sd-border-subtle)] flex items-center justify-between gap-2 text-xs">
+                  <span className="text-[10.5px] font-mono text-[var(--sd-text-muted)] uppercase">
+                    Re-assign to Plan:
+                  </span>
+                  <select
+                    value={selectedTask.plan_id || ""}
+                    onChange={async (e) => {
+                      const newPlanId = e.target.value;
+                      if (!newPlanId || newPlanId === selectedTask.plan_id) return;
+                      await handleUpdatePlan(selectedTask.id, newPlanId);
+                    }}
+                    className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-pine)] border border-[var(--sd-border)] rounded-lg px-2.5 py-1 outline-none font-mono cursor-pointer max-w-[280px] truncate"
+                  >
+                    <option value="">Select Target Plan...</option>
+                    {availablePlans.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.incident_code} ({p.incident_title.slice(0, 24)}…)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             {/* Governance & Approval Token History */}
@@ -1167,48 +1315,70 @@ export default function SOCTaskBoardPage() {
 
           {/* Modal Footer Controls */}
           <div className="p-4 border-t border-[var(--sd-border)] flex items-center justify-between">
-            <button
-              type="button"
-              onClick={(e) => handleDeleteTask(selectedTask.id, e)}
-              className="sd-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)] rounded-lg transition"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>Delete Task</span>
-            </button>
+            {canEditTask ? (
+              <button
+                type="button"
+                onClick={(e) => handleDeleteTask(selectedTask.id, e)}
+                className="sd-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)] rounded-lg transition"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete Task</span>
+              </button>
+            ) : (
+              <span className="text-[11px] font-mono text-[var(--sd-text-dim)]">
+                Read-only view
+              </span>
+            )}
 
             <div className="flex items-center gap-2">
               {selectedTask.status === "pending" && (
-                <button
-                  type="button"
-                  onClick={(e) => handleOpenApproval(selectedTask, e)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-[#c8aa6f]/60 bg-[#c8aa6f]/15 text-[#e3d5bb] hover:bg-[#c8aa6f]/25 font-semibold text-xs transition cursor-pointer"
-                >
-                  <Lock className="h-3.5 w-3.5 text-[#c8aa6f]" />
-                  <span>Sign Off Now</span>
-                </button>
+                canUserSignOffTask(selectedTask.tier) ? (
+                  <button
+                    type="button"
+                    onClick={(e) => handleOpenApproval(selectedTask, e)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-[#c8aa6f]/60 bg-[#c8aa6f]/15 text-[#e3d5bb] hover:bg-[#c8aa6f]/25 font-semibold text-xs transition cursor-pointer"
+                  >
+                    <Lock className="h-3.5 w-3.5 text-[#c8aa6f]" />
+                    <span>Sign Off Now</span>
+                  </button>
+                ) : (
+                  <span className="text-[11px] font-mono text-[var(--sd-text-dim)] italic px-2 py-1">
+                    {!canEditTask
+                      ? "Awaiting Sign-off (Read-Only)"
+                      : activeUser.role === "responder" && selectedTask.tier === "Tier 3"
+                        ? "Tier 3 requires Admin Sign-off"
+                        : "Awaiting Admin Sign-off"}
+                  </span>
+                )
               )}
 
               {(selectedTask.status === "approved" || selectedTask.status === "completed") && (
-                <button
-                  type="button"
-                  onClick={(e) => handleExecuteTask(selectedTask, e)}
-                  disabled={executingTaskId === selectedTask.id}
-                  className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] font-bold text-xs shadow-[0_4px_16px_rgba(160,127,58,0.3)] transition cursor-pointer disabled:opacity-50"
-                >
-                  {executingTaskId === selectedTask.id ? (
-                    <>
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#171208]" />
-                      <span>Dispatching…</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-3.5 w-3.5 fill-current" />
-                      <span>
-                        {selectedTask.status === "completed" ? "Re-execute Task" : "Dispatch to Agent"}
-                      </span>
-                    </>
-                  )}
-                </button>
+                canDispatch ? (
+                  <button
+                    type="button"
+                    onClick={(e) => handleExecuteTask(selectedTask, e)}
+                    disabled={executingTaskId === selectedTask.id}
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] font-bold text-xs shadow-[0_4px_16px_rgba(160,127,58,0.3)] transition cursor-pointer disabled:opacity-50"
+                  >
+                    {executingTaskId === selectedTask.id ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#171208]" />
+                        <span>Dispatching…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3.5 w-3.5 fill-current" />
+                        <span>
+                          {selectedTask.status === "completed" ? "Re-execute Task" : "Dispatch to Agent"}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <span className="text-xs font-mono text-[var(--sd-text-dim)] italic px-2 py-1">
+                    {selectedTask.status === "completed" ? "Executed" : "Authorized · Awaiting dispatch by Responder"}
+                  </span>
+                )
               )}
             </div>
           </div>

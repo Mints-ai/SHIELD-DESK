@@ -62,15 +62,22 @@ export function ApprovalModal({
 
   const isElevatedAdmin = activeUser.role === "system_admin" || activeUser.role === "super_admin";
   const isResponder = activeUser.role === "responder";
-  const canApproveAny = isElevatedAdmin || isResponder;
-  const allowsSelfApproval = isElevatedAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
-  const isBlockedBySelfRequest = activeUserId === token.requested_by && !allowsSelfApproval;
   const isAnalystRole = activeUser.role === "analyst";
-  // Responders cannot approve Tier 3 (break-glass requires admin)
+
+  // Tier 1 & 2: Responders, System Admins, and Super Admins can sign off.
+  // Tier 3: System Admins and Super Admins only (Responders cannot approve Tier 3).
+  const isRoleQualifiedForTier =
+    isElevatedAdmin || (isResponder && (token.tier === "Tier 1" || token.tier === "Tier 2"));
+
+  // Separation of Duties strictly blocks approving actions you requested on Tier 3 break-glass actions.
+  // Admins & Responders can self-approve Tier 1 & Tier 2.
+  const isBlockedBySeparationOfDuties =
+    token.tier === "Tier 3" && activeUserId === token.requested_by;
+
   const canApproveAction =
-    canApproveAny &&
-    !isBlockedBySelfRequest &&
-    (isElevatedAdmin || (isResponder && token.tier !== "Tier 3"));
+    isRoleQualifiedForTier &&
+    !isBlockedBySeparationOfDuties &&
+    !isAnalystRole;
 
   const isAlreadyFinalized = token.status !== "pending";
 
@@ -238,36 +245,30 @@ export function ApprovalModal({
 
           {/* Governance & Role Authorization Banner */}
           {isAnalystRole ? (
-            <div className="rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] p-3 text-[13px] text-[var(--sd-danger)] space-y-2">
+            <div className="rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] p-3 text-[13px] text-[var(--sd-danger)] space-y-1">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-[var(--sd-danger)]" />
                 <div className="space-y-1">
                   <p className="font-bold">Approval Restricted &mdash; Analyst Role</p>
                   <p className="text-[13px] leading-relaxed text-[var(--sd-danger)]">
-                    Analysts cannot approve remediation actions. Only System Admins, Super Admins, or Responders (Tier 1 &amp; 2) are permitted to authorize containment tasks.
+                    Analysts cannot approve or reject remediation actions. Authorization requires a Responder (Tier 1) or Administrator (Tier 1&ndash;3).
                   </p>
                 </div>
               </div>
-              <div className="pt-1.5 flex items-center gap-2">
-                <span className="text-[11px] text-[var(--sd-danger)]">Switch persona to test approval:</span>
-                <button
-                  type="button"
-                  onClick={() => setActiveUserId("dev-admin")}
-                  className="px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] font-bold border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
-                >
-                  Switch to System Admin
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveUserId("dev-responder")}
-                  className="px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] font-bold border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
-                >
-                  Switch to Responder
-                </button>
+            </div>
+          ) : isResponder && token.tier === "Tier 3" ? (
+            <div className="rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] p-3 text-[13px] text-[var(--sd-danger)] space-y-1">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-[var(--sd-danger)]" />
+                <div className="space-y-1">
+                  <p className="font-bold">Approval Restricted &mdash; Tier 3 Break-Glass Action</p>
+                  <p className="text-[13px] leading-relaxed text-[var(--sd-danger)]">
+                    Incident Responders can authorize Tier 1 and Tier 2 actions. Tier 3 break-glass actions require sign-off by a System Administrator or Super Admin.
+                  </p>
+                </div>
               </div>
             </div>
-
-          ) : isBlockedBySelfRequest ? (
+          ) : isBlockedBySeparationOfDuties ? (
             <div className="rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] p-3 text-[13px] text-[var(--sd-danger)] space-y-2">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-[var(--sd-danger)]" />
@@ -283,22 +284,21 @@ export function ApprovalModal({
             <div className="rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] p-2.5 text-[13px] text-[var(--sd-success)] flex items-center gap-2">
               <UserCheck className="h-4 w-4 shrink-0" />
               <span>
-                {allowsSelfApproval && activeUserId === token.requested_by ? (
+                {activeUserId === token.requested_by ? (
                   <>
-                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; {activeUser.role === "system_admin" ? "System Admin" : "Super Admin"} self-approval permitted for {token.tier}.
+                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; {isElevatedAdmin ? (activeUser.role === "system_admin" ? "System Admin" : "Super Admin") : "Responder"} self-approval permitted for {token.tier}.
                   </>
                 ) : isResponder ? (
                   <>
-                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; Responder qualified to sign off on {token.tier} action{token.tier === "Tier 3" ? " (Tier 3 requires admin — use a higher role)" : ""}.
+                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; Responder qualified to sign off on Tier 1 action.
                   </>
                 ) : (
                   <>
-                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; Qualified to sign off on {token.tier} action.
+                    Authorized Approver (<code className="font-mono font-bold">{activeUserId}</code>) &mdash; Administrator qualified to sign off on {token.tier} action.
                   </>
                 )}
               </span>
             </div>
-
           )}
 
           {/* Finalized Token Notice */}
@@ -344,7 +344,7 @@ export function ApprovalModal({
 
           {/* Action Buttons */}
           <div className="flex flex-wrap items-center justify-end gap-2.5 pt-4 border-t border-[var(--sd-border)]">
-            {isAlreadyFinalized ? (
+            {isAlreadyFinalized || isAnalystRole ? (
               <button
                 type="button"
                 onClick={onClose}
@@ -372,14 +372,16 @@ export function ApprovalModal({
 
                 {!isRejecting ? (
                   <>
-                    <button
-                      type="button"
-                      onClick={() => setIsRejecting(true)}
-                      disabled={isSubmitting}
-                      className="px-4 py-2.5 rounded-xl border border-[#8a3025]/50 bg-[#8a3025]/15 text-[#e07567] hover:bg-[#8a3025]/25 text-[13px] font-semibold transition cursor-pointer"
-                    >
-                      Reject Action...
-                    </button>
+                    {isRoleQualifiedForTier && (
+                      <button
+                        type="button"
+                        onClick={() => setIsRejecting(true)}
+                        disabled={isSubmitting}
+                        className="px-4 py-2.5 rounded-xl border border-[#8a3025]/50 bg-[#8a3025]/15 text-[#e07567] hover:bg-[#8a3025]/25 text-[13px] font-semibold transition cursor-pointer"
+                      >
+                        Reject Action...
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleDecision("approve")}
