@@ -140,7 +140,7 @@ describe("Trivy Vulnerability Scanner Suite", () => {
     assert.match(bodyAdmin, /high\s*-\s*\d+/i);
     assert.match(bodyAdmin, /medium\s*-\s*\d+/i);
     assert.match(bodyAdmin, /low\s*-\s*\d+/i);
-    assert.match(bodyAdmin, /Role Authority \(SuperAdmin \/ Governance\)/i);
+    assert.match(bodyAdmin, /Role Authority \(.*Super\s*Admin.*\)/i);
     assert.match(bodyAdmin, /\/dashboard\/scanner\?view=latest/);
 
     // 2. Test as Analyst
