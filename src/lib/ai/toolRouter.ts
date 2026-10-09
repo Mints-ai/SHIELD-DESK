@@ -130,8 +130,8 @@ export class ToolRouter {
       }
 
       case "attack_path_inspect": {
-        const targetAsset = String(args.targetAsset || "");
-        if (!targetAsset) throw new Error("Missing mandatory parameter 'targetAsset'");
+        const targetAsset = String(args.targetAsset || args.assetId || args.sourceAsset || "");
+        if (!targetAsset) throw new Error("Missing mandatory parameter 'targetAsset' or 'assetId'");
         return AttackPathEngine.analyzeAttackPaths(tenantId, targetAsset);
       }
 

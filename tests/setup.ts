@@ -17,6 +17,9 @@ const originalRequire = (Module.prototype as any).require;
 };
 
 // Set test secrets for cryptographically verified testing
+(process.env as Record<string, string | undefined>).NODE_ENV = process.env.NODE_ENV || "test";
+process.env.RAZORPAY_WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET || "rzp_webhook_secret";
+process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_test_secret";
 process.env.DATABASE_URL = "";
 process.env.NEXT_PUBLIC_SUPABASE_URL = "";
 process.env.SUPABASE_SERVICE_ROLE_KEY = "";

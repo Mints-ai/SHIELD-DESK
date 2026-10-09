@@ -19,6 +19,7 @@
     "@supabase/supabase-js": "^2.116.0",
     "clsx": "^2.1.1",
     "framer-motion": "^13.3.0",
+    "is-extglob": "^2.1.1",
     "lucide-react": "^1.46.0",
     "next": "16.3.5",
     "openai": "^7.15.0",

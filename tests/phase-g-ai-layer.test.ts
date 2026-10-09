@@ -65,7 +65,7 @@ test("Phase G: AI Layer & Governance Suite", async (t) => {
       "PAN-OS Gateway Command Injection (CVE-2024-3400)",
       [
         {
-          evidenceId: evidence.id,
+          evidenceId: evidence.id!,
           source: "evidence_engine",
           claim: "Observed active vulnerability CVE-2024-3400 on perimeter firewall",
           verified: true,
@@ -162,7 +162,7 @@ test("Phase G: AI Layer & Governance Suite", async (t) => {
     const validCheck = EvidenceCitationValidator.validateCitations(
       [
         {
-          evidenceId: realEv.id,
+          evidenceId: realEv.id!,
           source: "evidence_engine",
           claim: "Log4j RCE vulnerability detected",
           verified: true,
@@ -186,7 +186,7 @@ test("Phase G: AI Layer & Governance Suite", async (t) => {
         },
       ],
       ["Critical backdoor found in system core"],
-      { knownEvidenceKeys: [realEv.id] }
+      { knownEvidenceKeys: [realEv.id!] }
     );
     assert.equal(hallucinatedCheck.isValid, false);
     assert.ok(hallucinatedCheck.hallucinationScore > 0.4);

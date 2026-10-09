@@ -16,7 +16,7 @@ const IP_RATE_LIMITS = new Map<string, RateLimitRecord>();
 
 // Clean up expired entries every 5 minutes
 if (typeof setInterval !== "undefined") {
-  setInterval(() => {
+  const timer = setInterval(() => {
     const now = Date.now();
     for (const [key, value] of IP_RATE_LIMITS.entries()) {
       if (now > value.resetAt) {
@@ -24,6 +24,9 @@ if (typeof setInterval !== "undefined") {
       }
     }
   }, 300000);
+  if (timer && typeof timer.unref === "function") {
+    timer.unref();
+  }
 }
 
 export interface RateLimitOptions {

@@ -283,12 +283,8 @@ export async function approveActionToken(
     }
 
     // 2. Separation of Duties enforcement:
-    // System Admin / Super Admin can approve Tier 1 and Tier 2 tasks even if requested by them.
-    // For Tier 3 (break-glass), separation of duties is strictly enforced.
-    const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
-    const allowsSelfApproval = isSystemAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
-
-    if (token.requested_by === session.uid && !allowsSelfApproval) {
+    // Requester cannot approve their own action request across all governed tiers.
+    if (token.requested_by === session.uid) {
       return {
         error: "separation_of_duties_violation",
         message: `Separation of duties violation: you cannot approve your own action request for ${token.tier}.`,
@@ -424,10 +420,7 @@ export async function approveActionToken(
     }
 
     // Separation of Duties check in mock mode
-    const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
-    const allowsSelfApproval = isSystemAdmin && (token.tier === "Tier 1" || token.tier === "Tier 2");
-
-    if (token.requested_by === session.uid && !allowsSelfApproval) {
+    if (token.requested_by === session.uid) {
       return {
         error: "separation_of_duties_violation",
         message: `Separation of duties violation: you cannot approve your own action request for ${token.tier}.`,

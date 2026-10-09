@@ -189,46 +189,7 @@ export function getRootCACertificatePem(): string {
   return getOrCreateControlPlaneCA().caCertificatePem;
 }
 
-/** Resolve an agent's active certificate public key for signed-result verification. */
-export async function getEndpointCertificateByAgent(
-  agentId: string
-): Promise<{ public_key: string } | undefined> {
-  try {
-    const result = await query<Pick<EndpointCertificateRecord, "certificate_pem">>(
-      `SELECT certificate_pem FROM endpoint_certificates
-       WHERE agent_id = $1 AND revoked_at IS NULL AND expires_at > now()
-       ORDER BY issued_at DESC LIMIT 1;`,
-      [agentId]
-    );
-    const certificatePem = result.rows[0]?.certificate_pem;
-    if (certificatePem) {
-      return {
-        public_key: new crypto.X509Certificate(certificatePem).publicKey.export({
-          type: "spki",
-          format: "pem",
-        }) as string,
-      };
-    }
-  } catch {
-    // Use the in-memory certificate store when the database is unavailable in tests/dev.
-  }
 
-  const record = MOCK_ENDPOINT_CERTIFICATES
-    .filter((certificate) =>
-      certificate.agent_id === agentId &&
-      !certificate.revoked_at &&
-      new Date(certificate.expires_at).getTime() > Date.now()
-    )
-    .sort((a, b) => Date.parse(b.issued_at) - Date.parse(a.issued_at))[0];
-
-  if (!record) return undefined;
-  return {
-    public_key: new crypto.X509Certificate(record.certificate_pem).publicKey.export({
-      type: "spki",
-      format: "pem",
-    }) as string,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // SD-008: Endpoint Certificate Issuance Pipeline
@@ -611,4 +572,39 @@ export async function validateEndpointCertificate({
     const msg = err instanceof Error ? err.message : "Malformed certificate";
     return { valid: false, error: msg };
   }
+}
+
+export async function getEndpointCertificateByAgent(
+  agentId: string,
+  tenantId?: string
+): Promise<(EndpointCertificateRecord & { public_key?: string }) | undefined> {
+  let cert: EndpointCertificateRecord | undefined;
+  try {
+    const res = await query<EndpointCertificateRecord>(
+      `SELECT * FROM endpoint_certificates 
+       WHERE agent_id = $1 
+         AND revoked_at IS NULL 
+         ${tenantId ? "AND tenant_id = $2" : ""}
+       ORDER BY issued_at DESC 
+       LIMIT 1;`,
+      tenantId ? [agentId, tenantId] : [agentId]
+    );
+    cert = res.rows[0];
+  } catch {
+    cert = MOCK_ENDPOINT_CERTIFICATES.slice().reverse().find(
+      (c) => c.agent_id === agentId && (!tenantId || c.tenant_id === tenantId) && !c.revoked_at
+    );
+  }
+
+  if (!cert) return undefined;
+
+  let public_key: string | undefined;
+  try {
+    const x509 = new crypto.X509Certificate(cert.certificate_pem);
+    public_key = x509.publicKey.export({ type: "spki", format: "pem" }).toString();
+  } catch {
+    // fallback if raw pem cannot be parsed
+  }
+
+  return { ...cert, public_key };
 }

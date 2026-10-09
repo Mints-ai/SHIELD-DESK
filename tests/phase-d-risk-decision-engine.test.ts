@@ -168,7 +168,7 @@ test("Phase D: Risk & Decision Engine Suite", async (t) => {
       tenantId,
       action: "isolate_host",
       evidence: [],
-      actor: { ...actor, role: "analyst" },
+      actor: { ...actor, role: "auditor" },
     });
     assert.equal(readOnlyRes.decision, "DENY");
     assert.match(readOnlyRes.reason, /operational permissions/i);

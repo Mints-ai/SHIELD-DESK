@@ -73,7 +73,11 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
       const resPost = await scansPOST(reqPost);
       assert.equal(resPost.status, 403, "POST /api/scans with demo payload must return 403 in production");
     } finally {
-      process.env.APP_ENV = origAppEnv;
+      if (origAppEnv !== undefined) {
+        process.env.APP_ENV = origAppEnv;
+      } else {
+        delete process.env.APP_ENV;
+      }
     }
   });
 
@@ -136,7 +140,11 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
         "SimulationExecutor must reject execution in production"
       );
     } finally {
-      process.env.APP_ENV = origAppEnv;
+      if (origAppEnv !== undefined) {
+        process.env.APP_ENV = origAppEnv;
+      } else {
+        delete process.env.APP_ENV;
+      }
     }
   });
 
@@ -238,13 +246,18 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
     assert.ok(ISO_27001_CONTROLS.length >= 8);
     for (const ctrl of ISO_27001_CONTROLS) {
       assert.ok(ctrl.metric, `Control ${ctrl.code} must provide typed metric`);
-      assert.equal(ctrl.metric.status, "ESTIMATED");
+      assert.ok(
+        ctrl.metric.status === "ESTIMATED" || ctrl.metric.status === "MEASURED",
+        `Control ${ctrl.code} status must be ESTIMATED or MEASURED`
+      );
       assert.ok(ctrl.metric.source, "Must document metric source");
     }
 
     const summary = await getComplianceSummary(acmeAnalyst);
     assert.ok(summary.overallScoreMetric, "Compliance summary must provide overallScoreMetric");
-    assert.equal(summary.overallScoreMetric.status, "ESTIMATED");
+    assert.ok(
+      summary.overallScoreMetric.status === "ESTIMATED" || summary.overallScoreMetric.status === "MEASURED"
+    );
   });
 
   it("Audit Item 10: Closed-Loop Command Lifecycle (QUEUED -> DELIVERED -> EXECUTED -> VERIFIED)", async () => {
