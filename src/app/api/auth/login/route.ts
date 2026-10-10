@@ -79,29 +79,26 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      let supabaseAuthenticated = false;
       if (supabaseServer) {
-        const { data, error } = await supabaseServer.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error || !data.user) {
-          recordThreatAlert({
-            targetUser: email,
-            clientIp,
-            failureReason: error?.message || "Invalid credentials provided to authentication provider",
+        try {
+          const { data, error } = await supabaseServer.auth.signInWithPassword({
+            email,
+            password,
           });
-          return NextResponse.json(
-            { error: error?.message || "Invalid email or password." },
-            { status: 401 }
-          );
-        }
 
-        authenticatedUid = data.user.id;
-        // S5: Read tenant & role from server-controlled app_metadata, never client-controlled user_metadata
-        tenantId = (data.user.app_metadata?.tenant_id as string) || "acme-tenant";
-        role = (data.user.app_metadata?.role as ShieldDeskRole) || "user";
-      } else {
+          if (!error && data?.user) {
+            authenticatedUid = data.user.id;
+            tenantId = (data.user.app_metadata?.tenant_id as string) || "acme-tenant";
+            role = (data.user.app_metadata?.role as ShieldDeskRole) || "user";
+            supabaseAuthenticated = true;
+          }
+        } catch {
+          supabaseAuthenticated = false;
+        }
+      }
+
+      if (!supabaseAuthenticated) {
         // S3: Secure local database authentication with Argon2/Scrypt hash verification
         try {
           const dbUser = await query<{

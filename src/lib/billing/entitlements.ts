@@ -283,6 +283,7 @@ export class EntitlementService {
     return record;
   }
 
+
   /**
    * Non-Negotiable Rule 4 & Entitlement Verification Guard:
    * "Every request resolves User -> Org -> Subscription -> License -> Entitlement -> Resource."
@@ -494,7 +495,24 @@ export class EntitlementService {
     const license = await this.getLicense(tenantId);
     if (license) {
       license.status = status;
+      license.updatedAt = new Date().toISOString();
       this.inMemoryLicenses.set(tenantId, license);
+    } else {
+      this.inMemoryLicenses.set(tenantId, {
+        id: `lic-${tenantId}`,
+        tenantId,
+        licenseKey: "",
+        tier: "community",
+        status,
+        maxEndpoints: 0,
+        maxUsers: 0,
+        features: [],
+        expiresAt: new Date().toISOString(),
+        gracePeriodDays: 0,
+        signature: "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
     }
     try {
       await query(`UPDATE tenant_licenses SET status = $1, updated_at = NOW() WHERE tenant_id = $2`, [status, tenantId]);

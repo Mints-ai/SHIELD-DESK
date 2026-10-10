@@ -65,6 +65,18 @@
 - **Command:** `python -m py_compile ai-chat-desk/server.py ai-chat-desk/cve_ai_engine.py services/ai-advisor/main.py services/ai-advisor/rag.py services/ai-advisor/claude.py`
 - **Result:** `PASS` (Exit code 0, 0 syntax/AST errors)
 
+### 3.6: Commercial Licensing & Stripe Billing Integration Suite
+- **Command:** `npx tsx --test --import ./tests/setup.ts tests/commercial-stripe-checkout-and-licensing.test.ts`
+- **Result:** `PASS` (8/8 subtests passed, 0 failed)
+  - Phase 1: Canonical Catalogue & Public Plans API (Community, Pro $499, Enterprise $1999)
+  - Phase 2: Checkout Session creation & RBAC isolation (Cross-tenant boundary enforced)
+  - Phase 3: Stripe Webhook Inbox (Idempotent processing, raw signature validation, atomic leasing, retry handling)
+  - Phase 4: PostgreSQL Schema & Live DB Persistence (10/10 tables verified in Supabase PostgreSQL)
+  - Phase 5: Commercial License Service (192-bit cryptographic entropy, zero raw key storage, SHA-256 peppered digests, asymmetric RSA-2048 entitlement token signing)
+  - Phase 6: Subscriptions, Changes, Invoices & 14-Day Grace Periods (Telemetry never dropped during delinquency)
+  - Phase 7: Customer Portal & Checkout UI (Client-side price tampering strictly blocked)
+  - Phase 8: Offline Grace & Seat Quota Enforcement (Concurrent seat cap transactionally guaranteed)
+
 ---
 
 ## 4. Enabled vs. Disabled Product Capabilities for Pilot Scope
@@ -79,10 +91,14 @@
 - Native Endpoint Agent Monitoring & Telemetry Harvesting
 - Tamper-Evident SHA-256 Merkle Tree Evidence Vault
 - Automated Fail-Closed Production Safety Boundaries
+- **Commercial Licensing Service:** Asymmetric RSA-2048 signed offline entitlement tokens, high-entropy key generation, safe display prefix/suffix, seat limits, activation/refresh/deactivation/revocation.
+- **Authoritative Product Catalogue:** Server-side pricing enforcement (`/api/v1/plans`), no client-controlled price injection.
+- **Durable Stripe Webhook Inbox:** Deduplicated, transactional state transitions with replay and reconciliation capabilities.
+- **Customer Billing Portal:** Self-service subscription management, payment method updates, invoice history, and license key retrieval.
 
 ### Disabled / Constrained Capabilities (Pending GA Gates)
 - **Unrestricted Autonomous Host Partitioning:** Constrained to Human Approval (Tier 2) in pilot environments.
-- **Live Credit Card Payouts:** Stripe test mode active; live payouts disabled until merchant keys configured.
+- **Live Credit Card Payouts:** Stripe test mode active; live checkout disabled until merchant live keys are configured by authorized finance operators.
 - **Direct Bare-Metal Patch Downgrade:** Disabled without local package cache infrastructure.
 
 ---
@@ -91,5 +107,7 @@
 
 1. **Mode Setting:** Pilot deployments must run with `APP_ENV=production` and `DEMO_MODE=false` to ensure fail-closed policies are active.
 2. **Governance Setting:** All high-impact remediation actions (host isolation, service termination) must require operator approval (`autonomyMode: assist`).
-3. **Pilot Host Scope:** Agents should initially enroll on designated pilot workstations and test servers before general enterprise rollout.
-4. **Independent Testing:** Commission the accredited external penetration test during the pilot window prior to GA.
+3. **Stripe Live Merchant Configuration:** Live payments require production Stripe Secret Key (`rk_live_...`), Publishable Key (`pk_live_...`), and Webhook Secret (`whsec_...`) injected into deployment environment.
+4. **Pilot Host Scope:** Agents should initially enroll on designated pilot workstations and test servers before general enterprise rollout.
+5. **Independent Testing:** Commission the accredited external penetration test during the pilot window prior to GA.
+

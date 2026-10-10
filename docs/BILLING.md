@@ -1,66 +1,94 @@
-# ShieldDesk — Enterprise Billing & Subscription Architecture
+# ShieldDesk™ — Commercial Stripe Billing & Subscription Architecture
 
-**Document Version:** 1.0.0  
-**Target Release:** ShieldDesk Enterprise SaaS GA  
-**Code Reference:** `src/lib/billing/plans.ts`, `src/lib/billing/stripeWebhook.ts`, `src/lib/billing/metering.ts`  
-**Payment Gateway:** Stripe API (v2023-10-16+)
-
----
-
-## 1. Overview & Tiers
-
-ShieldDesk provides a tiered SaaS subscription model with built-in metered usage for endpoints, data retention, and AI copilot investigations.
-
-### Subscription Plans Matrix
-
-| Plan Tier | Max Endpoints | Retention | SSO / SCIM | AI Gateway | Support SLA | Target Audience |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Starter** | 25 | 14 days | No | Community Models | 48h Email | Small Security Teams / Startups |
-| **Pro** | 250 | 90 days | Google / MS OIDC | Gemini 1.5 Pro, Claude | 12h Priority | Mid-Market Security Operations |
-| **Enterprise** | Unlimited | 365+ days | SAML 2.0 & SCIM 2.0 | Multi-Provider + BYOK | 1h Dedicated SOC | Regulated Enterprises & MSSPs |
+**Document Version:** 2.0.0-commercial  
+**Target Release:** ShieldDesk Commercial GA  
+**Code References:**  
+- Product Catalogue: `src/lib/billing/catalog.ts`
+- Checkout & Customer Portal: `src/lib/billing/checkoutService.ts`
+- Stripe SDK Client: `src/lib/billing/stripeClient.ts`
+- Durable Webhook Inbox & Reconciliation: `src/lib/billing/stripeWebhook.ts`
+- Billing Route Handlers: `src/app/api/v1/billing/*`
+- Legacy Settlement Route: `src/app/api/billing/webhook/route.ts`
+- Customer Billing Dashboard: `src/app/dashboard/billing/page.tsx`
+- Pricing Pages: `src/app/pricing/page.tsx`
 
 ---
 
-## 2. Stripe Webhook Lifecycle
+## 1. Canonical Product Catalogue & Pricing Matrix
 
-Inbound webhooks are received at `/api/billing/webhook` and processed securely via `StripeWebhookHandler` in `src/lib/billing/stripeWebhook.ts`.
+ShieldDesk implements a server-authoritative product catalogue (`src/lib/billing/catalog.ts`). Client applications cannot submit arbitrary price amounts or unverified Stripe Price IDs.
+
+| Plan ID | Display Name | Monthly Price | Annual Price (20% Off) | Max Endpoints | Max Users | Retention | Key Commercial Entitlements |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `community` | **Community Pilot** | Free ($0) | Free ($0) | 5 | 2 | 7 days | Telemetry ingest, real-time detection, community rules, Discord/Slack webhooks. |
+| `professional` | **Professional SOC** | $499 / mo | $399 / mo ($4,788/yr) | 250 | 15 | 90 days | Tier 1 automated containment, SIEM connectors, custom YARA/detection rules, standard SLA. |
+| `enterprise` | **Enterprise Defense** | $1,999 / mo | $1,599 / mo ($19,188/yr) | 10,000 | Unlimited | 365 days | Tier 2 & 3 governed remediations, immutable evidence vault, multi-tenant RLS, 24/7 dedicated SOC SLA. |
+
+---
+
+## 2. Stripe Checkout Lifecycle & Security Invariants
+
+### 2.1 Checkout Session Initiation (`POST /api/v1/billing/checkout-sessions`)
+1. **Authentication & RBAC:** Strictly requires an authenticated billing administrator (`system_admin`, `super_admin`, or `billing_admin`).
+2. **Server-Side Price Resolution:** Maps `planId` and `billingInterval` directly to server-configured Stripe Price IDs. Tampered or client-specified price amounts are rejected.
+3. **Durable Attempt Recording:** Before contacting Stripe, a durable `checkout_attempts` row is inserted into PostgreSQL with a unique correlation key and idempotency key.
+4. **Subscription Mode:** Initiates a Stripe Checkout session in `mode: "subscription"`, associating the authenticated Stripe Customer ID, tenant metadata, and validated redirect URLs.
+5. **No Premature Upgrades:** Creating a checkout session NEVER upgrades the tenant. The tenant remains on their prior tier until authoritative payment webhook verification.
+
+### 2.2 Success Redirect & Polling (`GET /api/v1/billing/checkout-status`)
+- When Stripe redirects the customer to `/checkout/success?attemptId=...`, the UI displays a pending status while polling `/api/v1/billing/checkout-status`.
+- **Security Invariant:** Polling inspects durable database state; polling cannot grant access.
+- Cross-tenant status queries are strictly denied (`400/404`).
+
+---
+
+## 3. Durable Webhook Inbox & Reconciliation Pipeline
+
+Inbound webhooks are received at `/api/billing/webhook` and processed via `StripeWebhookManager` (`src/lib/billing/stripeWebhook.ts`).
 
 ```
-[Stripe Cloud] 
-      | (HTTPS POST with stripe-signature header)
-      v
+[Stripe Cloud POST]
+       |
+       v
 [/api/billing/webhook]
-      |
-      +---> [Signature Verification: constructEvent(body, sig, secret)]
-      |     (Fails closed with 400 if signature invalid or timestamp drift > 300s)
-      |
-      +---> [Event Dispatcher]
-            |
-            +-- 'checkout.session.completed'   --> Provision tenant, bind stripe_customer_id
-            +-- 'customer.subscription.updated' --> Update plan tier, recalculate seat quotas
-            +-- 'customer.subscription.deleted' --> Mark subscription cancelled, trigger grace period
-            +-- 'invoice.payment_succeeded'    --> Reset monthly quota counters, renew license
-            +-- 'invoice.payment_failed'       --> Set tenant status to PAST_DUE, send dunning notice
+       |
+       +---> [1. Raw Request Body Signature Check]
+       |     crypto.timingSafeEqual with STRIPE_WEBHOOK_SECRET. Fails closed with 401.
+       |
+       +---> [2. Durable Inbox Ingestion (stripe_webhook_events)]
+       |     INSERT INTO stripe_webhook_events ... ON CONFLICT (stripe_event_id) DO NOTHING
+       |     If duplicate -> Return HTTP 200 { isDuplicate: true }
+       |
+       +---> [3. Atomic Lease & Queue Worker]
+       |     UPDATE stripe_webhook_events SET status = 'processing', lease_expires_at = NOW() + 2min
+       |
+       +---> [4. Event Execution & State Transitions]
+             |-- 'checkout.session.completed': Provision subscription, bind billing customer, issue commercial license
+             |-- 'customer.subscription.updated': Apply prorated upgrades / effective downgrades
+             |-- 'customer.subscription.deleted': Downgrade to Community, suspend paid entitlements
+             |-- 'invoice.paid': Record invoice PDF/URL, reset billing period, renew license
+             |-- 'invoice.payment_failed': Trigger 14-day delinquency grace period, notify billing admin
+             |-- 'charge.refunded': Suspend subscription according to approved refund policy
 ```
 
 ---
 
-## 3. Usage Metering & Quota Enforcement
+## 4. Subscriptions, Invoices, Plan Changes & Grace Periods
 
-Metering is calculated in real-time via `UsageMeter` (`src/lib/billing/metering.ts`):
-- **Active Endpoints:** Count of agents transmitting heartbeats within the last 15 minutes.
-- **AI Copilot Invocations:** Daily query count tracked in Redis / database counters.
-- **Evidence Storage:** Byte volume of encrypted evidence bundles in the vault.
+### 4.1 Plan Upgrades (`POST /api/v1/billing/change-plan`)
+- Upgrades apply Stripe proration policies (`proration_behavior: "create_prorations"`).
+- Target tier limits and entitlements unlock immediately upon provider confirmation.
+- State transitions are recorded in `subscription_status_history`.
 
-When an endpoint exceeds its plan quota:
-1. **Warning Threshold (90%):** Banner notifications displayed in UI; email sent to tenant billing admin.
-2. **Hard Cap (100%):** Subsequent agent enrollments are rejected with `HTTP 402 Payment Required` unless overage billing is explicitly enabled. Existing agents continue operating without disruption.
+### 4.2 Plan Downgrades
+- Downgrades take effect at the end of the current billing period to protect customer data.
+- Quotas (endpoints, retention, users) are evaluated before downgrade enforcement to prevent silent telemetry loss.
 
----
+### 4.3 Cancellations (`POST /api/v1/billing/cancel`)
+- Default behavior: Schedules cancellation at billing period end (`cancel_at_period_end: true`).
+- Immediate cancellation: Explicitly supported for emergency decommission, immediately revoking paid entitlements and reverting tenant to `community`.
 
-## 4. Dunning, Delinquency & Grace Periods
-
-1. **Payment Failure:** Immediate retry schedule via Stripe Smart Retries. Tenant state set to `PAST_DUE`.
-2. **Grace Period (14 Days):** Full security operations, telemetry ingestion, and alert notifications remain active. Remediation and automated actions continue unimpeded.
-3. **Suspension (Day 15+):** Tenant shifts to `SUSPENDED` mode. Dashboard becomes read-only; automated remediations require manual confirmation; agent telemetry buffered locally.
-4. **Data Purge (Day 60+):** Terminated tenant data enters the GDPR-compliant data destruction pipeline.
+### 4.4 14-Day Payment Failure Grace Period
+- If an invoice payment fails (`invoice.payment_failed`), the subscription transitions to `past_due`.
+- A 14-day grace period is granted during which security monitoring, agent heartbeats, and audit logs continue without interruption.
+- Automated containment or new endpoint enrollments are restricted until payment is reconciled.

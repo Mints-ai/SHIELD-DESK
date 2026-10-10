@@ -19,6 +19,7 @@ import {
   Flame,
   Cloud,
   Bot,
+  CreditCard,
 } from "lucide-react";
 import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
@@ -114,6 +115,7 @@ export function TopNavBar() {
     { href: "/dashboard/threats", label: "Threat Engine", icon: Flame },
     { href: "/dashboard/compliance", label: "ISO 27001 Audit", icon: FileCheck2 },
     { href: "/dashboard/risk-scorecard", label: "Risk Scorecard", icon: BarChart3 },
+    { href: "/dashboard/billing", label: "Billing & Licenses", icon: CreditCard },
   ];
 
   const services = [

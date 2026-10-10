@@ -1,76 +1,116 @@
-# ShieldDesk — Cryptographic Licensing Specification
+# ShieldDesk™ — Commercial Licensing Service Architecture
 
-**Document Version:** 1.0.0  
-**Target Release:** ShieldDesk Enterprise SaaS GA & Air-Gapped Deployments  
-**Code Reference:** `src/lib/billing/licenses.ts`  
-**Security Standard:** HMAC-SHA256 / Timing-Safe Signature Validation
+**Document Version:** 2.0.0-commercial  
+**Target Release:** ShieldDesk Commercial GA & Air-Gapped Deployments  
+**Code References:**  
+- Core Cryptographic Licensing: `src/lib/billing/licenses.ts`
+- Installation & Agent Activation: `src/lib/licensing/licenseActivation.ts`
+- License APIs: `src/app/api/v1/licenses/*`
+- Fleet mTLS & Certificates: `src/lib/fleet/certificates.ts`, `src/lib/fleet/mtlsGuard.ts`
+- Command Signing & Key Ring: `src/lib/fleet/commandSigning.ts`
 
 ---
 
-## 1. Overview & Format
+## 1. Cryptographic Principles & Threat Model
 
-ShieldDesk implements a secure, portable, and cryptographically signed commercial licensing engine supporting both cloud-managed and air-gapped on-premises deployments.
+ShieldDesk enforces commercial compliance while upholding zero-trust operational safety:
 
-A ShieldDesk Commercial License is represented as a compact base64url token with two segments separated by a period (`.`):
+1. **Zero Raw Secret Persistence:** Raw commercial license keys are NEVER stored in the database. Only an irreversible one-way keyed digest (`hashLicenseKey = HMAC-SHA256(pepper, rawLicense)`) and display fragments (`SD-ENT-****-B24F`) are persisted.
+2. **Key Pepper vs. Signing Key Separation:** The lookup pepper (`SHIELDDESK_LICENSE_PEPPER`) is isolated from entitlement signing keys (`SHIELDDESK_LICENSE_SECRET`). Session secret fallback is prohibited.
+3. **Asymmetric Signing for Customer-Hosted / Air-Gapped Nodes:** The licensing service retains the RSA-2048 private key. Customer-hosted agent binaries include only public verification keys, preventing reverse engineering of license-issuing capabilities.
+4. **Hardware & Installation Binding:** Activations bind to installation UUIDs, device identities, and X.509 certificates.
+5. **Transactional Seat Caps:** Concurrent activation attempts are enforced transactionally against `max_endpoints`.
+
+---
+
+## 2. License Key Architecture & Format
+
+A ShieldDesk high-entropy commercial license key consists of two segments:
 ```
 <encoded_payload>.<hmac_signature>
 ```
 
-### Segment Details
-
-1. **`encoded_payload`:** Base64url-encoded JSON representation of `LicensePayload`:
-   ```json
-   {
-     "licenseId": "lic_9f8b4c72-3e2b-4567-b891-2d7c1a89b3f4",
-     "tenantId": "tenant-enterprise-globex",
-     "tier": "enterprise",
-     "maxEndpoints": 1000,
-     "maxUsers": 50,
-     "features": [
-       "sso_scim",
-       "ai_gateway_byok",
-       "custom_remediation_playbooks",
-       "dedicated_vault_anchoring"
-     ],
-     "issuedAt": "2026-10-01T00:00:00.000Z",
-     "expiresAt": "2027-10-01T00:00:00.000Z"
-   }
-   ```
-2. **`hmac_signature`:** Base64url-encoded HMAC-SHA256 signature generated using `SHIELDDESK_LICENSE_SECRET`.
-
----
-
-## 2. Verification Algorithm
-
-License validation occurs synchronously on application startup and periodically in memory via `verifyCommercialLicense`:
-
-```typescript
-// 1. Structure Verification
-const parts = rawLicense.split(".");
-if (parts.length !== 2) throw new Error("Malformed license token");
-
-// 2. Constant-Time Cryptographic Signature Check
-const hmac = crypto.createHmac("sha256", secret).update(encodedPayload).digest();
-const expectedSig = base64UrlEncode(hmac);
-const isValid = crypto.timingSafeEqual(Buffer.from(receivedSig), Buffer.from(expectedSig));
-
-// 3. Expiration Verification
-if (Date.now() > new Date(payload.expiresAt).getTime()) {
-  return { valid: false, reason: "License expired" };
+### 2.1 Payload Fields
+```json
+{
+  "licenseId": "lic_7f8a9b2c3d4e5f60718293a4b5c6d7e8",
+  "tenantId": "tenant-enterprise-globex",
+  "tier": "enterprise",
+  "maxEndpoints": 10000,
+  "maxUsers": 100,
+  "features": [
+    "telemetryIngest",
+    "realTimeDetection",
+    "aiInvestigation",
+    "automatedRemediationTier1",
+    "governedRemediationTier2",
+    "dualApprovalTier3",
+    "siemConnectors",
+    "customRules",
+    "discordSlackAlerts",
+    "endpointFleet",
+    "complianceVault"
+  ],
+  "issuedAt": "2026-10-10T12:00:00.000Z",
+  "expiresAt": "2027-10-10T12:00:00.000Z",
+  "keyId": "sd-k1",
+  "signingMode": "symmetric"
 }
 ```
 
-### Security Defenses
-
-- **Timing Attack Immunity:** Uses `crypto.timingSafeEqual` to eliminate timing side-channels during signature inspection.
-- **Fail-Closed in Production:** In production mode (`NODE_ENV === "production"`), the server strictly throws if `SHIELDDESK_LICENSE_SECRET` is unset, preventing insecure default keys.
-- **Tamper Evidence:** Modifying any payload field (such as `maxEndpoints` or `expiresAt`) invalidates the HMAC signature and immediately downgrades the tenant to unverified state.
+### 2.2 Peppered Database Lookup
+```typescript
+const pepper = process.env.SHIELDDESK_LICENSE_PEPPER;
+const keyHash = crypto.createHmac("sha256", pepper).update(rawLicenseKey.trim()).digest("hex");
+```
+Queries verify:
+```sql
+SELECT * FROM product_licenses WHERE license_key_hash = $1 AND tenant_id = $2 AND status = 'active';
+```
 
 ---
 
-## 3. Air-Gapped & Offline Deployments
+## 3. Asymmetric Entitlement Tokens (Offline & Air-Gapped)
 
-For sovereign, defense, or air-gapped financial networks:
-- Licenses do not require internet access or recurring phone-home callbacks to validate.
-- License keys are supplied via environment variable `SHIELDDESK_LICENSE_KEY` or through the admin settings interface.
-- 30-day grace periods trigger when nearing expiration, surfacing administrative alerts without terminating active security defenses.
+Upon activation or refresh, the control plane returns an asymmetric entitlement token:
+```
+token = base64url(JSON({
+  payload: {
+    tenantId,
+    installationId,
+    tier,
+    maxEndpoints,
+    features,
+    issuedAt,
+    expiresAt,
+    keyId: "sd-k1"
+  },
+  signature: RSA-SHA256(canonicalPayload, privateControlPlaneKey)
+}))
+```
+Deployed software validates `signature` against the public key without requiring constant internet connectivity.
+
+---
+
+## 4. Activation, Refresh, Deactivation & Revocation Lifecycle
+
+### 4.1 Activation (`POST /api/v1/licenses/activate`)
+1. Agent presents `licenseKey`, `installationId`, `deviceIdentity`, and X.509 `certificatePem`.
+2. Licensing service verifies device certificate authenticity via `MTLSGuard`.
+3. Verifies `licenseKey` signature, expiration, and tenant binding.
+4. Checks active seat count: `COUNT(active_activations) < max_endpoints`.
+5. Inserts activation record in `license_activations` table.
+6. Returns short-lived asymmetric signed entitlement token.
+
+### 4.2 Periodic Refresh (`POST /api/v1/licenses/refresh`)
+- Agents refresh tokens every 24 hours.
+- If connectivity is lost, the agent operates under a configurable 14-day offline grace period.
+
+### 4.3 Deactivation (`POST /api/v1/licenses/activations/:id/deactivate`)
+- Authorized administrators can deactivate decommissioned or replaced installations, freeing seat slots immediately.
+
+### 4.4 Administrative Revocation (`POST /api/v1/licenses/:id/revoke`)
+- Strictly restricted to `system_admin` or `super_admin`.
+- Transitions license status in `product_licenses` and `tenant_licenses` to `revoked`.
+- Broadcasts revocation across the agent fleet, immediately rejecting further heartbeats and command dispatches.
+- Written to immutable hash-chain audit ledger.

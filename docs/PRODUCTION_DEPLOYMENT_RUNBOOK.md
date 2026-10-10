@@ -108,3 +108,71 @@ curl -X POST http://localhost:3000/api/fleet/kill-switch \
   -d '{"action": "ENGAGE_ALL", "reason": "Emergency deployment abort"}'
 ```
 All connected agents will immediately lock down command execution and reject further instructions with `423 Locked`.
+
+---
+
+## 4. Commercial Billing & Licensing Operations Runbook
+
+### Step 4.1: Database Migration Verification
+Verify that the commercial licensing and billing schema (Phase M) is active in PostgreSQL:
+```sql
+SELECT table_name FROM information_schema.tables 
+WHERE table_schema = 'public' 
+AND table_name IN (
+  'billing_customers',
+  'billing_catalog_plans',
+  'checkout_attempts',
+  'subscriptions',
+  'subscription_history',
+  'invoices',
+  'product_licenses',
+  'license_activations',
+  'stripe_webhook_events',
+  'billing_notification_outbox'
+);
+```
+Ensure all tables have Row-Level Security (RLS) enabled and foreign key indexes created.
+
+### Step 4.2: Stripe Production Merchant Setup
+1. Configure Stripe API keys in secret manager:
+   - `STRIPE_SECRET_KEY`: `rk_live_...` (Restricted Key with minimum required permissions: checkout, customers, subscriptions, billing_portal)
+   - `STRIPE_WEBHOOK_SECRET`: `whsec_...` from Stripe Dashboard > Webhooks
+   - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`: `pk_live_...`
+2. Create Webhook Endpoint in Stripe Dashboard pointing to:
+   - `https://shielddesk.mintsglobal.ae/api/billing/webhook`
+   - Monitored Events:
+     - `checkout.session.completed`
+     - `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`
+     - `invoice.paid`, `invoice.payment_failed`
+     - `charge.refunded`, `charge.dispute.created`
+3. Configure License Asymmetric Signing Keys:
+   - `LICENSE_SIGNING_PRIVATE_KEY_PEM`: RSA 2048 private key (kept strictly server-side)
+   - `LICENSE_PEPPER`: 64-character hex cryptographic pepper (strictly isolated from session secret)
+
+### Step 4.3: Webhook Event Ingestion & Inbox Processing Check
+Execute health check on webhook event queue:
+```sql
+-- Check for pending or stalled webhook events
+SELECT id, event_type, status, retry_count, last_error, received_at 
+FROM stripe_webhook_events 
+WHERE status IN ('received', 'processing', 'failed')
+ORDER BY received_at DESC;
+```
+
+### Step 4.4: License Key Reissue & Revocation Procedure
+1. **Emergency License Revocation:**
+   ```bash
+   curl -X POST https://shielddesk.mintsglobal.ae/api/v1/licenses/$LICENSE_ID/revoke \
+     -H "Authorization: Bearer $SUPER_ADMIN_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"reason": "Compromised deployment or non-payment", "supersededBy": null}'
+   ```
+2. **Reissue License for Authorized Tenant:**
+   - Revoke old license with reason "Administrative reissue".
+   - Generate high-entropy 192-bit cryptographic replacement.
+   - Display once in tenant administrative portal.
+
+### Step 4.5: Offline Grace Period & Quota Invariants
+- Delinquent payments enter a 14-day grace period; monitoring telemetry ingestion is **never** silently dropped.
+- Hosted SaaS customers do not receive control-plane source code or binaries; access is mediated entirely through authenticated tenant isolation.
+

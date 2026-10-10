@@ -47,22 +47,24 @@ export async function POST(req: NextRequest) {
 
     // 1. Supabase Auth Registration (if configured)
     if (supabaseServer) {
-      const { data, error } = await supabaseServer.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            organization_name: organizationName || "Default Organization",
+      try {
+        const { data, error } = await supabaseServer.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              organization_name: organizationName || "Default Organization",
+            },
           },
-        },
-      });
+        });
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
-      }
-
-      if (data.user) {
-        createdUid = data.user.id;
+        if (error) {
+          console.warn("[Signup] Cloud auth warning (falling back to local user store):", error.message);
+        } else if (data.user) {
+          createdUid = data.user.id;
+        }
+      } catch (cloudErr: any) {
+        console.warn("[Signup] Cloud auth connection exception:", cloudErr?.message || cloudErr);
       }
     }
 

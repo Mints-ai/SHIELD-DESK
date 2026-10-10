@@ -29,7 +29,6 @@ function Write-Status {
 function Check-Prerequisites {
     Write-Host "  Checking prerequisites..." -ForegroundColor DarkGray
     $missing = @()
-    if (-not (Get-Command "ollama"  -ErrorAction SilentlyContinue)) { $missing += "ollama  (https://ollama.com)" }
     if (-not (Get-Command "python"  -ErrorAction SilentlyContinue)) { $missing += "python  (Python 3.10+)" }
     if (-not (Get-Command "node"    -ErrorAction SilentlyContinue)) { $missing += "node    (Node.js 20+)" }
     if ($missing.Count -gt 0) {
@@ -39,7 +38,10 @@ function Check-Prerequisites {
         Write-Host ""
         exit 1
     }
-    Write-Host "  [OK] All tools found." -ForegroundColor Green
+    if (-not (Get-Command "ollama" -ErrorAction SilentlyContinue)) {
+        Write-Host "  [INFO] ollama CLI not detected (optional for cloud/deterministic AI fallback)." -ForegroundColor DarkYellow
+    }
+    Write-Host "  [OK] Required tools verified." -ForegroundColor Green
 }
 
 # ---- Load Environment Variables (.env.local / .env) ---------
@@ -192,7 +194,13 @@ if ($hasNats) {
     Write-Host "  [INFO] NATS server not found. Run 'npm run setup:nats' to activate distributed streaming." -ForegroundColor DarkYellow
 }
 
-$ollamaJob  = Start-Service "Ollama"      "ollama serve"   $ROOT        $envMap
+$hasOllama = [bool](Get-Command "ollama" -ErrorAction SilentlyContinue)
+$ollamaJob = $null
+if ($hasOllama) {
+    $ollamaJob  = Start-Service "Ollama"      "ollama serve"   $ROOT        $envMap
+} else {
+    Write-Host "  [INFO] Skipping local Ollama process; cloud/API models active." -ForegroundColor DarkYellow
+}
 $pythonJob  = Start-Service "PythonBrain" "python server.py" $PYTHON    $envMap
 $nextJob    = Start-Service "NextJS"      "npm run dev"    $ROOT        $envMap
 $threatDir  = Join-Path $ROOT "services\threat"
@@ -216,14 +224,15 @@ $agentExe   = Join-Path $ROOT "bin\shielddesk-agent.exe"
 $agentCmd   = if (Test-Path $agentExe) { "cmd.exe /c `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
 $agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
 
-$allJobs = @($ollamaJob, $pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob, $agentJob)
+$allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob, $agentJob)
+if ($ollamaJob) { $allJobs += $ollamaJob }
 if ($natsJob) { $allJobs += $natsJob }
 
 Write-Host ""
 Write-Host "  Waiting for all ports to open..." -ForegroundColor DarkGray
 Write-Host ""
 
-$ok1 = Wait-ForPort 11434 "Ollama LLM"
+$ok1 = if ($hasOllama) { Wait-ForPort 11434 "Ollama LLM" } else { $true }
 $ok2 = Wait-ForPort 8000  "Python CVE Brain"
 $ok3 = Wait-ForPort 3000  "Next.js UI"
 $ok4 = Wait-ForPort 8003  "Go Threat Engine"
