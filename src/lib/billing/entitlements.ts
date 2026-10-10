@@ -113,7 +113,11 @@ export class EntitlementService {
    * Retrieves the active or registered commercial license for a tenant.
    */
   public static async getLicense(tenantId: string): Promise<TenantLicenseRecord | null> {
-    if (this.inMemoryLicenses.has(tenantId)) {
+    const isProd =
+      (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production") &&
+      (process.env.NODE_ENV !== "test" || process.env.SHIELDDESK_ENFORCE_PROD_DB === "true");
+
+    if (!isProd && this.inMemoryLicenses.has(tenantId)) {
       return this.inMemoryLicenses.get(tenantId) || null;
     }
 
@@ -145,8 +149,13 @@ export class EntitlementService {
         this.inMemoryLicenses.set(tenantId, record);
         return record;
       }
-    } catch {
-      // Fallback
+    } catch (err: unknown) {
+      if (isProd) {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to query tenant licenses in production: ${err instanceof Error ? err.message : "DB error"}`
+        );
+      }
+      // Fallback for non-production tests
     }
 
     return null;

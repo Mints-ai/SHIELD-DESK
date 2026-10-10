@@ -235,8 +235,16 @@ export class LicenseActivationService {
           record.activatedAt,
         ]
       );
-    } catch {
-      // In-memory fallback
+    } catch (err: unknown) {
+      const isProd =
+        (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production") &&
+        (process.env.NODE_ENV !== "test" || process.env.SHIELDDESK_ENFORCE_PROD_DB === "true");
+      if (isProd) {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to persist license activation in production: ${err instanceof Error ? err.message : "DB error"}`
+        );
+      }
+      // In-memory fallback for non-production unit testing
     }
 
     await recordHashChainEvent({
@@ -310,8 +318,13 @@ export class LicenseActivationService {
          WHERE (id = $2 OR subscription_id = $2) AND tenant_id = $3`,
         [reason || "Administrative revocation", licenseId, tenantId]
       );
-    } catch {
-      // In-memory fallback
+    } catch (err: unknown) {
+      if (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production") {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to persist license revocation in production: ${err instanceof Error ? err.message : "DB error"}`
+        );
+      }
+      // In-memory fallback for non-production tests
     }
     return { success: true, licenseId, state: "REVOKED" };
   }

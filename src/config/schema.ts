@@ -52,6 +52,8 @@ export const RawEnvironmentSchema = z.object({
   // SaaS & Billing
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  SHIELDDESK_LICENSE_SECRET: z.string().optional(),
+  SHIELDDESK_LICENSE_PEPPER: z.string().optional(),
 });
 
 export type RawEnvironment = z.infer<typeof RawEnvironmentSchema>;
@@ -218,6 +220,35 @@ export function validateEnvironment(env: Record<string, string | undefined> = pr
     validationErrors.push(
       "CRITICAL: SHIELDDESK_INGEST_API_KEY must be at least 16 characters in production."
     );
+  }
+
+  // Production Rule: Reject mock/placeholder Stripe secrets in production
+  if (isProduction) {
+    if (raw.STRIPE_SECRET_KEY && (raw.STRIPE_SECRET_KEY.startsWith("sk_test_mock") || raw.STRIPE_SECRET_KEY.startsWith("mock_"))) {
+      validationErrors.push(
+        "SECURITY VIOLATION: Mock-prefixed STRIPE_SECRET_KEY is strictly forbidden in production deployments."
+      );
+    }
+    if (raw.STRIPE_WEBHOOK_SECRET && (raw.STRIPE_WEBHOOK_SECRET.startsWith("whsec_mock") || raw.STRIPE_WEBHOOK_SECRET.startsWith("mock_"))) {
+      validationErrors.push(
+        "SECURITY VIOLATION: Mock-prefixed STRIPE_WEBHOOK_SECRET is strictly forbidden in production deployments."
+      );
+    }
+    if (raw.SHIELDDESK_LICENSE_PEPPER && raw.SHIELDDESK_LICENSE_PEPPER.length < 32) {
+      validationErrors.push(
+        "CRITICAL: Dedicated SHIELDDESK_LICENSE_PEPPER must be at least 32 characters in production."
+      );
+    }
+    if (
+      raw.SHIELDDESK_LICENSE_PEPPER &&
+      (raw.SHIELDDESK_LICENSE_PEPPER === raw.SHIELDDESK_LICENSE_SECRET ||
+        raw.SHIELDDESK_LICENSE_PEPPER === raw.SHIELDDESK_SESSION_SECRET ||
+        raw.SHIELDDESK_LICENSE_PEPPER === "shielddesk_lookup_pepper_v1")
+    ) {
+      validationErrors.push(
+        "SECURITY VIOLATION: Dedicated SHIELDDESK_LICENSE_PEPPER must be isolated from license signing and session secrets in production."
+      );
+    }
   }
 
   const sessionSecret =

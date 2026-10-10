@@ -11,11 +11,12 @@ declare global {
  * Fails closed in production if STRIPE_SECRET_KEY is not configured.
  */
 export function getStripeServerClient(): Stripe {
+  const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
   const apiKey = process.env.STRIPE_SECRET_KEY;
-  if (!apiKey) {
-    if (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production") {
+  if (!apiKey || apiKey.startsWith("sk_test_mock") || apiKey.startsWith("mock_")) {
+    if (isProd) {
       throw new Error(
-        "CRITICAL BILLING CONFIGURATION ERROR: STRIPE_SECRET_KEY is not configured in production. Live checkout is disabled."
+        "CRITICAL BILLING CONFIGURATION ERROR: STRIPE_SECRET_KEY is missing or mock-prefixed in production. Live checkout is disabled."
       );
     }
     // Return dummy test-initialized instance for dev/test environments without live keys
@@ -51,6 +52,8 @@ export async function getOrCreateStripeCustomer(params: {
 }): Promise<string> {
   const { tenantId, email, name } = params;
 
+  const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+
   // 1. Check local database for existing customer mapping
   try {
     const res = await query<{ stripe_customer_id: string }>(
@@ -60,7 +63,12 @@ export async function getOrCreateStripeCustomer(params: {
     if (res.rows.length > 0 && res.rows[0].stripe_customer_id) {
       return res.rows[0].stripe_customer_id;
     }
-  } catch {
+  } catch (err: unknown) {
+    if (isProd) {
+      throw new Error(
+        `CRITICAL_DATABASE_UNAVAILABLE: Failed to query billing_customers in production: ${err instanceof Error ? err.message : "DB error"}`
+      );
+    }
     // If DB offline/unit test mode, proceed to memory/provider check
   }
 
@@ -68,6 +76,9 @@ export async function getOrCreateStripeCustomer(params: {
 
   // 2. If running under mock test key without real Stripe connectivity
   if (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY.startsWith("sk_test_mock")) {
+    if (isProd) {
+      throw new Error("CRITICAL: Mock Stripe customer creation is strictly forbidden in production.");
+    }
     const mockCustomerId = `cus_mock_${tenantId.replace(/[^a-zA-Z0-9]/g, "_")}`;
     try {
       await query(
@@ -100,7 +111,12 @@ export async function getOrCreateStripeCustomer(params: {
        ON CONFLICT (tenant_id) DO UPDATE SET stripe_customer_id = $3, updated_at = NOW()`,
       [`bc-${Date.now()}`, tenantId, customerId, email || null]
     );
-  } catch {
+  } catch (err: unknown) {
+    if (isProd) {
+      throw new Error(
+        `CRITICAL_DATABASE_UNAVAILABLE: Failed to persist billing_customers mapping in production: ${err instanceof Error ? err.message : "DB error"}`
+      );
+    }
     // Non-fatal fallback for tests
   }
 

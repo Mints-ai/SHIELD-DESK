@@ -113,7 +113,7 @@ export class StripeWebhookManager {
 
     // Resolve tenant ownership from persisted customers or payload metadata
     let tenantId = params.tenantId;
-    if (!tenantId) {
+    if (!tenantId && payload) {
       tenantId =
         (payload.metadata as any)?.tenant_id ||
         (payload.metadata as any)?.tenantId ||
@@ -168,7 +168,12 @@ export class StripeWebhookManager {
           return { isDuplicate: true, eventRecord: existing };
         }
       }
-    } catch {
+    } catch (err: unknown) {
+      if (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production") {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to record Stripe webhook event in production: ${err instanceof Error ? err.message : "DB error"}`
+        );
+      }
       // In-memory mode fallback for unit test harness
     }
 
@@ -185,6 +190,7 @@ export class StripeWebhookManager {
     actionTaken: string;
     error?: string;
   }> {
+    const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
     const event = this.inMemoryProcessedEvents.get(stripeEventId);
     if (!event) {
       return { success: false, actionTaken: "none", error: `Event '${stripeEventId}' not found in queue.` };
@@ -196,14 +202,23 @@ export class StripeWebhookManager {
 
     // Atomic lease update in database
     try {
-      await query(
+      const leaseRes = await query<{ id: string }>(
         `UPDATE stripe_webhook_events
          SET status = 'processing', lease_expires_at = NOW() + INTERVAL '2 minutes', retry_count = retry_count + 1
-         WHERE stripe_event_id = $1 AND (status IN ('pending', 'failed') OR lease_expires_at < NOW())`,
+         WHERE stripe_event_id = $1 AND (status IN ('pending', 'failed') OR lease_expires_at < NOW())
+         RETURNING id`,
         [stripeEventId]
       );
-    } catch {
-      // In-memory fallback
+      if (isProd && leaseRes.rows.length === 0) {
+        return { success: true, actionTaken: "already_claimed_or_processed" };
+      }
+    } catch (err: unknown) {
+      if (isProd) {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to claim event lease in production: ${err instanceof Error ? err.message : "DB error"}`
+        );
+      }
+      // In-memory fallback for non-production tests
     }
 
     event.status = "processing";
@@ -487,8 +502,13 @@ export class StripeWebhookManager {
            WHERE stripe_event_id = $1`,
           [stripeEventId]
         );
-      } catch {
-        // Fallback
+      } catch (err: unknown) {
+        if (isProd) {
+          throw new Error(
+            `CRITICAL_DATABASE_UNAVAILABLE: Failed to mark event processed in production: ${err instanceof Error ? err.message : "DB error"}`
+          );
+        }
+        // Fallback for non-production tests
       }
 
       await recordHashChainEvent({

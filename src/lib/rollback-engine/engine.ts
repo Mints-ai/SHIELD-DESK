@@ -128,7 +128,7 @@ export class RollbackEngine {
 
         if (dispatchSuccess) {
           if (isSimulated) {
-            status = "RESTORATION_VERIFIED";
+            status = "SIMULATION_ONLY";
           } else {
             status = "ROLLBACK_DISPATCHED";
           }
@@ -145,7 +145,7 @@ export class RollbackEngine {
       dispatchSuccess = true;
       dispatchOutput = `Rollback (${request.rollbackType}) executed on agent ${request.agentId} using snapshot ${request.snapshotId}. Reason: ${request.reason}.`;
       isSimulated = true;
-      status = "RESTORATION_VERIFIED";
+      status = "SIMULATION_ONLY";
     }
 
     const output = dispatchOutput || `Rollback (${request.rollbackType}) executed on agent ${request.agentId} using snapshot ${request.snapshotId}. Reason: ${request.reason}.`;

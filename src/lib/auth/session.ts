@@ -83,8 +83,13 @@ export async function getSessionFromRequest(
         if (!error && data?.user) {
           // S5: Read role and tenant exclusively from server-set app_metadata,
           // never client-writable user_metadata.
-          const tenantId =
-            (data.user.app_metadata?.tenant_id as string) || "acme-tenant";
+          const tenantId = data.user.app_metadata?.tenant_id as string | undefined;
+          if (!tenantId || typeof tenantId !== "string" || !tenantId.trim()) {
+            console.warn(
+              `[Auth] Supabase user ${data.user.id} rejected: missing trusted server-side app_metadata.tenant_id.`
+            );
+            return null; // Fail closed: NEVER map unassigned identity to default "acme-tenant"
+          }
           const role =
             (data.user.app_metadata?.role as ShieldDeskRole) || "user";
           return {

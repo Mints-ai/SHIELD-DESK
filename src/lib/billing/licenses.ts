@@ -57,11 +57,40 @@ function getLicenseSigningSecret(): string {
  * Used exclusively to compute the irreversible one-way digest of license keys for database lookup.
  */
 function getLicenseLookupPepper(): string {
-  return (
-    process.env.SHIELDDESK_LICENSE_PEPPER ||
-    process.env.SHIELDDESK_LICENSE_SECRET ||
-    "shielddesk_lookup_pepper_v1"
-  );
+  const pepper = process.env.SHIELDDESK_LICENSE_PEPPER;
+  const isProd =
+    process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+
+  if (!pepper) {
+    if (isProd) {
+      throw new Error(
+        "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_LICENSE_PEPPER must be configured in production. Shared secret fallback is prohibited."
+      );
+    }
+    return "shielddesk_lookup_pepper_dev_isolated_v1";
+  }
+
+  if (isProd) {
+    if (pepper.length < 32) {
+      throw new Error(
+        "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_LICENSE_PEPPER must be at least 32 characters in production."
+      );
+    }
+    const signingSecret = process.env.SHIELDDESK_LICENSE_SECRET;
+    const sessionSecret = process.env.SHIELDDESK_SESSION_SECRET;
+    if (
+      pepper === signingSecret ||
+      pepper === sessionSecret ||
+      pepper === "shielddesk_lookup_pepper_v1" ||
+      pepper === "shielddesk_lookup_pepper_dev_isolated_v1"
+    ) {
+      throw new Error(
+        "SECURITY VIOLATION: SHIELDDESK_LICENSE_PEPPER must be a dedicated high-entropy secret distinct from signing and session secrets in production."
+      );
+    }
+  }
+
+  return pepper;
 }
 
 /**
