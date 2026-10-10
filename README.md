@@ -69,10 +69,11 @@ The platform incorporates official high-resolution 3D branding and an enterprise
 
 | Asset | Path | Resolution / Spec | Usage |
 | :--- | :--- | :--- | :--- |
-| **Primary 3D Shield Logo** | `public/shielddesk-logo.png`<br>`docs/shielddesk-logo.png` | 1536×1024 Hi-Res PNG | Official brand shield, documentation, headers, and media kits. |
-| **Favicon (.ico)** | `public/favicon.ico`<br>`public/favicon/favicon.ico` | Standard Multi-Res ICO | Browser tab and desktop shortcut icon. |
+| **Primary 3D Shield Logo** | `public/shielddesk-logo.png`<br>`docs/shielddesk-logo.png` | 1024×682 Transparent PNG | Full brand mark with typography and tagline for headers and media. |
+| **Standalone 3D Shield Emblem** | `public/shield-emblem.png` | 382×423 Transparent PNG | Isolated 3D metallic shield for sidebar, mobile nav, and UI components. |
+| **Favicon (.ico)** | `src/app/favicon.ico`<br>`public/favicon.ico` | Standard Multi-Res ICO | Browser tab, Next.js root metadata, and desktop shortcut icon. |
 | **Web Favicons** | `public/favicon/favicon-32x32.png`<br>`public/favicon/favicon-16x16.png` | 32×32 & 16×16 PNG | High-density retina displays and bookmark bars. |
-| **Apple Touch Icon** | `public/favicon/apple-touch-icon.png` | 180×180 PNG | iOS / iPadOS home screen web applications. |
+| **Apple Touch Icon** | `public/favicon/apple-touch-icon.png`<br>`src/app/apple-icon.png` | 180×180 PNG | iOS / iPadOS home screen web applications. |
 | **Android Chrome Icons** | `public/favicon/android-chrome-192x192.png`<br>`public/favicon/android-chrome-512x512.png` | 192×192 & 512×512 PNG | PWA install targets and Android launcher icons. |
 | **Web App Manifest** | `public/favicon/site.webmanifest` | W3C Standard Manifest | Progressive Web App installation and standalone window mode. |
 

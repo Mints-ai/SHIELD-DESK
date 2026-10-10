@@ -18,6 +18,7 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/favicon.ico",
   "/logo.png",
   "/shielddesk-logo.png",
+  "/shield-emblem.png",
   "/robots.txt",
   "/sitemap.xml",
 ]);
@@ -130,9 +131,9 @@ export const config = {
      * Match all request paths except:
      * - _next/static (static files)
      * - _next/image (image optimization files)
-     * - favicon.ico, favicon/, logo.png, shielddesk-logo.png (public images/icons)
+     * - favicon.ico, favicon/, logo.png, shielddesk-logo.png, shield-emblem.png (public images/icons)
      */
-    "/((?!_next/static|_next/image|favicon.ico|favicon|logo.png|shielddesk-logo.png).*)",
+    "/((?!_next/static|_next/image|favicon.ico|favicon|logo.png|shielddesk-logo.png|shield-emblem.png).*)",
   ],
 };
 
