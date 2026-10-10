@@ -1,0 +1,110 @@
+# ShieldDesk™ — Production Deployment & Rollback Runbook
+
+**Document Version:** 1.0.0  
+**Effective Date:** 2026-10-10  
+**Target Environment:** Production Cloud & Hybrid Kubernetes / Container Infrastructure  
+**Core Standard:** PROVE BEFORE YOU ACT
+
+---
+
+## 1. Pre-Deployment Release Verification
+
+Before promoting any release artifact to staging or production, execute and verify the following gates:
+
+### Step 1.1: Clean Codebase & Compilation Validation
+```powershell
+# 1. Verify clean working directory
+git status -s
+
+# 2. Execute TypeScript typecheck (Must exit 0 with zero errors)
+npx tsc --noEmit
+
+# 3. Execute Node.js full SOC test suite (Must pass 100% of non-skipped tests)
+npm test
+
+# 4. Verify Go universal endpoint agent build & tests
+Set-Location agent
+go test -v ./...
+go build -ldflags="-s -w" -o ../bin/shielddesk-agent.exe ./cmd
+Set-Location ..
+```
+
+### Step 1.2: Environment Variable Configuration Check
+Ensure the production `.env.production` or container environment fulfills `src/config/schema.ts`:
+- `APP_ENV=production`
+- `NODE_ENV=production`
+- `DEMO_MODE=false` (Strictly verified: system throws if `DEMO_MODE=true` in production)
+- `SHIELDDESK_SESSION_SECRET` (Minimum 32 random cryptographic characters)
+- `DATABASE_URL` (PostgreSQL with SSL enabled: `sslmode=require`)
+- `RSA_SIGNING_PRIVATE_KEY` / `RSA_SIGNING_PUBLIC_KEY` (RSA-2048 PEM keys for signed command dispatch)
+
+---
+
+## 2. Production Deployment Execution
+
+### Step 2.1: Database Migrations
+Run schema migrations against the target database cluster:
+```bash
+# Execute schema migration script
+npm run db:migrate # or execute src/lib/db migrations
+```
+Verify that Row-Level Security (RLS) is enabled on all tenant-isolated tables (`endpoint_agents`, `incidents`, `agent_commands`, `agent_command_logs`, `endpoint_telemetry`, `hash_chain_audit`).
+
+### Step 2.2: Container Build & Promotion
+```bash
+# Build production container image using multi-stage Dockerfile
+docker build -t registry.shielddesk.io/shielddesk-controlplane:v1.0.0 .
+
+# Verify image vulnerability scan via Trivy
+trivy image --severity HIGH,CRITICAL registry.shielddesk.io/shielddesk-controlplane:v1.0.0
+
+# Deploy container with non-root user and read-only root filesystem
+docker run -d \
+  --name shielddesk-prod \
+  -p 3000:3000 \
+  --env-file .env.production \
+  --restart unless-stopped \
+  registry.shielddesk.io/shielddesk-controlplane:v1.0.0
+```
+
+### Step 2.3: Post-Deployment Probing
+Verify service health within 30 seconds of launch:
+```bash
+# 1. Healthcheck Probe (Must return HTTP 200 with status=ok or degraded, not 500/503)
+curl -s -f http://localhost:3000/api/health | jq .
+
+# 2. Prometheus Metrics Check
+curl -s -f http://localhost:3000/api/metrics | grep shielddesk
+```
+
+---
+
+## 3. Emergency Deployment Rollback Procedure
+
+If deployment health probes fail, error rates spike above 1%, or database connectivity cannot be established:
+
+### Step 3.1: Traffic Redirection
+Immediately switch ingress routing (Cloudflare / NGINX / ALB) to the previous known-good deployment target:
+```bash
+# Revert container or ingress target to previous release tag (e.g., v0.9.9)
+docker stop shielddesk-prod
+docker start shielddesk-prod-previous
+```
+
+### Step 3.2: Database Reversion
+If a backward-incompatible database migration was applied:
+```bash
+# Restore PostgreSQL from pre-deployment snapshot
+pg_restore --clean --if-exists -d shielddesk_prod /backups/pre-deploy-v1.0.0.dump
+```
+
+### Step 3.3: Fleet Isolation & Emergency Kill-Switch
+If control-plane integrity is questioned or abnormal agent behavior is observed:
+```bash
+# Engage global fleet emergency kill-switch via authenticated administrative API
+curl -X POST http://localhost:3000/api/fleet/kill-switch \
+  -H "Authorization: Bearer $SUPER_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action": "ENGAGE_ALL", "reason": "Emergency deployment abort"}'
+```
+All connected agents will immediately lock down command execution and reject further instructions with `423 Locked`.

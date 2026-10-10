@@ -613,9 +613,9 @@ export default function SOCTaskBoardPage() {
             {canAssignTask && (
               <button
                 onClick={() => setIsCreatingTask(true)}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] text-[13px] font-bold shadow-[0_2px_12px_rgba(160,127,58,0.25)] transition cursor-pointer"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0E8563] to-[#0B6B50] hover:from-[#119E76] hover:to-[#0D7558] text-[#FFFFFF] border border-[#D8C49A]/30 text-[13px] font-bold shadow-[0_2px_12px_rgba(11,107,80,0.3)] transition cursor-pointer"
               >
-                <Plus className="h-3.5 w-3.5 text-[#171208]" />
+                <Plus className="h-3.5 w-3.5 text-[#FFFFFF]" />
                 <span>Add Custom Task</span>
               </button>
             )}
@@ -672,7 +672,7 @@ export default function SOCTaskBoardPage() {
                         </p>
 
                         {task.assigned_to && (
-                          <div className="flex items-center gap-1.5 text-[10.5px] font-mono text-[var(--sd-wheat)]/85 bg-[#c8aa6f]/10 border border-[#c8aa6f]/20 rounded-md px-2 py-0.5 w-fit">
+                          <div className="flex items-center gap-1.5 text-[10.5px] font-mono text-[var(--sd-wheat)]/85 bg-[#D8C49A]/10 border border-[#D8C49A]/20 rounded-md px-2 py-0.5 w-fit">
                             <UserCheck className="h-3 w-3 text-[var(--sd-wheat)]" />
                             <span>Assigned: {DEV_USERS[task.assigned_to as DevUserId]?.label || task.assigned_to.replace("dev-", "")}</span>
                           </div>
@@ -688,9 +688,9 @@ export default function SOCTaskBoardPage() {
                             canUserSignOffTask(task.tier) ? (
                               <button
                                 onClick={(e) => handleOpenApproval(task, e)}
-                                className="flex items-center gap-1 px-3 py-1 rounded-full border border-[#c8aa6f]/50 bg-[#c8aa6f]/15 text-[#e3d5bb] hover:bg-[#c8aa6f]/25 text-[11px] font-medium cursor-pointer transition shadow-xs"
+                                className="flex items-center gap-1 px-3 py-1 rounded-full border border-[#D8C49A]/50 bg-[#D8C49A]/15 text-[#F2EFE9] hover:bg-[#D8C49A]/25 text-[11px] font-medium cursor-pointer transition shadow-xs"
                               >
-                                <Lock className="h-3 w-3 text-[#c8aa6f]" />
+                                <Lock className="h-3 w-3 text-[#D8C49A]" />
                                 <span>Sign Off</span>
                               </button>
                             ) : (
@@ -707,11 +707,11 @@ export default function SOCTaskBoardPage() {
                               <button
                                 onClick={(e) => handleExecuteTask(task, e)}
                                 disabled={executingTaskId === task.id}
-                                className="flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] text-[11px] font-bold shadow-[0_2px_10px_rgba(160,127,58,0.3)] transition cursor-pointer disabled:opacity-50"
+                                className="flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-gradient-to-r from-[#0E8563] to-[#0B6B50] hover:from-[#119E76] hover:to-[#0D7558] text-[#FFFFFF] border border-[#D8C49A]/30 text-[11px] font-bold shadow-[0_2px_10px_rgba(11,107,80,0.35)] transition cursor-pointer disabled:opacity-50"
                               >
                                 {executingTaskId === task.id ? (
                                   <>
-                                    <RefreshCw className="h-3 w-3 animate-spin text-[#171208]" />
+                                    <RefreshCw className="h-3 w-3 animate-spin text-[#FFFFFF]" />
                                     <span>Dispatching…</span>
                                   </>
                                 ) : (
@@ -736,7 +736,7 @@ export default function SOCTaskBoardPage() {
                               </span>
                               <button
                                 onClick={(e) => handleUpdateStatus(task, "completed", e)}
-                                className="px-2.5 py-0.5 rounded-lg border border-[#c8aa6f]/50 bg-[#c8aa6f]/10 text-[#c8aa6f] hover:bg-[#c8aa6f]/20 text-[10.5px] font-medium transition cursor-pointer"
+                                className="px-2.5 py-0.5 rounded-lg border border-[#D8C49A]/50 bg-[#D8C49A]/10 text-[#D8C49A] hover:bg-[#D8C49A]/20 text-[10.5px] font-medium transition cursor-pointer"
                               >
                                 Done
                               </button>
@@ -914,11 +914,11 @@ export default function SOCTaskBoardPage() {
               <button
                 type="submit"
                 disabled={isSubmitting || !newTaskTitle.trim()}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] text-[13px] font-bold shadow-[0_2px_12px_rgba(160,127,58,0.25)] transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-[#0E8563] to-[#0B6B50] hover:from-[#119E76] hover:to-[#0D7558] text-[#FFFFFF] border border-[#D8C49A]/30 text-[13px] font-bold shadow-[0_2px_12px_rgba(11,107,80,0.3)] transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? (
                   <>
-                    <RefreshCw className="animate-spin h-3 w-3 text-[#171208]" />
+                    <RefreshCw className="animate-spin h-3 w-3 text-[#FFFFFF]" />
                     <span>Creating…</span>
                   </>
                 ) : (
@@ -1246,9 +1246,9 @@ export default function SOCTaskBoardPage() {
                   <button
                     type="button"
                     onClick={(e) => handleOpenApproval(selectedTask, e)}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-[#c8aa6f]/60 bg-[#c8aa6f]/15 text-[#e3d5bb] hover:bg-[#c8aa6f]/25 font-semibold text-xs transition cursor-pointer"
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl border border-[#D8C49A]/60 bg-[#D8C49A]/15 text-[#F2EFE9] hover:bg-[#D8C49A]/25 font-semibold text-xs transition cursor-pointer"
                   >
-                    <Lock className="h-3.5 w-3.5 text-[#c8aa6f]" />
+                    <Lock className="h-3.5 w-3.5 text-[#D8C49A]" />
                     <span>Sign Off Now</span>
                   </button>
                 ) : (
@@ -1268,11 +1268,11 @@ export default function SOCTaskBoardPage() {
                     type="button"
                     onClick={(e) => handleExecuteTask(selectedTask, e)}
                     disabled={executingTaskId === selectedTask.id}
-                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] font-bold text-xs shadow-[0_4px_16px_rgba(160,127,58,0.3)] transition cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#0E8563] to-[#0B6B50] hover:from-[#119E76] hover:to-[#0D7558] text-[#FFFFFF] border border-[#D8C49A]/30 font-bold text-xs shadow-[0_4px_16px_rgba(11,107,80,0.35)] transition cursor-pointer disabled:opacity-50"
                   >
                     {executingTaskId === selectedTask.id ? (
                       <>
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#171208]" />
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin text-[#FFFFFF]" />
                         <span>Dispatching…</span>
                       </>
                     ) : (

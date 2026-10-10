@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
-import { ThemeSwitch } from "./ThemeSwitch";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 export function TopNavBar() {
@@ -136,7 +135,6 @@ export function TopNavBar() {
           <Sparkles size={17} className="text-[var(--sd-wheat)]" /><span>Ask about an incident, vulnerability, or response…</span>
         </button>
         <div className="sd-header-controls">
-          <ThemeSwitch />
           <details
             className="sd-health-menu"
             onBlur={(event) => {

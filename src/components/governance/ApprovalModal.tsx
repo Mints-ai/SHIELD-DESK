@@ -386,7 +386,7 @@ export function ApprovalModal({
                       type="button"
                       onClick={() => handleDecision("approve")}
                       disabled={isSubmitting || !canApproveAction}
-                      className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#c8aa6f] to-[#a07f3a] hover:from-[#d5b97d] hover:to-[#af8d44] text-[#171208] text-[13px] font-bold shadow-[0_4px_16px_rgba(160,127,58,0.25)] transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#0E8563] to-[#0B6B50] hover:from-[#119E76] hover:to-[#0D7558] text-[#FFFFFF] border border-[#D8C49A]/30 text-[13px] font-bold shadow-[0_4px_16px_rgba(11,107,80,0.35)] transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <span>{isSubmitting ? "Authorizing..." : "Approve & Execute"}</span>
                       <ArrowRight className="h-3.5 w-3.5" />

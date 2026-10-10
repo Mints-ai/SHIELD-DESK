@@ -715,6 +715,7 @@ export async function executeAgentCommand({
   snapshotId?: string;
   tier: string;
   state?: CommandExecutionState;
+  isSimulated?: boolean;
 }> {
   const agent = await getEndpointAgent(agentId, caller);
   if (!agent) {

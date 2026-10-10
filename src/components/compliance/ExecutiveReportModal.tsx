@@ -296,7 +296,7 @@ export function ExecutiveReportModal({
                 <div className="grid grid-cols-2 gap-8 pt-4">
                   <div>
                     <span className="text-xs font-bold text-slate-900 block">Lead Compliance Officer</span>
-                    <div className="h-10 border-b border-slate-400 mt-4 flex items-end font-serif italic text-slate-800 text-sm">
+                    <div className="h-10 border-b border-slate-400 mt-4 flex items-end font-space-grotesk italic text-slate-800 text-sm">
                       Verified Electronic Attestation
                     </div>
                     <span className="text-[10px] font-mono text-slate-500 block mt-1">

@@ -163,4 +163,65 @@ describe("Sprint 1: Environment Safety Boundary & Fail-Closed Suite", () => {
       process.env.DEMO_MODE = origDemoMode;
     }
   });
+
+  it("ClosedLoop: Rejects mock evidence overrides when running in production mode", async () => {
+    const origAppEnv = process.env.APP_ENV;
+    const origDemoMode = process.env.DEMO_MODE;
+    const { resetConfig } = await import("../src/config");
+
+    try {
+      process.env.APP_ENV = "production";
+      process.env.DEMO_MODE = "false";
+      resetConfig();
+
+      const { ClosedLoopOrchestrator } = await import("../src/lib/orchestration/closedLoopPipeline");
+
+      await assert.rejects(
+        async () => {
+          await ClosedLoopOrchestrator.execute({
+            tenantId: "acme-tenant",
+            incidentId: "inc-prod-safety",
+            agentId: "ea111111-1111-1111-1111-111111111111",
+            action: "block_ip 198.51.100.4",
+            caller: { id: "usr-admin-01", tenant_id: "acme-tenant", role: "super_admin" },
+            parameters: {
+              evidenceOverride: { networkIsolated: true },
+            },
+          });
+        },
+        /Mock evidence overrides are strictly prohibited in production execution/
+      );
+    } finally {
+      process.env.APP_ENV = origAppEnv;
+      process.env.DEMO_MODE = origDemoMode;
+      resetConfig();
+    }
+  });
+
+  it("RollbackEngine: Returns ROLLBACK_BLOCKED when agent kill switch is active", async () => {
+    const { RollbackEngine } = await import("../src/lib/rollback-engine");
+    const { MOCK_ENDPOINT_AGENTS } = await import("../src/lib/fleet/fleet");
+
+    const targetAgent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === "ea111111-1111-1111-1111-111111111111");
+    if (targetAgent) targetAgent.kill_switch_active = true;
+
+    try {
+      const res = await RollbackEngine.executeRollback({
+        tenantId: "acme-tenant",
+        agentId: "ea111111-1111-1111-1111-111111111111",
+        commandId: "cmd-test-kill",
+        snapshotId: "snap-test-kill",
+        rollbackType: "network_rollback",
+        reason: "Test kill switch blockage",
+        actorId: "usr-admin-01",
+      });
+
+      assert.equal(res.success, false);
+      assert.equal(res.status, "ROLLBACK_BLOCKED");
+      assert.equal(res.error, "KILL_SWITCH_ACTIVE");
+    } finally {
+      if (targetAgent) targetAgent.kill_switch_active = false;
+    }
+  });
 });
+

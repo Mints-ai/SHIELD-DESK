@@ -20,7 +20,6 @@ import {
 import { DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { cn } from "@/lib/utils";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
-import { ThemeSwitch } from "@/components/navigation/ThemeSwitch";
 
 function LoginForm() {
   const router = useRouter();
@@ -173,7 +172,6 @@ function LoginForm() {
     <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col justify-center items-center p-4 font-sans selection:bg-[var(--sd-pine)] selection:text-[var(--sd-on-accent)] relative">
       {/* Background ambient radial glow */}
       <div className="fixed inset-0 pointer-events-none sd-ambient-glow" />
-      <div className="fixed top-4 right-4 z-20"><ThemeSwitch /></div>
 
       <div className="relative w-full max-w-md flex flex-col gap-6 z-10">
         {/* Brand Header */}

@@ -53,4 +53,6 @@ bin/
 *.exe
 *.crt
 *.key
+__pycache__/
+*.pyc
 
