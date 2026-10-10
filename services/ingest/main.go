@@ -409,7 +409,7 @@ func main() {
 		StripPII(map[string]string{
 			"password":    "simulated_secret_key",
 			"user_email":  "analyst@corp.internal",
-			"jwt_token":   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy.sig",
+			"jwt_token":   "simulated_token_header.simulated_payload.simulated_signature",
 			"credit_card": "4111 2222 3333 4444",
 		})
 		total, cat := GetPIIStats()

@@ -24,7 +24,7 @@ export default function OnboardingPage() {
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerified, setMfaVerified] = useState(false);
 
-  const mockToken = "sdt_secops_live_9f83a2c07e1";
+  const mockToken = "sdt_sample_enrollment_token_00000000";
   const controlPlaneUrl = "https://control.shielddesk.io";
 
   const windowsCmd = `powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '${controlPlaneUrl}/install-windows.ps1' -OutFile 'install.ps1'; .\\install.ps1 -ControlPlane '${controlPlaneUrl}' -EnrollToken '${mockToken}'"`;

@@ -23,62 +23,32 @@ export interface PlanDefinition {
   };
 }
 
-export const BILLING_PLANS: Record<BillingTier, PlanDefinition> = {
-  community: {
-    id: "community",
-    name: "ShieldDesk Community Pilot",
-    priceMonthlyUSD: 0,
-    maxEndpoints: 5,
-    retentionDays: 7,
+import { CANONICAL_CATALOG } from "@/lib/billing/catalog";
+
+export const BILLING_PLANS: Record<BillingTier, PlanDefinition> = (
+  Object.keys(CANONICAL_CATALOG) as BillingTier[]
+).reduce((acc, tier) => {
+  const cat = CANONICAL_CATALOG[tier];
+  acc[tier] = {
+    id: cat.id,
+    name: cat.name,
+    priceMonthlyUSD: cat.pricing.month.displayPrice,
+    maxEndpoints: cat.maxEndpoints,
+    retentionDays: cat.retentionDays,
     features: {
-      telemetryIngest: true,
-      realTimeDetection: true,
-      aiInvestigation: true,
-      automatedRemediationTier1: false,
-      governedRemediationTier2: true,
-      dualApprovalTier3: false,
-      siemConnectors: false,
-      customRules: false,
-      discordSlackAlerts: true,
+      telemetryIngest: cat.features.telemetryIngest,
+      realTimeDetection: cat.features.realTimeDetection,
+      aiInvestigation: cat.features.aiInvestigation,
+      automatedRemediationTier1: cat.features.automatedRemediationTier1,
+      governedRemediationTier2: cat.features.governedRemediationTier2,
+      dualApprovalTier3: cat.features.dualApprovalTier3,
+      siemConnectors: cat.features.siemConnectors,
+      customRules: cat.features.customRules,
+      discordSlackAlerts: cat.features.discordSlackAlerts,
     },
-  },
-  professional: {
-    id: "professional",
-    name: "ShieldDesk SOC Pro",
-    priceMonthlyUSD: 499,
-    maxEndpoints: 100,
-    retentionDays: 90,
-    features: {
-      telemetryIngest: true,
-      realTimeDetection: true,
-      aiInvestigation: true,
-      automatedRemediationTier1: true,
-      governedRemediationTier2: true,
-      dualApprovalTier3: true,
-      siemConnectors: true,
-      customRules: true,
-      discordSlackAlerts: true,
-    },
-  },
-  enterprise: {
-    id: "enterprise",
-    name: "ShieldDesk Autonomous Enterprise",
-    priceMonthlyUSD: 1999,
-    maxEndpoints: 10000,
-    retentionDays: 365,
-    features: {
-      telemetryIngest: true,
-      realTimeDetection: true,
-      aiInvestigation: true,
-      automatedRemediationTier1: true,
-      governedRemediationTier2: true,
-      dualApprovalTier3: true,
-      siemConnectors: true,
-      customRules: true,
-      discordSlackAlerts: true,
-    },
-  },
-};
+  };
+  return acc;
+}, {} as Record<BillingTier, PlanDefinition>);
 
 export interface TenantSubscription {
   tenantId: string;
