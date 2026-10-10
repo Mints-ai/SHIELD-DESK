@@ -12,7 +12,8 @@ export type RollbackOutcomeStatus =
   | "ROLLBACK_IN_PROGRESS"
   | "ROLLBACK_FAILED"
   | "RESTORATION_VERIFIED"
-  | "RESTORATION_UNVERIFIED";
+  | "RESTORATION_UNVERIFIED"
+  | "SIMULATION_ONLY";
 
 export interface RollbackRequest {
   tenantId: string;

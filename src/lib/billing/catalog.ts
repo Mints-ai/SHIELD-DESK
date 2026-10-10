@@ -230,9 +230,23 @@ export function resolveServerStripePriceId(
     throw new Error(`Unsupported billing interval '${interval}' for plan '${tier}'.`);
   }
 
+  const isProd =
+    process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+
   const envPriceId = process.env[intervalDef.stripePriceIdEnvVar];
   if (envPriceId && envPriceId.trim()) {
+    if (isProd && (envPriceId.startsWith("price_mock") || envPriceId.startsWith("price_shielddesk"))) {
+      throw new Error(
+        `CRITICAL BILLING CONFIGURATION ERROR: Placeholder or mock Stripe Price ID '${envPriceId}' is strictly prohibited in production.`
+      );
+    }
     return envPriceId.trim();
+  }
+
+  if (isProd && tier !== "community") {
+    throw new Error(
+      `CRITICAL BILLING CONFIGURATION ERROR: Stripe Price ID for ${tier} (${interval}) must be explicitly configured via ${intervalDef.stripePriceIdEnvVar} in production.`
+    );
   }
 
   return intervalDef.defaultPriceId;

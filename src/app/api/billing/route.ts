@@ -97,9 +97,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+
     // 2. Legacy / test checkout order shim with strict production guard
     if (action === "create_checkout_order") {
-      if (process.env.NODE_ENV === "production" && process.env.APP_ENV === "production") {
+      if (isProd) {
         return NextResponse.json(
           { error: "Synthetic checkout orders are disabled in production. Use POST /api/v1/billing/checkout-sessions." },
           { status: 400 }
@@ -131,10 +133,10 @@ export async function POST(req: NextRequest) {
 
     // 3. Confirm upgrade guard: strictly disabled in production
     if (action === "confirm_upgrade") {
-      if (process.env.APP_ENV === "production" || (process.env.NODE_ENV === "production" && process.env.DEMO_MODE !== "true")) {
+      if (isProd) {
         return NextResponse.json(
           {
-            error: "Forbidden: Direct client-claimed plan upgrades are prohibited. Subscriptions are provisioned exclusively via verified Stripe webhooks.",
+            error: "Forbidden: Direct client-claimed plan upgrades are prohibited in production. Subscriptions are provisioned exclusively via verified Stripe webhooks.",
           },
           { status: 403 }
         );

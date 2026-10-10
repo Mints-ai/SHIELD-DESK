@@ -69,6 +69,13 @@ export class CheckoutService {
       cancelUrl,
     } = params;
 
+    // Upfront production guard: reject mock Stripe keys immediately
+    const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+    const secretKey = process.env.STRIPE_SECRET_KEY || "";
+    if (isProd && (!secretKey || secretKey.startsWith("sk_test_mock") || secretKey.startsWith("mock_"))) {
+      throw new Error("Mock Stripe secret keys are strictly prohibited in production.");
+    }
+
     // 1. Authorization check: Billing administrator role required
     if (
       role !== "system_admin" &&
@@ -128,7 +135,12 @@ export class CheckoutService {
         ON CONFLICT (idempotency_key) DO NOTHING`,
         [attemptId, tenantId, userId, planId, interval, currency, deploymentType, idempotencyKey, expiresAt]
       );
-    } catch {
+    } catch (err: unknown) {
+      if (isProd) {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to record checkout attempt in production: ${err instanceof Error ? err.message : "DB error"}`
+        );
+      }
       // Offline fallback for unit tests
     }
 
@@ -146,6 +158,11 @@ export class CheckoutService {
 
     // 8. Handle test mode or mock fallback when real Stripe API keys are not supplied
     if (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY.startsWith("sk_test_mock")) {
+      if (isProd) {
+        throw new Error(
+          "CRITICAL BILLING CONFIGURATION ERROR: Mock Stripe checkout is strictly forbidden in production deployments."
+        );
+      }
       const mockSessionId = `cs_test_mock_${attemptId}`;
       attemptRecord.stripeCheckoutSessionId = mockSessionId;
       try {
@@ -260,10 +277,11 @@ export class CheckoutService {
     currentSubscription: TenantSubscription;
   }> {
     const { tenantId, attemptId, sessionId } = params;
+    const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
 
     let attempt: CheckoutAttemptRecord | undefined;
 
-    if (attemptId && MOCK_CHECKOUT_ATTEMPTS.has(attemptId)) {
+    if (!isProd && attemptId && MOCK_CHECKOUT_ATTEMPTS.has(attemptId)) {
       const candidate = MOCK_CHECKOUT_ATTEMPTS.get(attemptId);
       if (candidate && candidate.tenantId === tenantId) {
         attempt = candidate;
@@ -298,8 +316,13 @@ export class CheckoutService {
             idempotencyKey: "",
           };
         }
-      } catch {
-        // Fallback
+      } catch (err: unknown) {
+        if (isProd) {
+          throw new Error(
+            `CRITICAL_DATABASE_UNAVAILABLE: Failed to query checkout attempts in production: ${err instanceof Error ? err.message : "DB error"}`
+          );
+        }
+        // Fallback for non-production tests
       }
     }
 

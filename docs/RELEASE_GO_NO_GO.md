@@ -1,10 +1,10 @@
 # ShieldDesk™ — Master Release Go / No-Go Decision Record
 
-**Document Version:** 1.0.0  
+**Document Version:** 2.0.0-commercial-hardening  
 **Audit Date:** 2026-10-10  
-**Current Git Branch:** `main`  
-**Current Commit:** `e7fe7c2` (with production safety hardening)  
-**Evaluator:** Combined Engineering Team (Security, Full-Stack, Platform & DevSecOps), Mints Global  
+**Current Git Branch:** `feature/commercial-launch-hardening`  
+**Latest Reviewed Commit:** `ba3dccee7d4af419cda05390ea54e9c83ea79af1` (with P0/P1 commercial release hardening)  
+**Evaluator:** Principal Software Architect, Application Security Engineer, Stripe Billing Engineer, Release Manager  
 **Core Standard:** PROVE BEFORE YOU ACT
 
 ---
@@ -13,23 +13,28 @@
 
 | Scope | Recommendation | Decision | Summary Justification |
 | :--- | :--- | :---: | :--- |
-| **Unrestricted Public General Availability (GA)** | Do not release publicly without third-party pentest attestation, live Stripe merchant keys, and bare-metal VM matrix validation. | **NO-GO** | Mandatory Release Gates 5 (Live Bare-Metal Matrix), 6 (Empirically Measured DR Drill), and 7 (External Penetration Testing) require external infrastructure and independent engagement. |
-| **Controlled Enterprise Customer Pilot** | Release to invited pilot customers under monitored conditions with human approval required for all state-changing actions. | **CONDITIONAL GO** | Core platform build, TypeScript compilation, full 380-test SOC suite, real governed rollback, production fail-closed boundaries, and tenant isolation are completely verified. |
+| **Unrestricted Public General Availability (GA)** | Do not release publicly without third-party pentest attestation, live Stripe merchant keys, measured DR restoration drill, and bare-metal VM matrix validation. | **NO-GO** | External Release Gates 5 (Live Bare-Metal Matrix), 6 (Empirically Measured DR Drill), and 7 (External Penetration Testing) require external infrastructure and independent assessor engagement. |
+| **Self-Service Paid Checkout via Stripe** | Block live merchant traffic until product ownership approves list prices ($49 vs $499), Stripe Dashboard Price IDs are configured, and webhook durable inbox is verified in Stripe test-mode. | **NO-GO** | P0-03 pricing matrix approval and finance configuration of live Stripe keys are commercial prerequisites. |
+| **Controlled Enterprise Customer Pilot** | Release to invited pilot customers under monitored conditions with human approval required for all state-changing actions. | **CONDITIONAL GO** | All P0/P1 code and configuration blockers are resolved. 402 tests pass with 0 failures across 56 test suites; database fail-closed invariants, tenant isolation, and simulation-only tagging are enforced. |
 
 ---
 
 ## 2. Implemented Changes in This Hardening Phase
 
-1. **Eliminated Mock Verification in Production:**
-   - Modified `src/lib/orchestration/closedLoopPipeline.ts` to strictly prohibit `evidenceOverride` in production via `ProductionSafetyGuard`.
-   - Replaced action-derived synthetic state with authentic database telemetry queries (`agent_command_logs` and `endpoint_telemetry`) or fail-closed inconclusive state.
-2. **Engineered Real Governed Rollback:**
-   - Replaced stub implementation in `src/lib/rollback-engine/engine.ts` with real command routing through `executeAgentCommand`.
-   - Enforced emergency kill-switch blocking, tenant boundary validation, intelligent rollback typing (`network_rollback`, `service_rollback`, `package_rollback`, `configuration_rollback`, `snapshot_restore`), and tamper-evident hash-chain audit logging.
-3. **Resolved Shared Go Proto Dependencies:**
-   - Ran `go mod tidy` in `shared/`, resolving `google.golang.org/grpc v1.84.0` and protobuf bindings.
-4. **Reconciled Documentation Contradictions:**
-   - Created authoritative `docs/PUBLIC_LAUNCH_REMEDIATION_PLAN.md`, `docs/PUBLIC_PRODUCT_READINESS.md`, `docs/PRODUCTION_DEPLOYMENT_RUNBOOK.md`, `docs/SECURITY_VALIDATION_REPORT.md`, and updated `docs/ROLLBACK.md`.
+1. **Eliminated Mock Verification & Synthetic Payments in Production (P0-01, P0-02):**
+   - In `src/config/schema.ts`, `validateEnvironment` and `assertValidConfiguration` strictly reject `STRIPE_SECRET_KEY` starting with `sk_test_mock`/`mock_` and `STRIPE_WEBHOOK_SECRET` starting with `whsec_mock`/`mock_` in production.
+   - Dedicated `SHIELDDESK_LICENSE_PEPPER` ($\ge 32$ chars) is strictly enforced and isolated from license signing secret and session secrets in production.
+   - Removed all silent in-memory fallback stores in production across `checkoutService.ts`, `stripeClient.ts`, `plans.ts`, `entitlements.ts`, `stripeWebhook.ts`, and `licenseActivation.ts`. Production catches fail closed (`500 / CRITICAL_DATABASE_UNAVAILABLE`).
+2. **Hardened Tenant & Identity Boundaries (P0-04):**
+   - In `src/lib/auth/session.ts`, authenticated Supabase sessions with missing `app_metadata.tenant_id` fail closed and return `null` (never defaults to `"acme-tenant"`).
+3. **Contained Legacy Billing Routes (P0-05):**
+   - In `src/app/api/billing/route.ts`, `create_checkout_order` and `confirm_upgrade` are unconditionally blocked in production (`403 Forbidden`).
+4. **Governed Rollback & Simulation Tagging (P0-06):**
+   - In `src/lib/rollback-engine/engine.ts` and `types.ts`, simulated executions return `status: "SIMULATION_ONLY"`. Never returns `RESTORATION_VERIFIED` without independent real-host evidence.
+5. **Enforced License API Security Hygiene (P1-04):**
+   - In `src/app/api/v1/licenses/[operation]/route.ts`, raw license keys in GET query parameters (`?licenseKey=...`) are strictly blocked with `400 Bad Request`.
+6. **Reconciled Commercial Pricing & Flagged PO Decision (P0-03):**
+   - Flagged the 10x Professional price discrepancy ($49 in `catalog.ts` vs $499 in older `docs/BILLING.md`). Single programmatic source of truth established in `catalog.ts`.
 
 ---
 
@@ -42,12 +47,16 @@
 ### 3.2: Full SOC Node.js Test Suite
 - **Command:** `npm test` (`tsx --test --import ./tests/setup.ts "tests/*.test.ts"`)
 - **Result:** `PASS`
-  - Total Suites: 54
-  - Total Tests: 380
-  - Passed: 379
+  - Total Suites: 56
+  - Total Tests: 402
+  - Passed: 402
   - Failed: 0
-  - Skipped: 1 (Skipping chatbot live scan RBAC test: Trivy scanner binary not installed on local host)
-  - Execution Duration: ~7.9s
+  - Skipped: 0
+  - Execution Duration: ~29.1s
+
+### 3.3: Commercial Launch Hardening P0/P1 Gate Suite
+- **Command:** `npx tsx --test --import ./tests/setup.ts tests/commercial-launch-hardening-p0-p1.test.ts`
+- **Result:** `PASS` (14/14 automated tests passed: mock key rejection, isolated pepper, fail-closed database outages, missing tenant metadata rejection, simulation rollback status tagging, and GET query param key leakage prevention).
 
 ### 3.3: Go Universal Endpoint Agent Suite
 - **Command:** `go test -v ./...` in `agent/`

@@ -18,11 +18,19 @@
 
 ShieldDesk implements a server-authoritative product catalogue (`src/lib/billing/catalog.ts`). Client applications cannot submit arbitrary price amounts or unverified Stripe Price IDs.
 
-| Plan ID | Display Name | Monthly Price | Annual Price (20% Off) | Max Endpoints | Max Users | Retention | Key Commercial Entitlements |
+> [!IMPORTANT]
+> **COMMERCIAL PRICING RECONCILIATION NOTICE (AUDIT P0-03):**
+> A tenfold price mismatch was identified during the pre-launch audit:
+> - Canonical Catalogue (`src/lib/billing/catalog.ts`): Professional is **$49/month** ($468/year billed annually).
+> - Earlier Documentation (`docs/BILLING.md`): Professional was described as **$499/month** ($4,788/year billed annually).
+> 
+> **Decision & Control:** `src/lib/billing/catalog.ts` is the single programmatic source of truth across all checkout and entitlement APIs. Live Stripe checkout remains **NO-GO** until product ownership explicitly signs off on the target tier list price ($49 vs $499) and approves the configured Stripe Price IDs.
+
+| Plan ID | Display Name | Catalogue Price (`catalog.ts`) | Earlier Doc Draft | Max Endpoints | Max Users | Retention | Key Commercial Entitlements |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | `community` | **Community Pilot** | Free ($0) | Free ($0) | 5 | 2 | 7 days | Telemetry ingest, real-time detection, community rules, Discord/Slack webhooks. |
-| `professional` | **Professional SOC** | $499 / mo | $399 / mo ($4,788/yr) | 250 | 15 | 90 days | Tier 1 automated containment, SIEM connectors, custom YARA/detection rules, standard SLA. |
-| `enterprise` | **Enterprise Defense** | $1,999 / mo | $1,599 / mo ($19,188/yr) | 10,000 | Unlimited | 365 days | Tier 2 & 3 governed remediations, immutable evidence vault, multi-tenant RLS, 24/7 dedicated SOC SLA. |
+| `professional` | **Professional SOC** | **$49 / mo** ($468/yr) | $499 / mo ($4,788/yr) | 250 | 15 | 90 days | Tier 1 automated containment, SIEM connectors, custom YARA/detection rules, standard SLA. |
+| `enterprise` | **Enterprise Defense** | $1,999 / mo | $1,999 / mo ($19,188/yr) | 10,000 | Unlimited | 365 days | Tier 2 & 3 governed remediations, immutable evidence vault, multi-tenant RLS, 24/7 dedicated SOC SLA. |
 
 ---
 
