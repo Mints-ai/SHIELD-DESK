@@ -25,6 +25,7 @@ import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
+// Tenant brand: MINTS GLOBAL (Demo Mode)
 export function TopNavBar() {
   const pathname = usePathname();
   const { activeUserId, activeUser, setActiveUserId, setIsChatOpen } = useChat();

@@ -301,7 +301,7 @@ function LoginForm() {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Acme Cybersecurity Corp"
+                  placeholder="e.g. MINTS GLOBAL"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
                   className="sd-input bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3 py-2 text-[13px] focus:outline-none focus:border-[var(--sd-pine)] text-[var(--sd-text)]"

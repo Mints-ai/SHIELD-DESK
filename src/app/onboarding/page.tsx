@@ -18,7 +18,7 @@ import {
 
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
-  const [orgName, setOrgName] = useState("Acme Cybersecurity");
+  const [orgName, setOrgName] = useState("MINTS GLOBAL");
   const [osTab, setOsTab] = useState<"windows" | "linux">("windows");
   const [copied, setCopied] = useState(false);
   const [mfaCode, setMfaCode] = useState("");
