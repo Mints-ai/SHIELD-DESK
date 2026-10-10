@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 const PUBLIC_EXACT_PATHS = new Set([
   "/login",
   "/onboarding",
+  "/pricing",
   "/favicon.ico",
   "/logo.png",
   "/shielddesk-logo.png",
@@ -87,22 +88,24 @@ export function proxy(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const hasSession = Boolean(sessionCookie || authHeader);
 
-  // 4. Protected route verification in production
-  if (isProd && !isPublicRoute(pathname) && !hasSession) {
-    // If it's an API route, return 401 Unauthorized
+  // 4. Protected route verification (Redirect unauthenticated visitors to /login)
+  if (!isPublicRoute(pathname) && !hasSession) {
+    // If it's an API route, return 401 Unauthorized in production
     if (pathname.startsWith("/api/")) {
-      return NextResponse.json(
-        { error: "Unauthorized: Active session required for this resource." },
-        { status: 401 }
-      );
+      if (isProd) {
+        return NextResponse.json(
+          { error: "Unauthorized: Active session required for this resource." },
+          { status: 401 }
+        );
+      }
+    } else {
+      // For web dashboard / root pages, redirect unauthenticated users to login
+      const loginUrl = new URL("/login", req.url);
+      if (pathname !== "/") {
+        loginUrl.searchParams.set("redirect", pathname);
+      }
+      return NextResponse.redirect(loginUrl);
     }
-
-    // For web dashboard / root pages, redirect to login
-    const loginUrl = new URL("/login", req.url);
-    if (pathname !== "/") {
-      loginUrl.searchParams.set("redirect", pathname);
-    }
-    return NextResponse.redirect(loginUrl);
   }
 
   // 5. Create response with sanitized request headers
