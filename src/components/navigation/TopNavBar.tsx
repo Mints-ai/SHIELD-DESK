@@ -130,7 +130,7 @@ export function TopNavBar() {
         <button ref={navigationToggleRef} className="sd-button sd-mobile-nav-toggle !px-2" aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileNavOpen} aria-controls="workspace-navigation" onClick={() => setMobileNavOpen(!mobileNavOpen)}>
           {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
         </button>
-        <Link href="/" className="sd-mobile-brand" aria-label="ShieldDesk home"><Shield size={20} strokeWidth={1.5} aria-hidden="true" /><span>ShieldDesk</span></Link>
+        <Link href="/" className="sd-mobile-brand" aria-label="ShieldDesk home"><img src="/favicon/favicon-32x32.png" alt="ShieldDesk" className="w-5 h-5 object-contain" /><span>ShieldDesk</span></Link>
         <button className="sd-button sd-header-search" onClick={() => setIsChatOpen(true)} aria-label="Open ShieldDesk AI assistant">
           <Sparkles size={17} className="text-[var(--sd-wheat)]" /><span>Ask about an incident, vulnerability, or response…</span>
         </button>
@@ -177,7 +177,7 @@ export function TopNavBar() {
         </div>
       </header>
       <aside id="workspace-navigation" className="sd-sidebar" data-open={mobileNavOpen} onKeyDown={(event) => { if (event.key === "Escape") { setMobileNavOpen(false); navigationToggleRef.current?.focus(); } }}>
-        <Link href="/" className="sd-brand" aria-label="ShieldDesk home"><Shield className="sd-brand-symbol" size={36} strokeWidth={1.2} /><div><div className="sd-brand-name">ShieldDesk</div><div className="sd-brand-caption">Security operations</div></div></Link>
+        <Link href="/" className="sd-brand" aria-label="ShieldDesk home"><img src="/favicon/apple-touch-icon.png" alt="ShieldDesk" className="w-9 h-9 object-contain rounded-lg flex-shrink-0 shadow-sm" /><div><div className="sd-brand-name">ShieldDesk</div><div className="sd-brand-caption">Security operations</div></div></Link>
         <nav aria-label="Dashboard"><p className="sd-nav-label">Workspace</p>{navLinks.map(({ href, label, icon: Icon }) => <Link key={href} href={href} onClick={() => setMobileNavOpen(false)} className="sd-nav-link" aria-current={(href === "/" ? pathname === "/" : pathname?.startsWith(href)) ? "page" : undefined}><Icon size={18} strokeWidth={1.5} /><span>{label}</span></Link>)}</nav>
         <div className="sd-sidebar-bottom"><p>Clarity in every signal.<br />Confidence in every action.</p><div className="sd-sidebar-rule" /><span className="sd-sample-label"><i className="sd-status-dot" />{envMeta.isDemoMode ? "Demo environment" : "Live SOC"}</span><div className="sd-sidebar-footnote">{envMeta.isDemoMode ? "Illustrative data · Development workspace" : "Live telemetry · Governed operations"}<br />ShieldDesk · Mints Global</div></div>
       </aside>

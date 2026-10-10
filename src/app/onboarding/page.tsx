@@ -41,8 +41,8 @@ export default function OnboardingPage() {
       {/* Header */}
       <header className="max-w-4xl mx-auto w-full flex flex-wrap items-center justify-between gap-4 py-4 border-b border-[var(--sd-border)]">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-[var(--sd-pine-dim)] border border-[var(--sd-pine-border)] rounded-lg">
-            <Shield className="w-6 h-6 text-[var(--sd-wheat)]" />
+          <div className="w-10 h-10 p-1 bg-[var(--sd-pine-dim)] border border-[var(--sd-pine-border)] rounded-lg flex items-center justify-center">
+            <img src="/favicon/apple-touch-icon.png" alt="ShieldDesk" className="w-full h-full object-contain" />
           </div>
           <div>
             <span className="font-medium text-lg tracking-wider text-[var(--sd-text)]">SHIELD<span className="text-[var(--sd-wheat)]">DESK</span></span>

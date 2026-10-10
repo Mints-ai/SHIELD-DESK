@@ -17,6 +17,7 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/onboarding",
   "/favicon.ico",
   "/logo.png",
+  "/shielddesk-logo.png",
   "/robots.txt",
   "/sitemap.xml",
 ]);
@@ -27,6 +28,7 @@ const PUBLIC_PATH_PREFIXES = [
   "/api/ingest/",
   "/api/agent/",
   "/_next/",
+  "/favicon/",
   "/monitoring",
 ];
 
@@ -128,9 +130,9 @@ export const config = {
      * Match all request paths except:
      * - _next/static (static files)
      * - _next/image (image optimization files)
-     * - favicon.ico, logo.png (public images/icons)
+     * - favicon.ico, favicon/, logo.png, shielddesk-logo.png (public images/icons)
      */
-    "/((?!_next/static|_next/image|favicon.ico|logo.png).*)",
+    "/((?!_next/static|_next/image|favicon.ico|favicon|logo.png|shielddesk-logo.png).*)",
   ],
 };
 
