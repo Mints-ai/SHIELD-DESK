@@ -1,16 +1,26 @@
-# ShieldDesk™ — Evidence-Driven Security Operations & Remediation Platform
+<p align="center">
+  <img src="public/shielddesk-logo.png" alt="ShieldDesk™ — See Risk. Act With Confidence." width="520" />
+</p>
 
-[![Next.js](https://img.shields.io/badge/Next.js-16.3.5-black?style=flat&logo=next.js)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-19.2.8-blue?style=flat&logo=react)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Zero%20Errors-brightgreen?style=flat&logo=typescript)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/Tests-350%2B%20Passed%20%7C%2052%20Suites-brightgreen?style=flat)]()
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql)](https://www.postgresql.org/)
-[![Sentry](https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry)](https://sentry.io/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
-[![Trivy](https://img.shields.io/badge/Trivy-v0.74.0_Integrated-007acc?style=flat&logo=aqua)]()
-[![Gitleaks](https://img.shields.io/badge/Gitleaks-v8.30.1_Integrated-0052cc?style=flat&logo=git)]()
-[![Launch Readiness](https://img.shields.io/badge/Launch_Readiness-Ready%20For%20Controlled%20Pilot-blue?style=flat)]()
-[![License](https://img.shields.io/badge/License-Proprietary-red?style=flat)]()
+<h1 align="center">ShieldDesk™ — Evidence-Driven Security Operations & Remediation Platform</h1>
+
+<p align="center">
+  <strong>Autonomous Security Operations Center (SOC) co-pilot, fleet PKI control plane, and zero-trust remediation orchestration.</strong>
+</p>
+
+<p align="center">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.3.5-black?style=flat&logo=next.js" alt="Next.js" /></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19.2.8-blue?style=flat&logo=react" alt="React" /></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict%20Zero%20Errors-brightgreen?style=flat&logo=typescript" alt="TypeScript" /></a>
+  <img src="https://img.shields.io/badge/Tests-380%20Tests%20%7C%2054%20Suites%20Passed-brightgreen?style=flat" alt="Tests" />
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql" alt="PostgreSQL" /></a>
+  <a href="https://sentry.io/"><img src="https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry" alt="Sentry" /></a>
+  <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css" alt="Tailwind CSS" /></a>
+  <img src="https://img.shields.io/badge/Trivy-v0.74.0_Integrated-007acc?style=flat&logo=aqua" alt="Trivy" />
+  <img src="https://img.shields.io/badge/Gitleaks-v8.30.1_Integrated-0052cc?style=flat&logo=git" alt="Gitleaks" />
+  <img src="https://img.shields.io/badge/Launch_Readiness-Ready%20For%20Controlled%20Pilot-blue?style=flat" alt="Launch Readiness" />
+  <img src="https://img.shields.io/badge/License-Proprietary-red?style=flat" alt="License" />
+</p>
 
 **ShieldDesk™** is an **Evidence-Driven Security Operations & Remediation Platform** engineered around the unyielding invariant: **PROVE BEFORE YOU ACT**. It ingests enterprise security telemetry, models digital assets, prioritizes attack paths from cryptographic evidence, evaluates decisions and autonomous policy, enforces dual-custody approval workflows, and dispatches cryptographically signed commands with real-time physical state verification and automated rollback.
 
@@ -53,6 +63,18 @@
 ### 9. Enterprise Sign-In Gate & Operator Authentication
 ![ShieldDesk Enterprise Sign-In Gate](docs/screenshots/sign-in-screen.png)
 *Distraction-free authentication portal featuring corporate credentials, hardware MFA / TOTP token verification, tenant onboarding links, and autonomous containment SLA consent governance.*
+
+### 10. Brand Identity & High-Resolution Favicon Suite
+The platform incorporates official high-resolution 3D branding and an enterprise favicon suite for web, desktop, and mobile operating environments:
+
+| Asset | Path | Resolution / Spec | Usage |
+| :--- | :--- | :--- | :--- |
+| **Primary 3D Shield Logo** | `public/shielddesk-logo.png`<br>`docs/shielddesk-logo.png` | 1536×1024 Hi-Res PNG | Official brand shield, documentation, headers, and media kits. |
+| **Favicon (.ico)** | `public/favicon.ico`<br>`public/favicon/favicon.ico` | Standard Multi-Res ICO | Browser tab and desktop shortcut icon. |
+| **Web Favicons** | `public/favicon/favicon-32x32.png`<br>`public/favicon/favicon-16x16.png` | 32×32 & 16×16 PNG | High-density retina displays and bookmark bars. |
+| **Apple Touch Icon** | `public/favicon/apple-touch-icon.png` | 180×180 PNG | iOS / iPadOS home screen web applications. |
+| **Android Chrome Icons** | `public/favicon/android-chrome-192x192.png`<br>`public/favicon/android-chrome-512x512.png` | 192×192 & 512×512 PNG | PWA install targets and Android launcher icons. |
+| **Web App Manifest** | `public/favicon/site.webmanifest` | W3C Standard Manifest | Progressive Web App installation and standalone window mode. |
 
 ---
 
@@ -578,7 +600,7 @@ cd services/threat && go run .             # Go Threat Engine (:8003)
 ShieldDesk maintains rigorous automated test suites across both TypeScript/Node.js (covering Phases A through L) and Go:
 
 ```bash
-# 1. Run TypeScript Test Suite (350+ tests across 52 test suites)
+# 1. Run TypeScript Test Suite (380 tests across 54 test suites)
 npm test
 
 # 2. Run Go Threat Engine Test Suite (6 tests, 100% passing)
@@ -625,6 +647,10 @@ shielddesk/
 │   ├── GAP_ANALYSIS.md            # Comprehensive spec-to-code gap matrix across Phases A–I
 │   ├── PRODUCTION_READINESS_AUDIT.md # Evidence-based readiness evaluation and capability statuses
 │   └── PRODUCTION_LAUNCH_CHECKLIST.md # Gate completion status tracking
+├── public/
+│   ├── favicon/                   # Multi-platform favicon suite (ICO, 16/32 PNG, Apple, Android, Manifest)
+│   ├── screenshots/               # High-resolution production UI captures
+│   └── shielddesk-logo.png        # Official ShieldDesk 3D metallic shield brand emblem
 ├── src/
 │   ├── app/
 │   │   ├── api/
@@ -696,7 +722,7 @@ shielddesk/
 │   ├── schema.sql                 # Core DDL: 20 tables, constraints, RLS policies
 │   ├── migrations/                # 14 Phase migrations (launch_readiness_001 to phase_l_compliance_vault)
 │   └── seed.sql                   # Endpoint agent, incident, and audit fixtures
-├── tests/                         # Node.js native test harness (350+ tests across 52 test suites)
+├── tests/                         # Node.js native test harness (380 tests across 54 test suites)
 ├── sentry.client.config.ts        # Client Sentry error and performance monitoring
 ├── sentry.server.config.ts        # Server Sentry error tracking
 ├── sentry.edge.config.ts          # Edge Sentry error tracking
