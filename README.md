@@ -29,39 +29,39 @@
 ## Live Platform Interface & Control Plane
 
 ### 1. Security Operations & Incident Workspace
-![ShieldDesk Security Operations Workspace](docs/screenshots/soc-incident-workspace.png)
+![ShieldDesk Security Operations Workspace](docs/screenshots/v2/soc-incident-workspace.png)
 *Real-time incident triage console featuring live telemetry correlation (CrowdStrike Falcon, Microsoft Defender, Wazuh), severity classification, attack timeline visualization, and autonomous AI copilot investigation trigger.*
 
 ### 2. Executive Risk Scorecard & Cyber Posture Index
-![ShieldDesk Executive Risk Scorecard](docs/screenshots/risk-scorecard.png)
+![ShieldDesk Executive Risk Scorecard](docs/screenshots/v2/risk-scorecard.png)
 *CISO and executive intelligence dashboard displaying organizational Cyber Posture Index, estimated financial loss avoided, active threats contained, benchmark MTTD/MTTR response velocity, and role-based operator persona switching.*
 
 ### 3. Fleet Management & Endpoint PKI Authority
-![ShieldDesk Fleet Management](docs/screenshots/fleet-management.png)
+![ShieldDesk Fleet Management](docs/screenshots/v2/fleet-management.png)
 *Enterprise endpoint fleet control plane displaying mTLS X.509 certificate lifecycles, Go universal agent heartbeats (Windows/Linux), host isolation state, and cryptographically signed command dispatch queues.*
 
 ### 4. Native YARA Malware Threat Engine
-![ShieldDesk Threat Intelligence & YARA](docs/screenshots/threat-intel-yara.png)
+![ShieldDesk Threat Intelligence & YARA](docs/screenshots/v2/threat-intel-yara.png)
 *High-performance native YARA malware detection engine featuring AST lexer/parser sandbox, real-time ruleset compiler, custom rule syntax validator, and streaming telemetry match monitors.*
 
 ### 5. 3-Horizon Remediation Planning & Governance
-![ShieldDesk Remediation Planning](docs/screenshots/remediation-plans.png)
+![ShieldDesk Remediation Planning](docs/screenshots/v2/remediation-plans.png)
 *Structured 3-horizon remediation orchestrator (Immediate Containment, Short-Term Patching, Long-Term Zero-Trust Hardening) with 4-tier human governance, separation-of-duties enforcement, and RFC 6238 TOTP MFA gates.*
 
 ### 6. Continuous Compliance Matrix & Audit Evidence Vault
-![ShieldDesk Compliance Matrix](docs/screenshots/compliance-matrix.png)
+![ShieldDesk Compliance Matrix](docs/screenshots/v2/compliance-matrix.png)
 *Automated regulatory compliance mapping across SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, HIPAA Security Rule, and PCI-DSS v4.0 with SHA-256 Merkle hash-chain tamper-evident audit ledgers.*
 
 ### 7. Vulnerability & Secret Scanner Console
-![ShieldDesk Vulnerability Scanner](docs/screenshots/vulnerability-scanner.png)
+![ShieldDesk Vulnerability Scanner](docs/screenshots/v2/vulnerability-scanner.png)
 *Deep filesystem and container security scanner integrating Aqua Security Trivy for CVE identification and Gitleaks for high-entropy credential and private key leak detection across source trees.*
 
 ### 8. 4-Step Self-Service Enterprise Onboarding
-![ShieldDesk Onboarding Wizard](docs/screenshots/onboarding-wizard.png)
+![ShieldDesk Onboarding Wizard](docs/screenshots/v2/onboarding-wizard.png)
 *Zero-friction organizational onboarding wizard generating tenant-scoped API keys, one-line universal PowerShell/Bash agent installation commands, and SaaS quota provisioning.*
 
 ### 9. Enterprise Sign-In Gate & Operator Authentication
-![ShieldDesk Enterprise Sign-In Gate](docs/screenshots/sign-in-screen.png)
+![ShieldDesk Enterprise Sign-In Gate](docs/screenshots/v2/sign-in-screen.png)
 *Distraction-free authentication portal featuring corporate credentials, hardware MFA / TOTP token verification, tenant onboarding links, and autonomous containment SLA consent governance.*
 
 ### 10. Brand Identity & High-Resolution Favicon Suite
