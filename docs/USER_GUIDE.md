@@ -738,7 +738,81 @@ To protect against credential stuffing and session hijacking, multi-factor authe
 
 ---
 
-## 13. Troubleshooting, Diagnostics & FAQ
+## 13. System Health, Public Status Page & Programmatic API Status
+
+ShieldDesk provides continuous, transparent uptime monitoring for customer SecOps teams and third-party monitoring services.
+
+### Interactive Public Status Dashboard (`/status`)
+
+Access the real-time public status dashboard at `https://yourdomain.shielddesk.io/status`:
+
+- **Real-Time Subsystem Health**: Live status indicators for all core platform components:
+  - **Database Pool**: PostgreSQL query connectivity and latency.
+  - **Authentication & Identity**: Supabase / OAuth gateway and MFA tokens.
+  - **Endpoint Fleet PKI**: mTLS v1.3 agent telemetry pipeline and signed command queue.
+  - **AI SOC Co-Pilot**: Local Ollama / Python AI engine inference availability.
+  - **Vulnerability & Secret Scanner**: Aqua Trivy and Gitleaks engine status.
+  - **Threat Intelligence**: 3-Sigma Gaussian anomaly baseline and AST YARA engine.
+  - **Compliance Ledger**: Tamper-evident SHA-256 Merkle hash-chain ledger.
+  - **Commercial Billing**: Stripe / licensing webhook gateway.
+- **Historical SLA Uptime**: 90-day rolling availability bar with daily incident history.
+- **Live Round-Trip Latency**: Displays millisecond response times updated continuously.
+- **Auto-Refresh**: Live status polls every 30 seconds with manual refresh controls.
+
+### Programmatic API Status Endpoint (`GET /api/status`)
+
+For enterprise integrations with external monitoring platforms (UptimeRobot, Datadog, Pingdom, Prometheus, BetterUptime), query the machine-readable JSON status endpoint:
+
+```http
+GET /api/status HTTP/1.1
+Host: control.shielddesk.io
+Accept: application/json
+```
+
+**Response (`200 OK` or `503 Service Unavailable`):**
+```json
+{
+  "status": "operational",
+  "version": "2.4.0",
+  "environment": "production",
+  "timestamp": "2026-10-11T15:00:00.000Z",
+  "uptime_seconds": 184520,
+  "summary": {
+    "total_services": 8,
+    "operational": 8,
+    "degraded": 0,
+    "outage": 0
+  },
+  "services": {
+    "database": {
+      "name": "PostgreSQL Database Pool",
+      "category": "core",
+      "status": "operational",
+      "latency_ms": 12,
+      "description": "Primary transactional data store and multi-tenant ledger."
+    },
+    "fleet_pki": {
+      "name": "Endpoint PKI & Fleet Control Plane",
+      "category": "security",
+      "status": "operational",
+      "latency_ms": 6,
+      "description": "Bidirectional mTLS v1.3 agent telemetry and signed command dispatch."
+    }
+  },
+  "incidents": [
+    {
+      "id": "inc-shielddesk-live",
+      "title": "All Core Systems Fully Operational",
+      "impact": "none",
+      "status": "resolved"
+    }
+  ]
+}
+```
+
+---
+
+## 14. Troubleshooting, Diagnostics & FAQ
 
 ### Frequently Asked Questions
 
