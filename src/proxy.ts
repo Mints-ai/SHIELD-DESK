@@ -17,6 +17,7 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/signup",
   "/onboarding",
   "/pricing",
+  "/status",
   "/favicon.ico",
   "/logo.png",
   "/shielddesk-logo.png",
@@ -28,6 +29,7 @@ const PUBLIC_EXACT_PATHS = new Set([
 const PUBLIC_PATH_PREFIXES = [
   "/api/auth/",
   "/api/health",
+  "/api/status",
   "/api/ingest/",
   "/api/agent/",
   "/api/v1/plans",
@@ -58,7 +60,7 @@ export function proxy(req: NextRequest) {
     }
   } else if (hostname.startsWith("status.")) {
     if (url.pathname === "/") {
-      url.pathname = "/api/health";
+      url.pathname = "/status";
       return NextResponse.rewrite(url);
     }
   } else if (hostname.startsWith("trust.")) {

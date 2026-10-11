@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSystemStatusReport } from "@/lib/status/serviceStatus";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/status
  *

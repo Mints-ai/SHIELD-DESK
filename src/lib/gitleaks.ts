@@ -159,8 +159,8 @@ export function getGitleaksBinaryPath(): string | null {
 
   for (const dir of pathDirs) {
     for (const exe of exeNames) {
-      const fullPath = path.join(dir, exe);
-      if (fs.existsSync(fullPath)) {
+      const fullPath = path.join(/*turbopackIgnore: true*/ dir, exe);
+      if (fs.existsSync(/*turbopackIgnore: true*/ fullPath)) {
         return fullPath;
       }
     }
@@ -207,7 +207,7 @@ export function parseGitleaksOutput(jsonOutput: string): GitleaksFinding[] {
     if (location !== "unknown") {
       try {
         const cwd = process.cwd();
-        const resolved = path.isAbsolute(location) ? location : path.resolve(cwd, location);
+        const resolved = path.isAbsolute(location) ? location : path.resolve(/*turbopackIgnore: true*/ cwd, location);
         const rel = path.relative(cwd, resolved).replace(/\\/g, "/");
         if (rel && !rel.startsWith("..")) {
           location = rel;
@@ -276,12 +276,12 @@ export async function runGitleaksScan(
     resolvedTarget = process.cwd();
   } else if (
     (resolvedTarget === "/app" || resolvedTarget === "\\app") &&
-    !fs.existsSync(resolvedTarget)
+    !fs.existsSync(/*turbopackIgnore: true*/ resolvedTarget)
   ) {
     resolvedTarget = process.cwd();
   } else {
-    resolvedTarget = path.resolve(process.cwd(), resolvedTarget);
-    if (!fs.existsSync(resolvedTarget)) {
+    resolvedTarget = path.resolve(/*turbopackIgnore: true*/ process.cwd(), resolvedTarget);
+    if (!fs.existsSync(/*turbopackIgnore: true*/ resolvedTarget)) {
       throw new Error(
         `Target path does not exist on filesystem: ${resolvedTarget}`
       );
@@ -296,14 +296,16 @@ export async function runGitleaksScan(
   }
 
   // Resolve config path
-  const defaultConfigPath = path.join(process.cwd(), ".gitleaks.toml");
+  const defaultConfigPath = path.join(/*turbopackIgnore: true*/ process.cwd(), ".gitleaks.toml");
   const configPath =
     opts.configPath ||
     process.env.GITLEAKS_CONFIG ||
-    (fs.existsSync(defaultConfigPath) ? defaultConfigPath : undefined);
+    (fs.existsSync(/*turbopackIgnore: true*/ defaultConfigPath) ? defaultConfigPath : undefined);
 
   const redact = opts.redact !== false; // default true
-  const isTargetFile = fs.existsSync(resolvedTarget) && fs.statSync(resolvedTarget).isFile();
+  const isTargetFile =
+    fs.existsSync(/*turbopackIgnore: true*/ resolvedTarget) &&
+    fs.statSync(/*turbopackIgnore: true*/ resolvedTarget).isFile();
   const noGit = opts.noGit === true || isTargetFile;
   const scanMode: "git_history" | "filesystem" = noGit ? "filesystem" : "git_history";
 
