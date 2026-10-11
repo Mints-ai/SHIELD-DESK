@@ -262,13 +262,24 @@ export async function runTrivyScan(
 }
 
 let lastScanResult: ScanResult | null = null;
+const tenantScanResults = new Map<string, ScanResult>();
 
-export function getLastScanResult(): ScanResult | null {
+export function getLastScanResult(tenantId?: string): ScanResult | null {
+  if (tenantId && tenantScanResults.has(tenantId)) {
+    return tenantScanResults.get(tenantId)!;
+  }
   return lastScanResult;
 }
 
-export function setLastScanResult(result: ScanResult | null): void {
+export function setLastScanResult(result: ScanResult | null, tenantId?: string): void {
   lastScanResult = result;
+  if (tenantId) {
+    if (result) {
+      tenantScanResults.set(tenantId, result);
+    } else {
+      tenantScanResults.delete(tenantId);
+    }
+  }
 }
 
 /**
