@@ -82,6 +82,21 @@ export async function POST(req: NextRequest) {
 
     // 2. Persist to local PostgreSQL users table with secure password hash
     const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+    try {
+      const existingUser = await query<{ id: string }>(
+        `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+        [email.toLowerCase().trim()]
+      );
+      if (existingUser.rows.length > 0) {
+        return NextResponse.json(
+          { error: "An account with this email address already exists. Please sign in instead." },
+          { status: 409 }
+        );
+      }
+    } catch {
+      // Non-fatal if DB is in-memory or offline during dev unit tests
+    }
+
     const hashedPassword = await hashPassword(password);
     try {
       await query(

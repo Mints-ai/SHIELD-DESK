@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const cached = getLastGitleaksScanResult();
+  const cached = getLastGitleaksScanResult(session.tenantId);
 
   if (cached) {
     return NextResponse.json({

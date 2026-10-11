@@ -159,10 +159,15 @@ export async function getLiveCommandLogs(
     caller.role === "system_admin" || caller.role === "super_admin";
 
   const sql = agentId
-    ? `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
-       FROM agent_command_logs
-       WHERE agent_id = $1
-       ORDER BY executed_at DESC LIMIT 50;`
+    ? isCrossTenant
+      ? `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
+         FROM agent_command_logs
+         WHERE agent_id = $1
+         ORDER BY executed_at DESC LIMIT 50;`
+      : `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
+         FROM agent_command_logs
+         WHERE agent_id = $1 AND tenant_id = $2
+         ORDER BY executed_at DESC LIMIT 50;`
     : isCrossTenant
     ? `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
        FROM agent_command_logs
@@ -173,23 +178,29 @@ export async function getLiveCommandLogs(
        ORDER BY executed_at DESC LIMIT 50;`;
 
   const params = agentId
-    ? [agentId]
+    ? isCrossTenant
+      ? [agentId]
+      : [agentId, caller.tenant_id]
     : isCrossTenant
     ? []
     : [caller.tenant_id];
 
-  const { rows } = await query<Record<string, unknown>>(sql, params);
-  return rows.map((r) => ({
-    id: String(r.id),
-    agentId: String(r.agent_id),
-    tenantId: String(r.tenant_id),
-    command: String(r.command),
-    tier: String(r.tier),
-    status: (r.status || "succeeded") as "succeeded" | "failed" | "executing",
-    output: String(r.output || ""),
-    time: new Date(r.executed_at as string).toLocaleTimeString(),
-    executedAt: new Date(r.executed_at as string).toISOString(),
-  }));
+  try {
+    const { rows } = await query<Record<string, unknown>>(sql, params);
+    return rows.map((r) => ({
+      id: String(r.id),
+      agentId: String(r.agent_id),
+      tenantId: String(r.tenant_id),
+      command: String(r.command),
+      tier: String(r.tier),
+      status: (r.status || "succeeded") as "succeeded" | "failed" | "executing",
+      output: String(r.output || ""),
+      time: new Date(r.executed_at as string).toLocaleTimeString(),
+      executedAt: new Date(r.executed_at as string).toISOString(),
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // Keep legacy export names for compatibility with existing imports

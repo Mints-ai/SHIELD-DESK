@@ -405,13 +405,25 @@ export async function runGitleaksScan(
 // ---------------------------------------------------------------------------
 
 let lastGitleaksScanResult: GitleaksScanResult | null = null;
+const tenantGitleaksResults = new Map<string, GitleaksScanResult>();
 
-export function getLastGitleaksScanResult(): GitleaksScanResult | null {
+export function getLastGitleaksScanResult(tenantId?: string): GitleaksScanResult | null {
+  if (tenantId && tenantGitleaksResults.has(tenantId)) {
+    return tenantGitleaksResults.get(tenantId)!;
+  }
   return lastGitleaksScanResult;
 }
 
 export function setLastGitleaksScanResult(
-  result: GitleaksScanResult | null
+  result: GitleaksScanResult | null,
+  tenantId?: string
 ): void {
   lastGitleaksScanResult = result;
+  if (tenantId) {
+    if (result) {
+      tenantGitleaksResults.set(tenantId, result);
+    } else {
+      tenantGitleaksResults.delete(tenantId);
+    }
+  }
 }

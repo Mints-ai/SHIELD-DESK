@@ -10,6 +10,11 @@ import dns from "dns";
 
 export async function GET(req: NextRequest) {
   try {
+    const session = await getSessionFromRequest(req);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized: Active session required" }, { status: 401 });
+    }
+
     const key = getShodanApiKey();
     if (!key) {
       return NextResponse.json({
@@ -55,6 +60,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getSessionFromRequest(req);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized: Active session required" }, { status: 401 });
+    }
+
     const key = getShodanApiKey();
     if (!key) {
       return NextResponse.json(
