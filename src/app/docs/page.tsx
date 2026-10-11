@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   BookOpen,
   Search,
@@ -13,6 +14,7 @@ import {
   Shield,
   Terminal,
   ArrowRight,
+  ArrowLeft,
   Lock,
   Server,
   Activity,
@@ -22,113 +24,267 @@ import {
   X,
   Tag,
   ChevronRight,
+  ChevronDown,
   Clock,
   Layers,
   HelpCircle,
   FolderDown,
+  Menu,
+  Eye,
+  Code2,
+  Share2,
+  Compass,
+  ThumbsUp,
+  ThumbsDown,
+  Bookmark,
+  ShieldCheck,
+  Cpu,
+  Workflow,
+  Radio,
 } from "lucide-react";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
 import {
   getAllCustomerDocs,
+  getCustomerDocById,
   generateDocumentationBundle,
   type CustomerDoc,
   type DocCategory,
 } from "@/lib/docs/customerDocs";
+import {
+  DocMarkdownRenderer,
+  extractHeadings,
+  type HeadingItem,
+} from "@/components/docs/DocMarkdownRenderer";
+
+// Category Icons Mapping
+const CATEGORY_META: Record<
+  DocCategory,
+  { icon: React.ComponentType<{ className?: string }>; color: string; badge: string }
+> = {
+  "Getting Started": {
+    icon: Compass,
+    color: "text-[var(--sd-wheat)]",
+    badge: "border-[var(--sd-wheat)]/40 bg-[var(--sd-wheat)]/10 text-[var(--sd-wheat)]",
+  },
+  "SOC Operations": {
+    icon: Workflow,
+    color: "text-emerald-400",
+    badge: "border-emerald-500/40 bg-emerald-950/30 text-emerald-300",
+  },
+  "Agent & Integrations": {
+    icon: Cpu,
+    color: "text-cyan-400",
+    badge: "border-cyan-500/40 bg-cyan-950/30 text-cyan-300",
+  },
+  "Trust & Compliance": {
+    icon: ShieldCheck,
+    color: "text-amber-400",
+    badge: "border-amber-500/40 bg-amber-950/30 text-amber-300",
+  },
+  Support: {
+    icon: HelpCircle,
+    color: "text-purple-400",
+    badge: "border-purple-500/40 bg-purple-950/30 text-purple-300",
+  },
+};
 
 export default function CustomerDocsPage() {
+  return (
+    <Suspense fallback={<DocsLoadingFallback />}>
+      <CustomerDocsContent />
+    </Suspense>
+  );
+}
+
+function DocsLoadingFallback() {
+  return (
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] flex items-center justify-center">
+      <div className="flex items-center gap-3 text-[var(--sd-wheat)]">
+        <div className="w-5 h-5 border-2 border-[var(--sd-primary)] border-t-transparent rounded-full animate-spin" />
+        <span className="font-mono text-sm">Loading Documentation Portal...</span>
+      </div>
+    </div>
+  );
+}
+
+function CustomerDocsContent() {
   const allDocs = useMemo(() => getAllCustomerDocs(), []);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // Active doc state from URL or fallback to first doc
+  const initialDocId = searchParams.get("doc") || allDocs[0]?.id || "getting-started";
+  const [activeDocId, setActiveDocId] = useState<string>(initialDocId);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string>("All");
-  const [activeDoc, setActiveDoc] = useState<CustomerDoc | null>(null);
-  const [copiedDocId, setCopiedDocId] = useState<string | null>(null);
-  const [copiedModal, setCopiedModal] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [rawViewMode, setRawViewMode] = useState(false);
+  const [copiedDoc, setCopiedDoc] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [feedbackGiven, setFeedbackGiven] = useState<"yes" | "no" | null>(null);
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
   const [downloadingBundle, setDownloadingBundle] = useState(false);
 
-  // Filtered documents based on search query and category
-  const filteredDocs = useMemo(() => {
-    return allDocs.filter((doc) => {
-      const matchesCategory =
-        selectedCategory === "All" || doc.category === selectedCategory;
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-      if (!matchesCategory) return false;
+  // Sync state if URL changes
+  useEffect(() => {
+    const docFromUrl = searchParams.get("doc");
+    if (docFromUrl && docFromUrl !== activeDocId) {
+      const found = allDocs.find((d) => d.id === docFromUrl);
+      if (found) setActiveDocId(docFromUrl);
+    }
+  }, [searchParams, allDocs, activeDocId]);
 
-      if (!searchQuery.trim()) return true;
+  // Active doc object
+  const activeDoc = useMemo(() => {
+    return allDocs.find((d) => d.id === activeDocId) || allDocs[0];
+  }, [allDocs, activeDocId]);
 
-      const q = searchQuery.toLowerCase();
-      const matchTitle = doc.title.toLowerCase().includes(q);
-      const matchSummary = doc.summary.toLowerCase().includes(q);
-      const matchTags = doc.tags.some((t) => t.toLowerCase().includes(q));
-      const matchContent = doc.content.toLowerCase().includes(q);
+  // Headings for Table of Contents
+  const headings = useMemo(() => {
+    if (!activeDoc) return [];
+    return extractHeadings(activeDoc.content);
+  }, [activeDoc]);
 
-      return matchTitle || matchSummary || matchTags || matchContent;
+  // Group docs by category
+  const categoriesList: DocCategory[] = [
+    "Getting Started",
+    "SOC Operations",
+    "Agent & Integrations",
+    "Trust & Compliance",
+    "Support",
+  ];
+
+  const groupedDocs = useMemo(() => {
+    const groups: Record<DocCategory, CustomerDoc[]> = {
+      "Getting Started": [],
+      "SOC Operations": [],
+      "Agent & Integrations": [],
+      "Trust & Compliance": [],
+      Support: [],
+    };
+
+    allDocs.forEach((doc) => {
+      if (groups[doc.category]) {
+        groups[doc.category].push(doc);
+      }
     });
-  }, [allDocs, searchQuery, selectedCategory]);
 
-  const categories: Array<{ id: string; label: string; count: number }> = [
-    { id: "All", label: "All Documents", count: allDocs.length },
-    {
-      id: "Getting Started",
-      label: "Getting Started",
-      count: allDocs.filter((d) => d.category === "Getting Started").length,
-    },
-    {
-      id: "SOC Operations",
-      label: "SOC Operations",
-      count: allDocs.filter((d) => d.category === "SOC Operations").length,
-    },
-    {
-      id: "Agent & Integrations",
-      label: "Agent & Integrations",
-      count: allDocs.filter((d) => d.category === "Agent & Integrations").length,
-    },
-    {
-      id: "Trust & Compliance",
-      label: "Trust & Compliance",
-      count: allDocs.filter((d) => d.category === "Trust & Compliance").length,
-    },
-    {
-      id: "Support",
-      label: "Support",
-      count: allDocs.filter((d) => d.category === "Support").length,
-    },
-  ];
+    return groups;
+  }, [allDocs]);
 
-  const quickSearchTags = [
-    "Agent Install",
-    "SLA",
-    "MFA",
-    "RBAC",
-    "Trivy",
-    "Merkle Chain",
-    "Rollback",
-    "SCIM",
-  ];
+  // Search Results across all documents
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase().trim();
 
-  const handleCopyDoc = (doc: CustomerDoc, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    navigator.clipboard.writeText(doc.content);
-    setCopiedDocId(doc.id);
-    setTimeout(() => setCopiedDocId(null), 2000);
+    return allDocs
+      .map((doc) => {
+        let score = 0;
+        const titleMatch = doc.title.toLowerCase().includes(q);
+        const tagMatch = doc.tags.some((t) => t.toLowerCase().includes(q));
+        const summaryMatch = doc.summary.toLowerCase().includes(q);
+        const contentMatch = doc.content.toLowerCase().includes(q);
+
+        if (titleMatch) score += 10;
+        if (tagMatch) score += 6;
+        if (summaryMatch) score += 4;
+        if (contentMatch) score += 2;
+
+        return { doc, score };
+      })
+      .filter((r) => r.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((r) => r.doc);
+  }, [allDocs, searchQuery]);
+
+  // Next / Previous Doc Navigation
+  const { prevDoc, nextDoc } = useMemo(() => {
+    const currentIndex = allDocs.findIndex((d) => d.id === activeDocId);
+    return {
+      prevDoc: currentIndex > 0 ? allDocs[currentIndex - 1] : null,
+      nextDoc: currentIndex < allDocs.length - 1 ? allDocs[currentIndex + 1] : null,
+    };
+  }, [allDocs, activeDocId]);
+
+  // Switch doc handler
+  const selectDocument = (docId: string) => {
+    setActiveDocId(docId);
+    setRawViewMode(false);
+    setFeedbackGiven(null);
+    setMobileSidebarOpen(false);
+    setIsSearchOpen(false);
+    setSearchQuery("");
+
+    // Update URL shallowly
+    router.replace(`/docs?doc=${docId}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleDownloadDoc = (doc: CustomerDoc, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    const blob = new Blob([doc.content], { type: "text/markdown;charset=utf-8" });
+  // Toggle Category Fold
+  const toggleCategory = (cat: string) => {
+    setCollapsedCategories((prev) => ({
+      ...prev,
+      [cat]: !prev[cat],
+    }));
+  };
+
+  // Keyboard shortcut (⌘K or / to focus search)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setIsSearchOpen(true);
+      } else if (e.key === "/" && !["INPUT", "TEXTAREA"].includes((e.target as HTMLElement).tagName)) {
+        e.preventDefault();
+        setIsSearchOpen(true);
+      } else if (e.key === "Escape") {
+        setIsSearchOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Copy Markdown of active doc
+  const handleCopyDocMarkdown = () => {
+    if (!activeDoc) return;
+    navigator.clipboard.writeText(activeDoc.content);
+    setCopiedDoc(true);
+    setTimeout(() => setCopiedDoc(false), 2500);
+  };
+
+  // Copy Direct Link to active doc
+  const handleCopyLink = () => {
+    if (typeof window === "undefined") return;
+    const url = `${window.location.origin}/docs?doc=${activeDoc.id}`;
+    navigator.clipboard.writeText(url);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  // Download single doc as .md file
+  const handleDownloadDoc = () => {
+    if (!activeDoc) return;
+    const blob = new Blob([activeDoc.content], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = doc.filename;
+    a.download = activeDoc.filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
 
+  // Download all docs unified manual
   const handleDownloadBundle = () => {
     setDownloadingBundle(true);
     try {
-      const bundleContent = generateDocumentationBundle();
-      const blob = new Blob([bundleContent], { type: "text/markdown;charset=utf-8" });
+      const bundle = generateDocumentationBundle();
+      const blob = new Blob([bundle], { type: "text/markdown;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -142,405 +298,341 @@ export default function CustomerDocsPage() {
     }
   };
 
-  const handleCopyModal = () => {
-    if (!activeDoc) return;
-    navigator.clipboard.writeText(activeDoc.content);
-    setCopiedModal(true);
-    setTimeout(() => setCopiedModal(false), 2000);
-  };
-
-  const getCategoryColor = (cat: DocCategory) => {
-    switch (cat) {
-      case "Getting Started":
-        return "bg-[var(--sd-pine)]/15 text-[var(--sd-wheat)] border-[var(--sd-pine)]/30";
-      case "SOC Operations":
-        return "bg-[var(--sd-success-dim)] text-[var(--sd-success)] border-[var(--sd-success-border)]";
-      case "Agent & Integrations":
-        return "bg-[var(--sd-warning-dim)] text-[var(--sd-wheat)] border-[var(--sd-warning-border)]";
-      case "Trust & Compliance":
-        return "bg-[var(--sd-panel-raised)] text-[var(--sd-wheat)] border-[var(--sd-border)]";
-      case "Support":
-        return "bg-[var(--sd-panel-raised)] text-[var(--sd-text-muted)] border-[var(--sd-border-subtle)]";
-    }
-  };
+  const activeCategoryMeta = activeDoc ? CATEGORY_META[activeDoc.category] : CATEGORY_META["Getting Started"];
+  const CategoryIcon = activeCategoryMeta.icon;
 
   return (
-    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
-      {/* Global Top Navbar */}
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col selection:bg-[var(--sd-primary)] selection:text-white">
+      {/* Top Application Bar */}
       <TopNavBar />
 
-      {/* Main Workspace Layout */}
-      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
-        {/* Top Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--sd-border)] pb-5">
+      {/* Sub-Header Portal Bar */}
+      <header className="sticky top-16 z-30 border-b border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/90 backdrop-blur-md px-4 sm:px-6 lg:px-8 py-2.5 transition-all">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+          {/* Mobile Menu & Breadcrumbs */}
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl sd-surface border border-[var(--sd-border)] flex items-center justify-center text-[var(--sd-wheat)] shadow-xs">
-              <BookOpen className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="tracking-tight text-[var(--sd-text)] text-2xl sm:text-3xl font-light leading-tight font-sans">
-                  Customer Documentation & Knowledge Base
-                </h1>
-                <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-[var(--sd-success-dim)] text-[var(--sd-success)] border border-[var(--sd-success-border)] font-mono">
-                  {allDocs.length} Verified Guides
-                </span>
-              </div>
-              <p className="text-[13px] text-[var(--sd-text-muted)] mt-0.5">
-                Operational runbooks, endpoint deployment manuals, security specifications, and compliance policies.
-              </p>
+            <button
+              onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+              className="lg:hidden p-2 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-wheat)] transition cursor-pointer"
+              aria-label="Toggle Document Navigation"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-2 text-xs font-mono">
+              <Link
+                href="/"
+                className="text-[var(--sd-text-dim)] hover:text-[var(--sd-wheat)] transition flex items-center gap-1"
+              >
+                <Shield className="w-3.5 h-3.5 text-[var(--sd-wheat)]" />
+                <span>Console</span>
+              </Link>
+              <span className="text-[var(--sd-text-dim)]">/</span>
+              <span className="text-[var(--sd-wheat)] font-semibold flex items-center gap-1.5">
+                <BookOpen className="w-3.5 h-3.5" />
+                Customer Documentation
+              </span>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Take All Docs (Bundle Download) */}
+          {/* Quick Search Trigger & Export Tools */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Quick Search Button */}
+            <button
+              onClick={() => setIsSearchOpen(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] hover:border-[var(--sd-border-strong)] text-xs text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+            >
+              <Search className="w-3.5 h-3.5 text-[var(--sd-wheat)]" />
+              <span className="hidden sm:inline">Search 23 guides...</span>
+              <span className="sm:hidden">Search</span>
+              <kbd className="hidden md:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-[var(--sd-text-dim)] bg-[var(--sd-bg)] rounded border border-[var(--sd-border-subtle)]">
+                ⌘K
+              </kbd>
+            </button>
+
+            {/* Export Manual Bundle */}
             <button
               onClick={handleDownloadBundle}
               disabled={downloadingBundle}
-              className="sd-button flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl sd-button-primary text-xs font-semibold text-[var(--sd-on-accent)] transition-all cursor-pointer shadow-xs disabled:opacity-50"
-              title="Download entire customer documentation package as a single Markdown manual"
+              className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-wheat)] transition cursor-pointer shadow-xs"
+              title="Download all customer guides in a single markdown file"
             >
-              <FolderDown className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
-              <span>
-                {downloadingBundle ? "Packaging..." : "Take All Docs (Bundle)"}
+              <FolderDown className="w-3.5 h-3.5 text-[var(--sd-wheat)]" />
+              <span className="hidden sm:inline">
+                {downloadingBundle ? "Exporting..." : "Take All Docs (.md)"}
               </span>
+              <span className="sm:hidden">Export</span>
             </button>
+          </div>
+        </div>
+      </header>
 
-            {/* Quick Link to Status */}
+      {/* Main Documentation Workspace (3 Columns: Left Nav, Center Reading View, Right Table-of-Contents) */}
+      <div className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 flex gap-8 items-start">
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {/* Column 1: Left Navigation Sidebar */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        <aside
+          className={`
+            fixed lg:sticky top-28 z-40 lg:z-10
+            w-72 sm:w-80 lg:w-72 max-h-[calc(100vh-8rem)]
+            bg-[var(--sd-bg-alt)] lg:bg-transparent
+            border lg:border-none border-[var(--sd-border)] rounded-2xl lg:rounded-none
+            p-4 lg:p-0 shadow-2xl lg:shadow-none
+            overflow-y-auto flex flex-col gap-6
+            transition-all duration-300
+            ${
+              mobileSidebarOpen
+                ? "left-4 right-4 sm:right-auto bottom-6"
+                : "hidden lg:flex"
+            }
+          `}
+        >
+          {/* Mobile Sidebar Close */}
+          <div className="flex lg:hidden items-center justify-between pb-3 border-b border-[var(--sd-border)]">
+            <span className="text-xs font-mono font-semibold text-[var(--sd-wheat)] uppercase tracking-wider">
+              Document Directory
+            </span>
+            <button
+              onClick={() => setMobileSidebarOpen(false)}
+              className="p-1 rounded-lg text-[var(--sd-text-dim)] hover:text-white"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Quick Filter in Sidebar */}
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 text-[var(--sd-text-dim)] absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Filter topics..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-xs text-[var(--sd-text)] placeholder-[var(--sd-text-dim)] focus:outline-hidden focus:border-[var(--sd-border-strong)] transition"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--sd-text-dim)] hover:text-white"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Category Tree Navigation */}
+          <nav className="space-y-6">
+            {categoriesList.map((category) => {
+              const docsInCategory = groupedDocs[category].filter((doc) => {
+                if (!searchQuery.trim()) return true;
+                const q = searchQuery.toLowerCase();
+                return (
+                  doc.title.toLowerCase().includes(q) ||
+                  doc.summary.toLowerCase().includes(q) ||
+                  doc.tags.some((t) => t.toLowerCase().includes(q))
+                );
+              });
+
+              if (docsInCategory.length === 0) return null;
+
+              const isCollapsed = collapsedCategories[category];
+              const CatMeta = CATEGORY_META[category];
+              const IconComp = CatMeta.icon;
+
+              return (
+                <div key={category} className="space-y-1.5">
+                  {/* Category Header */}
+                  <button
+                    onClick={() => toggleCategory(category)}
+                    className="w-full flex items-center justify-between py-1 px-1.5 text-xs font-mono uppercase tracking-wider font-semibold text-[var(--sd-text-dim)] hover:text-[var(--sd-wheat)] transition cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <IconComp className={`w-3.5 h-3.5 ${CatMeta.color}`} />
+                      <span>{category}</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border-subtle)] text-[var(--sd-text-dim)] font-mono">
+                        {docsInCategory.length}
+                      </span>
+                    </div>
+                    {isCollapsed ? (
+                      <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5 group-hover:translate-y-0.5 transition" />
+                    )}
+                  </button>
+
+                  {/* Documents List */}
+                  {!isCollapsed && (
+                    <ul className="space-y-1 pl-2 border-l border-[var(--sd-border-subtle)] ml-2">
+                      {docsInCategory.map((doc) => {
+                        const isActive = doc.id === activeDocId;
+                        return (
+                          <li key={doc.id}>
+                            <button
+                              onClick={() => selectDocument(doc.id)}
+                              className={`w-full text-left px-2.5 py-2 rounded-xl text-xs font-medium transition flex items-center justify-between gap-2 group cursor-pointer ${
+                                isActive
+                                  ? "bg-[var(--sd-panel-hover)] text-[var(--sd-sand)] font-semibold border border-[var(--sd-border)] shadow-xs"
+                                  : "text-[var(--sd-text-muted)] hover:text-[var(--sd-sand)] hover:bg-[var(--sd-panel-raised)]"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 transition ${
+                                    isActive
+                                      ? "bg-[var(--sd-primary-hover)] ring-2 ring-[var(--sd-primary)]/40"
+                                      : "bg-transparent group-hover:bg-[var(--sd-border-strong)]"
+                                  }`}
+                                />
+                                <span className="truncate">{doc.title}</span>
+                              </div>
+                              <span className="text-[10px] font-mono text-[var(--sd-text-dim)] flex-shrink-0">
+                                {doc.readTime.replace(" read", "")}
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </nav>
+
+          {/* Quick Resource Box */}
+          <div className="mt-auto pt-4 border-t border-[var(--sd-border-subtle)] space-y-2">
             <Link
               href="/status"
-              className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] sd-surface hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition-all cursor-pointer shadow-xs"
+              className="flex items-center justify-between p-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs text-[var(--sd-text-muted)] hover:text-white transition group"
             >
-              <Activity className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
-              <span>Platform Status</span>
-            </Link>
-          </div>
-        </div>
-
-        {/* Executive Overview Metric Cards */}
-        <div className="sd-overview-metrics">
-          <div className="sd-glass sd-metric">
-            <div className="sd-metric-label">
-              Customer Manuals
-              <FileText size={17} strokeWidth={1.4} />
-            </div>
-            <div className="sd-metric-value text-[var(--sd-wheat)] font-mono">
-              {allDocs.length} Guides
-            </div>
-            <p className="sd-metric-caption">Operational and deployment</p>
-          </div>
-
-          <div className="sd-glass sd-metric">
-            <div className="sd-metric-label">
-              Compliance Frameworks
-              <FileCheck2 size={17} strokeWidth={1.4} />
-            </div>
-            <div className="sd-metric-value text-[var(--sd-success)] font-mono text-[20px]">
-              ISO 27001
-            </div>
-            <p className="sd-metric-caption">SOC 2 & HIPAA aligned</p>
-          </div>
-
-          <div className="sd-glass sd-metric">
-            <div className="sd-metric-label">
-              Endpoint Agents
-              <Server size={17} strokeWidth={1.4} />
-            </div>
-            <div className="sd-metric-value font-mono text-[18px]">
-              Linux & Win
-            </div>
-            <p className="sd-metric-caption">mTLS v1.3 cryptographic bus</p>
-          </div>
-
-          <div className="sd-glass sd-metric">
-            <div className="sd-metric-label">
-              Support SLA
-              <Lock size={17} strokeWidth={1.4} />
-            </div>
-            <div className="sd-metric-value font-mono text-[18px]">
-              &lt; 15m P1
-            </div>
-            <p className="sd-metric-caption">24/7 dedicated escalation</p>
-          </div>
-        </div>
-
-        {/* Search & Filter Toolbar */}
-        <div className="sd-surface rounded-2xl border border-[var(--sd-border)] p-5 shadow-xs space-y-4">
-          <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3">
-            {/* Search Input */}
-            <div className="relative flex-1">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--sd-text-muted)]" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search documentation, agent install scripts, SLAs, MFA, or compliance rules..."
-                className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] text-sm text-[var(--sd-text)] placeholder:text-[var(--sd-text-dim)] focus:outline-none focus:border-[var(--sd-pine)] transition-all font-sans"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-[var(--sd-text-dim)] hover:text-[var(--sd-text)] rounded-md cursor-pointer"
-                  title="Clear search"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Quick Stats in Search bar */}
-            <div className="text-xs font-mono text-[var(--sd-text-dim)] flex items-center gap-2 shrink-0 px-1">
-              <span>Showing</span>
-              <strong className="text-[var(--sd-wheat)] font-semibold">
-                {filteredDocs.length}
-              </strong>
-              <span>of {allDocs.length} docs</span>
-            </div>
-          </div>
-
-          {/* Category Filter Tabs */}
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border-subtle)]">
-            <div className="inline-flex items-center p-1 rounded-xl bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] overflow-x-auto max-w-full">
-              {categories.map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-all whitespace-nowrap cursor-pointer ${
-                    selectedCategory === cat.id
-                      ? "bg-[var(--sd-pine)] text-[var(--sd-on-accent)] font-semibold shadow-xs"
-                      : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-                  }`}
-                >
-                  {cat.label}
-                  <span className="ml-1.5 opacity-70 font-mono text-[10px]">
-                    ({cat.count})
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            {/* Quick Suggestion Tags */}
-            <div className="hidden lg:flex items-center gap-1.5 text-xs text-[var(--sd-text-dim)]">
-              <span className="text-[11px] font-mono">Popular:</span>
-              {quickSearchTags.map((tag) => (
-                <button
-                  key={tag}
-                  onClick={() => setSearchQuery(tag)}
-                  className="px-2 py-0.5 rounded-md bg-[var(--sd-panel-raised)] border border-[var(--sd-border-subtle)] hover:border-[var(--sd-border)] hover:text-[var(--sd-text)] text-[11px] font-mono transition-colors cursor-pointer"
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Documents Cards Grid */}
-        {filteredDocs.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredDocs.map((doc) => (
-              <div
-                key={doc.id}
-                onClick={() => setActiveDoc(doc)}
-                className="sd-surface rounded-2xl border border-[var(--sd-border)] hover:border-[var(--sd-border-strong)] p-5 transition-all shadow-xs flex flex-col justify-between group cursor-pointer hover:shadow-md"
-              >
-                <div>
-                  {/* Category Pill & Read Time */}
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider border ${getCategoryColor(
-                        doc.category
-                      )}`}
-                    >
-                      {doc.category}
-                    </span>
-                    <span className="text-[11px] font-mono text-[var(--sd-text-dim)] flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-[var(--sd-pine)]" />
-                      {doc.readTime}
-                    </span>
-                  </div>
-
-                  {/* Document Title */}
-                  <h3 className="text-base font-semibold text-[var(--sd-text)] group-hover:text-[var(--sd-wheat)] transition-colors leading-snug mb-2">
-                    {doc.title}
-                  </h3>
-
-                  {/* Document Summary */}
-                  <p className="text-xs text-[var(--sd-text-muted)] leading-relaxed line-clamp-3 mb-4">
-                    {doc.summary}
-                  </p>
-                </div>
-
-                <div>
-                  {/* Tags */}
-                  <div className="flex flex-wrap gap-1.5 mb-4">
-                    {doc.tags.map((t) => (
-                      <span
-                        key={t}
-                        className="px-2 py-0.5 rounded bg-[var(--sd-panel-raised)] text-[var(--sd-text-dim)] text-[10px] font-mono border border-[var(--sd-border-subtle)]"
-                      >
-                        #{t}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Action Bar on Card */}
-                  <div className="pt-3 border-t border-[var(--sd-border-subtle)] flex items-center justify-between">
-                    <span className="text-xs font-semibold text-[var(--sd-pine)] group-hover:text-[var(--sd-wheat)] flex items-center gap-1 transition-colors">
-                      <span>Read Guide</span>
-                      <ChevronRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-                    </span>
-
-                    <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                      {/* Copy Markdown */}
-                      <button
-                        onClick={(e) => handleCopyDoc(doc, e)}
-                        className="p-1.5 rounded-lg border border-[var(--sd-border-subtle)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer"
-                        title="Copy document Markdown"
-                      >
-                        {copiedDocId === doc.id ? (
-                          <Check className="w-3.5 h-3.5 text-[var(--sd-success)]" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-
-                      {/* Download .md */}
-                      <button
-                        onClick={(e) => handleDownloadDoc(doc, e)}
-                        className="p-1.5 rounded-lg border border-[var(--sd-border-subtle)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer"
-                        title={`Download ${doc.filename}`}
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
+              <div className="flex items-center gap-2">
+                <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                <span>System Status</span>
               </div>
-            ))}
-          </div>
-        ) : (
-          /* Empty Search State */
-          <div className="sd-surface rounded-2xl border border-[var(--sd-border)] p-12 text-center space-y-4">
-            <div className="w-12 h-12 rounded-2xl bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] mx-auto flex items-center justify-center text-[var(--sd-text-muted)]">
-              <Search className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-base font-semibold text-[var(--sd-text)]">
-                No customer documents match your query
-              </h3>
-              <p className="text-xs text-[var(--sd-text-muted)] mt-1 max-w-md mx-auto">
-                No matching results found for <span className="text-[var(--sd-wheat)] font-mono">"{searchQuery}"</span>.
-                Try adjusting your search terms or clearing the category filter.
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setSearchQuery("");
-                setSelectedCategory("All");
-              }}
-              className="sd-button px-4 py-2 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-xs font-medium text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            </Link>
+
+            <a
+              href="/api/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between p-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs text-[var(--sd-text-muted)] hover:text-white transition group"
             >
-              Reset Filters
-            </button>
+              <div className="flex items-center gap-2">
+                <Code2 className="w-3.5 h-3.5 text-[var(--sd-wheat)]" />
+                <span>Docs REST API</span>
+              </div>
+              <ExternalLink className="w-3 h-3 text-[var(--sd-text-dim)] group-hover:text-[var(--sd-wheat)] transition" />
+            </a>
           </div>
+        </aside>
+
+        {/* Backdrop for Mobile Sidebar */}
+        {mobileSidebarOpen && (
+          <div
+            onClick={() => setMobileSidebarOpen(false)}
+            className="fixed inset-0 z-30 bg-black/60 backdrop-blur-xs lg:hidden"
+          />
         )}
 
-        {/* Bottom Documentation Callout */}
-        <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <Shield className="h-4 w-4 text-[var(--sd-wheat)]" />
-              <span className="text-sm font-medium text-[var(--sd-text)]">
-                Need Dedicated Enterprise Runbooks or Custom Architecture Support?
-              </span>
-            </div>
-            <p className="text-xs text-[var(--sd-text-muted)] leading-relaxed max-w-2xl">
-              ShieldDesk Technical Account Managers (TAMs) provide tailored deployment assistance, custom YARA rule writing, and private cloud deployment orchestration.
-            </p>
-          </div>
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {/* Column 2: Center Reading Workspace */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        <main className="flex-1 min-w-0 max-w-4xl space-y-8">
+          {/* Article Header & Control Bar */}
+          <div className="p-6 sm:p-8 rounded-3xl border border-[var(--sd-border)] bg-[var(--sd-surface)] shadow-md space-y-6 relative overflow-hidden">
+            {/* Ambient Background Accent */}
+            <div className="absolute top-0 right-0 w-72 h-72 bg-[var(--sd-primary)]/10 rounded-full blur-3xl pointer-events-none" />
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Link
-              href="/pricing"
-              className="sd-button flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] text-xs font-medium text-[var(--sd-text)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer shadow-xs"
-            >
-              <span>Enterprise Tiers</span>
-            </Link>
-            <button
-              onClick={handleDownloadBundle}
-              className="sd-button flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl sd-button-primary text-xs font-semibold text-[var(--sd-on-accent)] transition-all cursor-pointer shadow-xs shrink-0"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span>Export All Guides</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[var(--sd-text-dim)] border-t border-[var(--sd-border-subtle)]">
-          <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-[var(--sd-pine)]" />
-            <span>ShieldDesk™ Autonomous SOC · Customer Documentation Portal</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <Link href="/" className="hover:text-[var(--sd-wheat)] transition-colors">
-              SOC Workspace
-            </Link>
-            <Link href="/status" className="hover:text-[var(--sd-wheat)] transition-colors">
-              Platform Status & SLA
-            </Link>
-            <Link href="/pricing" className="hover:text-[var(--sd-wheat)] transition-colors">
-              Commercial Plans
-            </Link>
-          </div>
-        </div>
-      </main>
-
-      {/* Interactive Document Reader Modal */}
-      {activeDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-          <div
-            className="w-full max-w-4xl max-h-[90vh] bg-[var(--sd-bg-alt)] border border-[var(--sd-border-strong)] rounded-2xl shadow-2xl flex flex-col overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="p-5 border-b border-[var(--sd-border)] bg-[var(--sd-surface)] flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] text-[var(--sd-wheat)]">
-                  <FileText className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-wider border ${getCategoryColor(
-                        activeDoc.category
-                      )}`}
-                    >
-                      {activeDoc.category}
-                    </span>
-                    <span className="text-[11px] font-mono text-[var(--sd-text-dim)]">
-                      {activeDoc.readTime}
-                    </span>
-                  </div>
-                  <h2 className="text-lg font-semibold text-[var(--sd-text)] leading-snug mt-0.5">
-                    {activeDoc.title}
-                  </h2>
-                </div>
+            {/* Breadcrumb & Metadata Badge Row */}
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold uppercase tracking-wider border ${activeCategoryMeta.badge} flex items-center gap-1.5`}
+                >
+                  <CategoryIcon className="w-3 h-3" />
+                  {activeDoc.category}
+                </span>
+                <span className="text-[var(--sd-text-dim)]">•</span>
+                <span className="text-[var(--sd-text-muted)] flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-[var(--sd-wheat)]" />
+                  {activeDoc.readTime}
+                </span>
+                <span className="text-[var(--sd-text-dim)]">•</span>
+                <span className="text-[var(--sd-text-dim)]">
+                  Reviewed: {activeDoc.lastUpdated}
+                </span>
               </div>
 
-              {/* Toolbar Actions */}
+              {/* View Mode Toggle: Formatted Reader vs Raw Markdown */}
+              <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border-subtle)]">
+                <button
+                  onClick={() => setRawViewMode(false)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono transition cursor-pointer ${
+                    !rawViewMode
+                      ? "bg-[var(--sd-panel-hover)] text-[var(--sd-sand)] font-semibold shadow-xs"
+                      : "text-[var(--sd-text-dim)] hover:text-white"
+                  }`}
+                  title="Formatted Reading Experience"
+                >
+                  <Eye className="w-3 h-3 text-emerald-400" />
+                  <span>Reader</span>
+                </button>
+                <button
+                  onClick={() => setRawViewMode(true)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono transition cursor-pointer ${
+                    rawViewMode
+                      ? "bg-[var(--sd-panel-hover)] text-[var(--sd-sand)] font-semibold shadow-xs"
+                      : "text-[var(--sd-text-dim)] hover:text-white"
+                  }`}
+                  title="View Raw Markdown Source"
+                >
+                  <Code2 className="w-3 h-3 text-[var(--sd-wheat)]" />
+                  <span>Raw .md</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Document Title & Executive Summary */}
+            <div className="space-y-3">
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-[var(--sd-sand)] leading-tight">
+                {activeDoc.title}
+              </h1>
+              <p className="text-base sm:text-lg text-[var(--sd-text-muted)] leading-relaxed font-sans">
+                {activeDoc.summary}
+              </p>
+            </div>
+
+            {/* Tag Pills */}
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--sd-border-subtle)]">
+              <span className="text-xs font-mono text-[var(--sd-text-dim)] flex items-center gap-1 mr-1">
+                <Tag className="w-3 h-3" />
+                Topics:
+              </span>
+              {activeDoc.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="px-2.5 py-0.5 rounded-lg text-xs font-mono bg-[var(--sd-panel-raised)] border border-[var(--sd-border-subtle)] text-[var(--sd-sand)] hover:border-[var(--sd-border)] transition"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+
+            {/* Document Action Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[var(--sd-border)]">
               <div className="flex items-center gap-2">
                 {/* Copy Markdown */}
                 <button
-                  onClick={handleCopyModal}
+                  onClick={handleCopyDocMarkdown}
                   className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
                   title="Copy Document Markdown"
                 >
-                  {copiedModal ? (
+                  {copiedDoc ? (
                     <>
                       <Check className="w-3.5 h-3.5 text-[var(--sd-success)]" />
-                      <span>Copied!</span>
+                      <span className="text-[var(--sd-success)] font-medium">Copied!</span>
                     </>
                   ) : (
                     <>
@@ -550,58 +642,306 @@ export default function CustomerDocsPage() {
                   )}
                 </button>
 
-                {/* Download File */}
+                {/* Download .md */}
                 <button
-                  onClick={() => handleDownloadDoc(activeDoc)}
+                  onClick={handleDownloadDoc}
                   className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
                   title={`Download ${activeDoc.filename}`}
                 >
-                  <Download className="w-3.5 h-3.5 text-[var(--sd-pine)]" />
+                  <Download className="w-3.5 h-3.5 text-cyan-400" />
                   <span>Download .md</span>
                 </button>
 
-                {/* Print Document */}
+                {/* Share Link */}
                 <button
-                  onClick={() => window.print()}
-                  className="sd-button p-2 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer"
-                  title="Print / Save PDF"
+                  onClick={handleCopyLink}
+                  className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+                  title="Copy shareable link"
                 >
-                  <Printer className="w-4 h-4" />
-                </button>
-
-                {/* Close Button */}
-                <button
-                  onClick={() => setActiveDoc(null)}
-                  className="p-2 rounded-xl border border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer ml-1"
-                  title="Close (ESC)"
-                >
-                  <X className="w-4 h-4" />
+                  {copiedLink ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-[var(--sd-success)]" />
+                      <span className="text-[var(--sd-success)]">Link Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Share2 className="w-3.5 h-3.5 text-[var(--sd-wheat)]" />
+                      <span>Share</span>
+                    </>
+                  )}
                 </button>
               </div>
-            </div>
 
-            {/* Modal Body: Formatted Document Reader */}
-            <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-4 text-sm leading-relaxed text-[var(--sd-text)] font-sans">
-              <div className="prose prose-invert max-w-none space-y-4">
-                <pre className="whitespace-pre-wrap font-sans bg-[var(--sd-bg)] p-6 rounded-xl border border-[var(--sd-border)] text-sm text-[var(--sd-text)] leading-relaxed overflow-x-auto selection:bg-[var(--sd-pine)] selection:text-white">
+              {/* Print Document */}
+              <button
+                onClick={() => window.print()}
+                className="sd-button flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text-muted)] hover:text-white transition cursor-pointer"
+                title="Print or Save as PDF"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Print / PDF</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Document Content Workspace */}
+          <article className="p-6 sm:p-10 rounded-3xl border border-[var(--sd-border)] bg-[var(--sd-surface)] shadow-md min-h-[500px]">
+            {rawViewMode ? (
+              // RAW MARKDOWN SOURCE VIEW
+              <div className="space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-[var(--sd-border)] text-xs font-mono text-[var(--sd-text-dim)]">
+                  <span>Raw Source: {activeDoc.filename}</span>
+                  <button
+                    onClick={handleCopyDocMarkdown}
+                    className="text-[var(--sd-wheat)] hover:underline flex items-center gap-1"
+                  >
+                    <Copy className="w-3 h-3" />
+                    Copy All Source
+                  </button>
+                </div>
+                <pre className="p-6 rounded-2xl bg-[var(--sd-bg)] border border-[var(--sd-border)] font-mono text-xs sm:text-sm text-[var(--sd-sand)] leading-relaxed overflow-x-auto whitespace-pre-wrap selection:bg-[var(--sd-primary)] selection:text-white">
                   {activeDoc.content}
                 </pre>
               </div>
+            ) : (
+              // FORMATTED RICH DOCUMENTATION EXPERIENCE
+              <DocMarkdownRenderer content={activeDoc.content} />
+            )}
+          </article>
+
+          {/* Feedback & Helpful Widget */}
+          <div className="p-6 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-surface)] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-mono">
+            <div className="flex items-center gap-2 text-[var(--sd-text-muted)]">
+              <Sparkles className="w-4 h-4 text-[var(--sd-wheat)]" />
+              <span>Was this documentation guide helpful for your team?</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {feedbackGiven ? (
+                <span className="text-[var(--sd-success)] font-medium flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5" />
+                  Thank you for your feedback!
+                </span>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setFeedbackGiven("yes")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-sand)] transition cursor-pointer"
+                  >
+                    <ThumbsUp className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Yes, helpful</span>
+                  </button>
+                  <button
+                    onClick={() => setFeedbackGiven("no")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-sand)] transition cursor-pointer"
+                  >
+                    <ThumbsDown className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Could be better</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Next / Previous Article Navigation */}
+          <nav className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            {prevDoc ? (
+              <button
+                onClick={() => selectDocument(prevDoc.id)}
+                className="p-5 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-surface)] hover:bg-[var(--sd-panel-hover)] hover:border-[var(--sd-border-strong)] transition text-left flex items-start gap-3 group cursor-pointer"
+              >
+                <ArrowLeft className="w-4 h-4 text-[var(--sd-wheat)] group-hover:-translate-x-1 transition mt-1 flex-shrink-0" />
+                <div className="min-w-0">
+                  <span className="text-[10px] font-mono text-[var(--sd-text-dim)] uppercase tracking-wider">
+                    Previous Guide • {prevDoc.category}
+                  </span>
+                  <div className="text-sm font-semibold text-[var(--sd-sand)] truncate mt-0.5">
+                    {prevDoc.title}
+                  </div>
+                </div>
+              </button>
+            ) : (
+              <div />
+            )}
+
+            {nextDoc && (
+              <button
+                onClick={() => selectDocument(nextDoc.id)}
+                className="p-5 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-surface)] hover:bg-[var(--sd-panel-hover)] hover:border-[var(--sd-border-strong)] transition text-right flex items-start justify-end gap-3 group cursor-pointer sm:col-start-2"
+              >
+                <div className="min-w-0">
+                  <span className="text-[10px] font-mono text-[var(--sd-text-dim)] uppercase tracking-wider">
+                    Next Guide • {nextDoc.category}
+                  </span>
+                  <div className="text-sm font-semibold text-[var(--sd-sand)] truncate mt-0.5">
+                    {nextDoc.title}
+                  </div>
+                </div>
+                <ArrowRight className="w-4 h-4 text-[var(--sd-wheat)] group-hover:translate-x-1 transition mt-1 flex-shrink-0" />
+              </button>
+            )}
+          </nav>
+        </main>
+
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {/* Column 3: Right Sidebar (On This Page / Table of Contents) */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        <aside className="hidden xl:block w-64 sticky top-28 space-y-6">
+          {/* Table of Contents */}
+          <div className="p-5 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-surface)] shadow-sm space-y-4">
+            <div className="text-xs font-mono font-semibold text-[var(--sd-wheat)] uppercase tracking-wider flex items-center gap-2">
+              <Bookmark className="w-3.5 h-3.5" />
+              <span>On This Page</span>
+            </div>
+
+            {headings.length > 0 ? (
+              <ul className="space-y-2 text-xs">
+                {headings.map((h) => (
+                  <li
+                    key={h.id}
+                    className={h.level === 3 ? "pl-3 border-l border-[var(--sd-border-subtle)]" : ""}
+                  >
+                    <a
+                      href={`#${h.id}`}
+                      className="text-[var(--sd-text-muted)] hover:text-[var(--sd-sand)] hover:underline leading-relaxed block transition"
+                    >
+                      {h.text}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-[var(--sd-text-dim)] font-mono">
+                Comprehensive guide overview.
+              </p>
+            )}
+          </div>
+
+          {/* Quick Guide Card */}
+          <div className="p-5 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-surface)] shadow-sm space-y-3 text-xs">
+            <div className="text-xs font-mono font-semibold text-[var(--sd-sand)] flex items-center gap-1.5">
+              <FileCheck2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Take This Guide</span>
+            </div>
+            <p className="text-[var(--sd-text-muted)] leading-relaxed">
+              Export this runbook directly into your company wiki, Confluence, or internal repository.
+            </p>
+            <div className="space-y-2 pt-1">
+              <button
+                onClick={handleCopyDocMarkdown}
+                className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs text-[var(--sd-sand)] font-medium transition cursor-pointer"
+              >
+                <Copy className="w-3 h-3 text-[var(--sd-wheat)]" />
+                <span>Copy Markdown Source</span>
+              </button>
+              <button
+                onClick={handleDownloadDoc}
+                className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs text-[var(--sd-sand)] font-medium transition cursor-pointer"
+              >
+                <Download className="w-3 h-3 text-cyan-400" />
+                <span>Download {activeDoc.filename}</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* Search Modal / Command Palette */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {isSearchOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-20 bg-black/80 backdrop-blur-md animate-in fade-in duration-150">
+          <div
+            className="w-full max-w-2xl bg-[var(--sd-bg-alt)] border border-[var(--sd-border-strong)] rounded-2xl shadow-2xl flex flex-col overflow-hidden max-h-[80vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Search Input Bar */}
+            <div className="p-4 border-b border-[var(--sd-border)] bg-[var(--sd-surface)] flex items-center gap-3">
+              <Search className="w-5 h-5 text-[var(--sd-wheat)] flex-shrink-0" />
+              <input
+                ref={searchInputRef}
+                autoFocus
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search across all 23 customer guides..."
+                className="w-full bg-transparent text-sm text-[var(--sd-text)] placeholder-[var(--sd-text-dim)] focus:outline-hidden"
+              />
+              <button
+                onClick={() => setIsSearchOpen(false)}
+                className="p-1 rounded-lg text-[var(--sd-text-dim)] hover:text-white"
+                title="Close (ESC)"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Quick Suggestion Chips */}
+            <div className="px-4 py-2 border-b border-[var(--sd-border-subtle)] bg-[var(--sd-panel-raised)]/40 flex items-center gap-2 overflow-x-auto text-[11px] font-mono">
+              <span className="text-[var(--sd-text-dim)] flex-shrink-0">Quick Topics:</span>
+              {["Agent Install", "SLA", "MFA", "RBAC", "Digital Twin", "Rollback", "Compliance"].map(
+                (topic) => (
+                  <button
+                    key={topic}
+                    onClick={() => setSearchQuery(topic)}
+                    className="px-2 py-0.5 rounded-md bg-[var(--sd-panel-raised)] border border-[var(--sd-border-subtle)] text-[var(--sd-wheat)] hover:border-[var(--sd-border)] transition flex-shrink-0 cursor-pointer"
+                  >
+                    {topic}
+                  </button>
+                )
+              )}
+            </div>
+
+            {/* Search Results List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {searchQuery.trim() === "" ? (
+                <div className="text-center py-8 text-[var(--sd-text-dim)] text-xs font-mono">
+                  Type a keyword, capability name, or compliance term to search...
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div className="text-center py-8 text-[var(--sd-text-dim)] text-xs font-mono">
+                  No documentation found matching &quot;{searchQuery}&quot;.
+                </div>
+              ) : (
+                searchResults.map((doc) => {
+                  const meta = CATEGORY_META[doc.category];
+                  const Icon = meta.icon;
+                  return (
+                    <button
+                      key={doc.id}
+                      onClick={() => selectDocument(doc.id)}
+                      className="w-full text-left p-3.5 rounded-xl border border-[var(--sd-border-subtle)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] hover:border-[var(--sd-border)] transition flex items-start gap-3 group cursor-pointer"
+                    >
+                      <div className="p-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border-subtle)] text-[var(--sd-wheat)] mt-0.5">
+                        <Icon className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--sd-text-dim)]">
+                            {doc.category}
+                          </span>
+                          <span className="text-[10px] font-mono text-[var(--sd-text-dim)]">
+                            • {doc.readTime}
+                          </span>
+                        </div>
+                        <h4 className="text-sm font-semibold text-[var(--sd-sand)] group-hover:text-white transition truncate mt-0.5">
+                          {doc.title}
+                        </h4>
+                        <p className="text-xs text-[var(--sd-text-muted)] line-clamp-1 mt-0.5">
+                          {doc.summary}
+                        </p>
+                      </div>
+                      <ArrowRight className="w-4 h-4 text-[var(--sd-text-dim)] group-hover:text-[var(--sd-wheat)] group-hover:translate-x-0.5 transition self-center flex-shrink-0" />
+                    </button>
+                  );
+                })
+              )}
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-[var(--sd-border)] bg-[var(--sd-surface)] flex items-center justify-between text-xs text-[var(--sd-text-dim)] font-mono">
-              <div className="flex items-center gap-2">
-                <span>File: {activeDoc.filename}</span>
-                <span>•</span>
-                <span>Updated: {activeDoc.lastUpdated}</span>
-              </div>
-              <button
-                onClick={() => setActiveDoc(null)}
-                className="px-3 py-1 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text)] transition cursor-pointer font-sans"
-              >
-                Close Reader
-              </button>
+            <div className="p-3 border-t border-[var(--sd-border)] bg-[var(--sd-surface)] flex items-center justify-between text-[11px] font-mono text-[var(--sd-text-dim)]">
+              <span>Press ESC to close</span>
+              <span>Total {allDocs.length} Guides Available</span>
             </div>
           </div>
         </div>
