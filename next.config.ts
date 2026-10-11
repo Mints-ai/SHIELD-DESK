@@ -43,13 +43,13 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default process.env.NODE_ENV === "development"
-  ? nextConfig
-  : withSentryConfig(nextConfig, {
+export default process.env.NODE_ENV === "production"
+  ? withSentryConfig(nextConfig, {
       silent: true,
       widenClientFileUpload: true,
       tunnelRoute: "/monitoring",
       disableLogger: true,
-    });
+    })
+  : nextConfig;
 
 

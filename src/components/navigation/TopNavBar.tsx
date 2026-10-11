@@ -20,6 +20,7 @@ import {
   Cloud,
   Bot,
   CreditCard,
+  BookOpen,
 } from "lucide-react";
 import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
@@ -117,6 +118,8 @@ export function TopNavBar() {
     { href: "/dashboard/compliance", label: "ISO 27001 Audit", icon: FileCheck2 },
     { href: "/dashboard/risk-scorecard", label: "Risk Scorecard", icon: BarChart3 },
     { href: "/dashboard/billing", label: "Billing & Licenses", icon: CreditCard },
+    { href: "/status", label: "Platform Status", icon: Activity },
+    { href: "/docs", label: "Documentation", icon: BookOpen },
   ];
 
   const services = [
@@ -168,7 +171,7 @@ export function TopNavBar() {
                 </div>
               ))}
               <div className="pt-2 mt-2 border-t border-[var(--sd-border)]">
-                <Link href="/status" className="flex items-center justify-between text-xs text-emerald-400 hover:text-emerald-300 font-medium">
+                <Link href="/status" className="flex items-center justify-between text-xs text-[var(--sd-wheat)] hover:text-[var(--sd-pine-bright)] font-medium transition-colors">
                   <span>Full Platform Status & SLA</span>
                   <span aria-hidden="true">&rarr;</span>
                 </Link>

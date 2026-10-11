@@ -73,27 +73,32 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
   const env = getAppEnvironment();
   const uptimeSeconds = Math.floor((Date.now() - PROCESS_START_TIME) / 1000);
 
-  // 1. Database Probe
+  // 1. Database Probe (with 2000ms timeout fallback)
   let dbStatus: ComponentHealth = "operational";
   let dbLatency = 0;
-  let dbConfigured = Boolean(process.env.DATABASE_URL);
-  try {
-    const { result: connected, latencyMs } = await probeLatency(async () => {
-      if (!dbConfigured) return false;
-      return await checkDatabaseConnection();
-    });
-    dbLatency = latencyMs;
-    if (dbConfigured && connected) {
-      dbStatus = latencyMs > 500 ? "degraded" : "operational";
-    } else if (dbConfigured && !connected) {
-      dbStatus = "outage";
-    } else {
-      // In non-production testing with no DB url, mark as operational/standby
-      dbStatus = isProduction() ? "outage" : "operational";
+  const dbConfigured = Boolean(process.env.DATABASE_URL);
+
+  const probeDbPromise = (async () => {
+    try {
+      const { result: connected, latencyMs } = await probeLatency(async () => {
+        if (!dbConfigured) return false;
+        return await Promise.race([
+          checkDatabaseConnection(),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
+        ]);
+      });
+      dbLatency = latencyMs;
+      if (dbConfigured && connected) {
+        dbStatus = latencyMs > 500 ? "degraded" : "operational";
+      } else if (dbConfigured && !connected) {
+        dbStatus = isProduction() ? "outage" : "degraded";
+      } else {
+        dbStatus = isProduction() ? "outage" : "operational";
+      }
+    } catch {
+      dbStatus = isProduction() ? "outage" : "degraded";
     }
-  } catch {
-    dbStatus = isProduction() ? "outage" : "degraded";
-  }
+  })();
 
   // 2. Auth Gateway Probe
   let authStatus: ComponentHealth = "operational";
@@ -105,20 +110,22 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
     "";
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-  if (supabaseUrl && supabaseKey) {
-    try {
-      const { result: res, latencyMs } = await probeLatency(async () => {
-        return await fetch(`${supabaseUrl}/rest/v1/`, {
-          headers: { apikey: supabaseKey },
-          signal: AbortSignal.timeout(2000),
+  const probeAuthPromise = (async () => {
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const { result: res, latencyMs } = await probeLatency(async () => {
+          return await fetch(`${supabaseUrl}/rest/v1/`, {
+            headers: { apikey: supabaseKey },
+            signal: AbortSignal.timeout(1500),
+          });
         });
-      });
-      authLatency = latencyMs;
-      authStatus = res.status < 500 ? "operational" : "degraded";
-    } catch {
-      authStatus = "degraded";
+        authLatency = latencyMs;
+        authStatus = res.status < 500 ? "operational" : "degraded";
+      } catch {
+        authStatus = "degraded";
+      }
     }
-  }
+  })();
 
   // 3. AI SOC Co-Pilot & Blast Radius Engine Probe
   let aiStatus: ComponentHealth = "operational";
@@ -126,39 +133,42 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
   const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || "http://localhost:11434/v1";
   const pythonAiServiceUrl = process.env.PYTHON_AI_SERVICE_URL || "http://localhost:8000";
 
-  try {
-    const { latencyMs } = await probeLatency(async () => {
-      const res = await fetch(`${ollamaBaseUrl}/models`, {
-        signal: AbortSignal.timeout(1500),
-      });
-      if (!res.ok) throw new Error("Ollama returned non-ok");
-      return res;
-    });
-    aiLatency = latencyMs;
-    aiStatus = "operational";
-  } catch {
-    // Check fallback Gemini or Python AI
-    if (process.env.GEMINI_API_KEY) {
-      aiStatus = "operational";
-      aiLatency = 35;
-    } else {
-      try {
-        const { latencyMs } = await probeLatency(async () => {
-          const res = await fetch(`${pythonAiServiceUrl}/health`, {
-            signal: AbortSignal.timeout(1500),
-          });
-          if (!res.ok) throw new Error("Python AI non-ok");
-          return res;
+  const probeAiPromise = (async () => {
+    try {
+      const { latencyMs } = await probeLatency(async () => {
+        const res = await fetch(`${ollamaBaseUrl}/models`, {
+          signal: AbortSignal.timeout(1000),
         });
-        aiLatency = latencyMs;
+        if (!res.ok) throw new Error("Ollama returned non-ok");
+        return res;
+      });
+      aiLatency = latencyMs;
+      aiStatus = "operational";
+    } catch {
+      if (process.env.GEMINI_API_KEY) {
         aiStatus = "operational";
-      } catch {
-        // Fallback rule-based analysis is always active
-        aiStatus = "operational";
-        aiLatency = 5;
+        aiLatency = 35;
+      } else {
+        try {
+          const { latencyMs } = await probeLatency(async () => {
+            const res = await fetch(`${pythonAiServiceUrl}/health`, {
+              signal: AbortSignal.timeout(1000),
+            });
+            if (!res.ok) throw new Error("Python AI non-ok");
+            return res;
+          });
+          aiLatency = latencyMs;
+          aiStatus = "operational";
+        } catch {
+          aiStatus = "operational";
+          aiLatency = 5;
+        }
       }
     }
-  }
+  })();
+
+  // Run all active probes concurrently
+  await Promise.allSettled([probeDbPromise, probeAuthPromise, probeAiPromise]);
 
   // 4. Fleet PKI Control Plane & Endpoint Telemetry Bus
   const pkiStatus: ComponentHealth = "operational";
