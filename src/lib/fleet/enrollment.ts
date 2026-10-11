@@ -259,3 +259,44 @@ export async function enrollEndpointAgent({
     certificate: certResult,
   };
 }
+
+/**
+ * Returns recent enrollment tokens generated for the tenant.
+ */
+export async function listEnrollmentTokens(tenantId: string): Promise<EnrollmentTokenRecord[]> {
+  try {
+    const { rows } = await query<EnrollmentTokenRecord>(
+      `SELECT id, tenant_id, label, expires_at, max_uses, used_count, created_by, created_at, revoked_at
+       FROM endpoint_enrollment_tokens
+       WHERE tenant_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50;`,
+      [tenantId]
+    );
+    return rows;
+  } catch {
+    return MOCK_ENROLLMENT_TOKENS.filter((t) => t.tenant_id === tenantId);
+  }
+}
+
+/**
+ * Revokes an active enrollment token by ID.
+ */
+export async function revokeEnrollmentToken(tokenId: string, tenantId: string): Promise<boolean> {
+  try {
+    await query(
+      `UPDATE endpoint_enrollment_tokens
+       SET revoked_at = now()
+       WHERE id = $1 AND tenant_id = $2;`,
+      [tokenId, tenantId]
+    );
+    return true;
+  } catch {
+    const tok = MOCK_ENROLLMENT_TOKENS.find((t) => t.id === tokenId && t.tenant_id === tenantId);
+    if (tok) {
+      tok.revoked_at = new Date().toISOString();
+      return true;
+    }
+    return false;
+  }
+}

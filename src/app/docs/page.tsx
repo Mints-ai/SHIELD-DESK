@@ -41,6 +41,7 @@ import {
   Cpu,
   Workflow,
   Radio,
+  KeyRound,
 } from "lucide-react";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
 import {
@@ -502,6 +503,17 @@ function CustomerDocsContent() {
 
           {/* Quick Resource Box */}
           <div className="mt-auto pt-4 border-t border-[var(--sd-border-subtle)] space-y-2">
+            <Link
+              href="/dashboard/integrations"
+              className="flex items-center justify-between p-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs text-[var(--sd-text-muted)] hover:text-white transition group"
+            >
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-3.5 h-3.5 text-[var(--sd-wheat)]" />
+                <span>Tokens &amp; Integrations</span>
+              </div>
+              <ArrowRight className="w-3 h-3 text-[var(--sd-text-dim)] group-hover:text-[var(--sd-wheat)] transition" />
+            </Link>
+
             <Link
               href="/status"
               className="flex items-center justify-between p-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs text-[var(--sd-text-muted)] hover:text-white transition group"

@@ -21,6 +21,7 @@ import {
   Bot,
   CreditCard,
   BookOpen,
+  KeyRound,
 } from "lucide-react";
 import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
@@ -113,6 +114,7 @@ export function TopNavBar() {
     { href: "/dashboard/plans", label: "Mitigation Plans", icon: FileText },
     { href: "/dashboard/tasks", label: "Task Board", icon: CheckSquare },
     { href: "/dashboard/fleet", label: "Fleet & Host", icon: Server },
+    { href: "/dashboard/integrations", label: "Tokens & Keys", icon: KeyRound },
     { href: "/dashboard/scanner", label: "Security Scanner", icon: Scan },
     { href: "/dashboard/threats", label: "Threat Engine", icon: Flame },
     { href: "/dashboard/compliance", label: "ISO 27001 Audit", icon: FileCheck2 },
