@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const PUBLIC_EXACT_PATHS = new Set([
   "/login",
+  "/signup",
   "/onboarding",
   "/pricing",
   "/favicon.ico",
@@ -29,6 +30,8 @@ const PUBLIC_PATH_PREFIXES = [
   "/api/health",
   "/api/ingest/",
   "/api/agent/",
+  "/api/v1/plans",
+  "/checkout/",
   "/_next/",
   "/favicon/",
   "/monitoring",

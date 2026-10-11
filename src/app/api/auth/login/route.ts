@@ -89,8 +89,22 @@ export async function POST(req: NextRequest) {
 
           if (!error && data?.user) {
             authenticatedUid = data.user.id;
-            tenantId = (data.user.app_metadata?.tenant_id as string) || "acme-tenant";
-            role = (data.user.app_metadata?.role as ShieldDeskRole) || "user";
+            const metaTenant =
+              (data.user.app_metadata?.tenant_id as string) ||
+              (data.user.user_metadata?.tenant_id as string);
+
+            const isProdEnv =
+              process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+
+            if (!metaTenant && isProdEnv) {
+              return NextResponse.json(
+                { error: "User account lacks authorized tenant binding." },
+                { status: 403 }
+              );
+            }
+
+            tenantId = metaTenant || "default-tenant";
+            role = (data.user.app_metadata?.role as ShieldDeskRole) || "super_admin";
             supabaseAuthenticated = true;
           }
         } catch {
