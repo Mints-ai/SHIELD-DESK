@@ -21,6 +21,8 @@ import {
 import { TopNavBar } from "@/components/navigation/TopNavBar";
 import { useChat } from "@/lib/context/ChatContext";
 
+import { useSearchParams } from "next/navigation";
+
 interface PublicPlan {
   id: "community" | "professional" | "enterprise";
   name: string;
@@ -51,10 +53,16 @@ interface PublicPlan {
   };
 }
 
-export default function PricingPage() {
+function PricingContent() {
   const { activeUser } = useChat();
+  const searchParams = useSearchParams();
+  const urlInterval = searchParams.get("interval");
+  const urlPlan = searchParams.get("plan");
+
   const [plans, setPlans] = useState<PublicPlan[]>([]);
-  const [billingInterval, setBillingInterval] = useState<"month" | "year">("year");
+  const [billingInterval, setBillingInterval] = useState<"month" | "year">(
+    urlInterval === "month" || urlInterval === "year" ? urlInterval : "year"
+  );
   const [currency, setCurrency] = useState<"USD" | "EUR" | "AED">("USD");
   const [deploymentType, setDeploymentType] = useState<"saas" | "customer-hosted">("saas");
   const [isLoadingCheckout, setIsLoadingCheckout] = useState<string | null>(null);
@@ -98,6 +106,12 @@ export default function PricingPage() {
           cancelUrl: `${window.location.origin}/checkout/cancel`,
         }),
       });
+
+      if (res.status === 401) {
+        // Unauthenticated visitor -> redirect to registration preserving plan & interval
+        window.location.href = `/signup?plan=${encodeURIComponent(planId)}&interval=${encodeURIComponent(billingInterval)}`;
+        return;
+      }
 
       const data = await res.json();
       if (!res.ok) {
@@ -496,5 +510,19 @@ export default function PricingPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function PricingPage() {
+  return (
+    <React.Suspense
+      fallback={
+        <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex items-center justify-center font-sans">
+          <div className="text-sm text-[var(--sd-text-muted)] animate-pulse">Loading pricing matrix...</div>
+        </div>
+      }
+    >
+      <PricingContent />
+    </React.Suspense>
   );
 }

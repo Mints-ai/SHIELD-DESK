@@ -123,10 +123,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Webhook event is missing tenant metadata." }, { status: 400 });
     }
 
-    const targetTier: BillingTier =
+    const rawTier =
       event.payload?.payment?.entity?.notes?.tier ||
       event.tier ||
-      "pro";
+      "professional";
+    const targetTier: BillingTier = rawTier === "pro" ? "professional" : (rawTier as BillingTier);
 
     await updateTenantSubscription(tenantId, targetTier, provider as "stripe" | "razorpay" | "manual");
     await EntitlementService.setLicenseStatus(tenantId, "active");

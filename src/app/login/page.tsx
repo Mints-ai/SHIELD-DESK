@@ -21,12 +21,25 @@ import { DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { cn } from "@/lib/utils";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase/client";
 
+function getSafeRedirect(target: string | null, fallback = "/"): string {
+  if (!target) return fallback;
+  // Strictly prevent open redirects to external protocols or scheme-relative URLs
+  if (target.startsWith("/") && !target.startsWith("//") && !target.startsWith("/\\")) {
+    return target;
+  }
+  return fallback;
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const redirectTarget = searchParams.get("redirect") || "/";
+  const rawRedirect = searchParams.get("redirect");
+  const redirectTarget = getSafeRedirect(rawRedirect, "/");
+  const planParam = searchParams.get("plan");
+  const intervalParam = searchParams.get("interval");
+  const initialMode = searchParams.get("mode") === "register" ? "register" : "credentials";
 
-  const [authMode, setAuthMode] = useState<"credentials" | "register" | "quick" | "supabase">("credentials");
+  const [authMode, setAuthMode] = useState<"credentials" | "register" | "quick" | "supabase">(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [orgName, setOrgName] = useState("");
@@ -84,8 +97,11 @@ function LoginForm() {
         });
         const data = await res.json();
         if (res.ok) {
-          setSuccessMessage("Tenant registered successfully. Redirecting to SOC...");
-          setTimeout(() => router.push(redirectTarget), 1000);
+          setSuccessMessage("Tenant organization registered successfully. Redirecting...");
+          const postSignupTarget = planParam
+            ? `/pricing?plan=${encodeURIComponent(planParam)}&interval=${encodeURIComponent(intervalParam || "month")}`
+            : redirectTarget;
+          setTimeout(() => router.push(postSignupTarget), 800);
         } else {
           setErrorMessage(data.error || "Registration failed");
         }

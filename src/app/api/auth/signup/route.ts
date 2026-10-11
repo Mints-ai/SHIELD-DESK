@@ -37,11 +37,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const assignedRole: ShieldDeskRole = role === "system_admin" ? "system_admin" : "analyst";
+    // S1: Security Invariant: Public registration must NEVER grant global system_admin.
+    // The founding registrant creates an isolated organization tenant and is assigned
+    // tenant-level 'super_admin' (organization owner & billing admin). Any user-supplied role is strictly ignored.
+    const assignedRole: ShieldDeskRole = "super_admin";
 
-    const tenantId = organizationName
-      ? organizationName.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-tenant"
-      : "custom-tenant";
+    // S2: Server-authoritative unique tenant identifier.
+    // Never allow a client to specify or hijack another organization's tenantId.
+    const rawOrg = typeof organizationName === "string" ? organizationName.trim() : "";
+    const cleanSlug = rawOrg
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 20) || "org";
+    const uniqueSuffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+    const tenantId = `tenant_${cleanSlug}_${uniqueSuffix}`;
 
     let createdUid: string = crypto.randomUUID();
 
@@ -53,7 +63,9 @@ export async function POST(req: NextRequest) {
           password,
           options: {
             data: {
-              organization_name: organizationName || "Default Organization",
+              organization_name: rawOrg || "Default Organization",
+              tenant_id: tenantId,
+              role: assignedRole,
             },
           },
         });
@@ -69,6 +81,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Persist to local PostgreSQL users table with secure password hash
+    const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
     const hashedPassword = await hashPassword(password);
     try {
       await query(
@@ -77,8 +90,23 @@ export async function POST(req: NextRequest) {
          ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
         [createdUid, tenantId, assignedRole, email.toLowerCase().trim(), hashedPassword]
       );
+
+      // Initialize default community tier subscription record
+      await query(
+        `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, updated_at)
+         VALUES ($1, 'community', 'active', NOW() + INTERVAL '14 days', NOW())
+         ON CONFLICT (tenant_id) DO NOTHING`,
+        [tenantId]
+      );
     } catch (dbErr) {
-      console.warn("[Signup] Local user persist warning:", dbErr);
+      if (isProd) {
+        console.error("[Signup] CRITICAL_DATABASE_UNAVAILABLE: Failed to persist user account in production database:", dbErr);
+        return NextResponse.json(
+          { error: "Account registration failed: database service unavailable." },
+          { status: 500 }
+        );
+      }
+      console.warn("[Signup] Local user persist warning (dev/test mode):", dbErr);
     }
 
     // S2: Cryptographically sign session token
