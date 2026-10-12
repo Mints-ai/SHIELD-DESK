@@ -43,8 +43,7 @@ export async function POST(req: NextRequest) {
   const isSuperOrAdmin =
     session.role === "system_admin" ||
     session.role === "super_admin" ||
-    session.role === "responder" ||
-    isDevPersonaAllowed();
+    session.role === "responder";
 
   if (!session.tenantId || !isSuperOrAdmin) {
     return NextResponse.json(

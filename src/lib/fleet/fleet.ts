@@ -6,6 +6,7 @@ import { checkThrottle, recordMockThrottleCommand } from "@/lib/governance/blast
 import { signCommand } from "@/lib/fleet/commandSigning";
 import { isDemoMode, isProduction, isSimulationAllowed } from "@/lib/config/environment";
 import { validateCapabilitySupport, getCapability } from "./capabilities";
+import { validateIpAddress } from "@/lib/utils/ipValidation";
 import crypto from "crypto";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
@@ -639,8 +640,7 @@ export class SimulationExecutor {
       output = `Network interface restored on ${agent.hostname}. Restored baseline routing table.`;
       agent.status = "connected";
     } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
-      const parts = command.trim().split(/\s+/);
-      const ip = (command.startsWith("block ip") ? parts[2] : parts[1]) || "";
+      const ip = (command.startsWith("block ip") ? command.replace(/^block ip\s+/i, "") : command.replace(/^block_ip\s+/i, "")).trim();
       output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Safety snapshot ${snapshotId} registered.`;
     } else if (command.startsWith("kill_process")) {
       const pid = command.trim().split(/\s+/)[1] || "";
@@ -724,6 +724,21 @@ export async function executeAgentCommand({
 
   if (agent.kill_switch_active) {
     throw new Error("KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch.");
+  }
+
+  // Parameter validation for targeted actions
+  if (command.startsWith("block_ip") || command.startsWith("block ip")) {
+    const rawIp = (command.startsWith("block ip") ? command.replace(/^block ip\s+/i, "") : command.replace(/^block_ip\s+/i, "")).trim();
+    const val = validateIpAddress(rawIp);
+    if (!val.valid) {
+      throw new Error(`INVALID_IP_ADDRESS: ${val.error}`);
+    }
+  } else if (command.startsWith("kill_process")) {
+    const rawPid = command.replace(/^kill_process\s+/i, "").trim();
+    const numPid = parseInt(rawPid, 10);
+    if (!rawPid || isNaN(numPid) || numPid <= 1) {
+      throw new Error("INVALID_PID: Process ID must be a positive integer greater than 1.");
+    }
   }
 
   if (isProduction()) {

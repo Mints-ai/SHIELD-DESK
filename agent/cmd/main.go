@@ -259,7 +259,8 @@ func main() {
 			if eps < 10 {
 				eps = 12 + (tickCount % 15)
 			}
-			sendHeartbeat(httpClient, *controlURL, *agentID, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			coreTelem := collector.HarvestCoreTelemetry(*hostname, metrics.CPUPercent, metrics.MemPercent)
+			sendHeartbeat(httpClient, *controlURL, *agentID, *hostname, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
 			log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
 				tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
 		}
@@ -650,14 +651,15 @@ func enrollWithControlPlane(client *http.Client, controlURL, token, hostname str
 	return enrollResp.AgentID, enrollResp.TenantID, nil
 }
 
-func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cpu, mem float64, eps int) {
+func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cpu, mem float64, eps int, coreTelem telemetry.CoreTelemetry) {
 	payload := map[string]interface{}{
-		"agentId":     agentID,
-		"cpuUsage":    cpu,
-		"memoryUsage": mem,
-		"eps":         eps,
-		"status":      "connected",
-		"ipAddress":   getEndpointIP(client, controlURL),
+		"agentId":       agentID,
+		"cpuUsage":      cpu,
+		"memoryUsage":   mem,
+		"eps":           eps,
+		"status":        "connected",
+		"ipAddress":     getEndpointIP(client, controlURL),
+		"coreTelemetry": coreTelem,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

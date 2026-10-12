@@ -5,6 +5,8 @@ import { resolveEndpointIp } from "@/lib/fleet/ipAddress";
 import { trackError } from "@/lib/observability/errorTracker";
 import { MetricsRegistry } from "@/lib/observability/metrics";
 
+import { storeEndpointCoreTelemetry } from "@/lib/fleet/liveTelemetryCollector";
+
 /**
  * POST /api/agent/heartbeat
  * Live heartbeat reporting endpoint for Universal Endpoint Agent daemons.
@@ -21,11 +23,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing agentId" }, { status: 400 });
     }
 
-    const cpuUsage = typeof body.cpuUsage === "number" ? body.cpuUsage : null;
-    const memoryUsage = typeof body.memoryUsage === "number" ? body.memoryUsage : null;
-    const eps = typeof body.eps === "number" ? body.eps : null;
+
+
+    if (body.coreTelemetry && typeof body.coreTelemetry === "object") {
+      storeEndpointCoreTelemetry(agentId, body.coreTelemetry);
+    }
+
+    const cpuUsage = typeof body.cpuUsage === "number" ? Math.round(body.cpuUsage * 10) / 10 : null;
+    const memoryUsage = typeof body.memoryUsage === "number" ? Math.round(body.memoryUsage * 10) / 10 : null;
+    const eps = typeof body.eps === "number" ? Math.round(body.eps) : null;
     const requestedStatus = typeof body.status === "string" ? body.status : null;
     const ipAddress = resolveEndpointIp(req.headers, body.ipAddress);
+
+    const coreTelemetryJson =
+      body.coreTelemetry && typeof body.coreTelemetry === "object"
+        ? JSON.stringify(body.coreTelemetry)
+        : null;
 
     try {
       const { rows } = await query<{
@@ -40,6 +53,7 @@ export async function POST(req: NextRequest) {
              memory_usage = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN 0 ELSE COALESCE($2, memory_usage) END,
              eps = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN 0 ELSE COALESCE($3, eps) END,
              ip_address = COALESCE($5, ip_address),
+             core_telemetry = CASE WHEN $7::jsonb IS NOT NULL THEN $7::jsonb ELSE core_telemetry END,
              status = CASE
                WHEN status = 'isolated' THEN 'isolated'
                WHEN status = 'disconnected' THEN 'disconnected'
@@ -48,7 +62,7 @@ export async function POST(req: NextRequest) {
              END
          WHERE id = $4
          RETURNING id, kill_switch_active, tenant_id, status;`,
-        [cpuUsage, memoryUsage, eps, agentId, ipAddress, requestedStatus]
+        [cpuUsage, memoryUsage, eps, agentId, ipAddress, requestedStatus, coreTelemetryJson]
       );
 
       if (rows.length === 0) {
