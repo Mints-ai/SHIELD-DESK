@@ -5,7 +5,6 @@ import {
   listEnrollmentTokens,
   revokeEnrollmentToken,
 } from "@/lib/fleet/enrollment";
-import { isDevPersonaAllowed } from "@/lib/config/environment";
 import { trackError } from "@/lib/observability/errorTracker";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +38,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Allow administrators or any authorized tenant operator in dev/demo environment
+  // Allow administrators or authorized tenant operators (system_admin, super_admin, responder)
   const isSuperOrAdmin =
     session.role === "system_admin" ||
     session.role === "super_admin" ||

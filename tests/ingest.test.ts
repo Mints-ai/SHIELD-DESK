@@ -142,4 +142,66 @@ test("ShieldDesk Public Ingestion & Webhook Normalizer Suite", async (t) => {
     const res = await POST(req);
     assert.equal(res.status, 400);
   });
+
+  await t.test("SIEM Route: Rejects unauthenticated requests with 401 Unauthorized", async () => {
+    const { POST: postSiem } = await import("../src/app/api/ingest/siem/route");
+    const req = new NextRequest("http://localhost:3000/api/ingest/siem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: "defender", title: "Test Alert", severity: "high" }),
+    });
+
+    const res = await postSiem(req);
+    assert.equal(res.status, 401);
+  });
+
+  await t.test("SIEM Route: Rejects invalid API key with 401 Unauthorized", async () => {
+    const { POST: postSiem } = await import("../src/app/api/ingest/siem/route");
+    const req = new NextRequest("http://localhost:3000/api/ingest/siem", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": "completely-invalid-bogus-key",
+      },
+      body: JSON.stringify({ source: "defender", title: "Test Alert", severity: "high" }),
+    });
+
+    const res = await postSiem(req);
+    assert.equal(res.status, 401);
+  });
+
+  await t.test("SIEM Route: Rejects cross-tenant spoofing with 403 Forbidden", async () => {
+    const { POST: postSiem } = await import("../src/app/api/ingest/siem/route");
+    // test-globex-ingest-key is bound to globex-tenant in setup.ts
+    const req = new NextRequest("http://localhost:3000/api/ingest/siem", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": "test-globex-ingest-key",
+        "x-shielddesk-tenant-id": "acme-tenant", // Attempting cross-tenant spoofing
+      },
+      body: JSON.stringify({ source: "defender", title: "Cross-Tenant Injection Attempt", severity: "critical" }),
+    });
+
+    const res = await postSiem(req);
+    assert.equal(res.status, 403);
+  });
+
+  await t.test("SIEM Route: Accepts valid API key and correctly binds tenant", async () => {
+    const { POST: postSiem } = await import("../src/app/api/ingest/siem/route");
+    const req = new NextRequest("http://localhost:3000/api/ingest/siem", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": "test-globex-ingest-key",
+      },
+      body: JSON.stringify({ source: "sentinel", title: "Legitimate Sentinel Alert", severity: "medium" }),
+    });
+
+    const res = await postSiem(req);
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.tenantId, "globex-tenant");
+  });
 });

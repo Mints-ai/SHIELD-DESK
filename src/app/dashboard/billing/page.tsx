@@ -236,7 +236,7 @@ export default function CustomerBillingPage() {
     <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="max-w-7xl mx-auto px-6 py-8 flex-1 w-full space-y-8">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-8">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[var(--sd-border)] pb-6">
           <div>
