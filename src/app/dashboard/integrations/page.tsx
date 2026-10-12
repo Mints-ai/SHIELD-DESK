@@ -336,7 +336,7 @@ export default function IntegrationsAndTokensPage() {
     <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans selection:bg-[var(--sd-primary)] selection:text-white">
       <TopNavBar />
 
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-8">
         {/* Header Hero Section */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 sm:p-8 rounded-3xl border border-[var(--sd-border)] bg-[var(--sd-surface)] shadow-md relative overflow-hidden">
           <div className="absolute top-0 right-0 w-80 h-80 bg-[var(--sd-primary)]/10 rounded-full blur-3xl pointer-events-none" />
