@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+
     const payload: SiemAlertPayload = JSON.parse(rawBody);
     if (!payload.title) {
       return NextResponse.json({ error: "Missing required field: title" }, { status: 400 });
@@ -157,8 +158,14 @@ export async function POST(req: NextRequest) {
           );
         }
       }
-    } catch {
-      // In-memory fallback mode
+    } catch (dbErr: unknown) {
+      const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+      if (isProd) {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to persist SIEM incident into database: ${dbErr instanceof Error ? dbErr.message : "DB error"}`
+        );
+      }
+      // Non-production test fallback
     }
 
     // 3. Write immutable audit ledger event

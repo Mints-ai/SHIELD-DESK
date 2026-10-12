@@ -141,7 +141,7 @@ export async function POST(req: NextRequest) {
 
     res.cookies.set("shielddesk_session", sessionToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "production" || process.env.APP_ENV === "production",
       sameSite: "lax",
       maxAge: 86400 * 7,
       path: "/",

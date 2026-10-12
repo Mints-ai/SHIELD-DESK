@@ -1,9 +1,9 @@
 # ShieldDesk™ — Master Release Go / No-Go Decision Record
 
-**Document Version:** 2.0.0-commercial-hardening  
-**Audit Date:** 2026-10-10  
-**Current Git Branch:** `feature/commercial-launch-hardening`  
-**Latest Reviewed Commit:** `ba3dccee7d4af419cda05390ea54e9c83ea79af1` (with P0/P1 commercial release hardening)  
+**Document Version:** 2.4.0-commercial-hardening  
+**Audit Date:** 2026-10-12  
+**Current Git Branch:** `main`  
+**Latest Reviewed Commit:** `d69a9ac7ef73d9818f0e96cb3000a5eb8f6b404e` (with full P0/P1 launch readiness hardening)  
 **Evaluator:** Principal Software Architect, Application Security Engineer, Stripe Billing Engineer, Release Manager  
 **Core Standard:** PROVE BEFORE YOU ACT
 
@@ -13,9 +13,9 @@
 
 | Scope | Recommendation | Decision | Summary Justification |
 | :--- | :--- | :---: | :--- |
-| **Unrestricted Public General Availability (GA)** | Do not release publicly without third-party pentest attestation, live Stripe merchant keys, measured DR restoration drill, and bare-metal VM matrix validation. | **NO-GO** | External Release Gates 5 (Live Bare-Metal Matrix), 6 (Empirically Measured DR Drill), and 7 (External Penetration Testing) require external infrastructure and independent assessor engagement. |
-| **Self-Service Paid Checkout via Stripe** | Block live merchant traffic until product ownership approves list prices ($49 vs $499), Stripe Dashboard Price IDs are configured, and webhook durable inbox is verified in Stripe test-mode. | **NO-GO** | P0-03 pricing matrix approval and finance configuration of live Stripe keys are commercial prerequisites. |
-| **Controlled Enterprise Customer Pilot** | Release to invited pilot customers under monitored conditions with human approval required for all state-changing actions. | **CONDITIONAL GO** | All P0/P1 code and configuration blockers are resolved. 402 tests pass with 0 failures across 56 test suites; database fail-closed invariants, tenant isolation, and simulation-only tagging are enforced. |
+| **Unrestricted Public General Availability (GA)** | Do not release publicly without third-party pentest attestation, live Stripe merchant keys, measured DR restoration drill, and bare-metal VM matrix validation. | **NO-GO** | External Release Gates (Live Bare-Metal Matrix, Empirically Measured DR Drill, and External Penetration Testing) require external infrastructure and independent assessor engagement. |
+| **Self-Service Paid Checkout via Stripe** | Block live merchant traffic until product ownership approves list prices ($49 vs $499), Stripe Dashboard Price IDs are configured, and webhook durable inbox is verified in Stripe test-mode. | **NO-GO** | Pricing matrix approval and finance configuration of live Stripe keys are commercial prerequisites. |
+| **Controlled Enterprise Customer Pilot** | Release to invited pilot customers under monitored conditions with human approval required for all state-changing actions. | **CONDITIONAL GO** | All P0/P1 code and configuration blockers are resolved. 420 Node tests pass with 0 failures across 36 suites (plus 14 AI tests and 15 Golden Path tests); database fail-closed invariants, durable webhook rehydration, tenant isolation, and simulation-only tagging are enforced. |
 
 ---
 
@@ -47,12 +47,12 @@
 ### 3.2: Full SOC Node.js Test Suite
 - **Command:** `npm test` (`tsx --test --import ./tests/setup.ts "tests/*.test.ts"`)
 - **Result:** `PASS`
-  - Total Suites: 56
-  - Total Tests: 402
-  - Passed: 402
+  - Total Suites: 36
+  - Total Tests: 420
+  - Passed: 420
   - Failed: 0
   - Skipped: 0
-  - Execution Duration: ~29.1s
+  - Execution Duration: ~23.5s
 
 ### 3.3: Commercial Launch Hardening P0/P1 Gate Suite
 - **Command:** `npx tsx --test --import ./tests/setup.ts tests/commercial-launch-hardening-p0-p1.test.ts`

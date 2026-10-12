@@ -8,17 +8,41 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-CONTROL_PLANE_URL="${1:-http://localhost:3000}"
-TENANT_OR_TOKEN="${2:-acme-tenant}"
+CONTROL_PLANE_URL="${1}"
+TENANT_OR_TOKEN="${2}"
 HOSTNAME_ID="${3:-$(hostname)}"
 AGENT_ID="${4:-$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen || echo "agent-$(date +%s)")}"
+
+# Development flag fallback
+if [ "$CONTROL_PLANE_URL" = "--dev" ] || [ "$1" = "--dev" ]; then
+    CONTROL_PLANE_URL="http://localhost:3000"
+    TENANT_OR_TOKEN="${2:-acme-tenant}"
+fi
+
+if [ -z "$CONTROL_PLANE_URL" ]; then
+    echo "[-] CRITICAL: Control plane URL is required."
+    echo "[-] Usage: ./deploy-agent.sh <control_plane_https_url> <tenant_or_token> [hostname] [agent_id]"
+    echo "[-] For local lab evaluation: ./deploy-agent.sh --dev [tenant_or_token]"
+    exit 1
+fi
+
+if [[ "$CONTROL_PLANE_URL" != "https://"* ]] && [ "$CONTROL_PLANE_URL" != "http://localhost:3000" ]; then
+    echo "[-] SECURITY ERROR: Control plane URL must use HTTPS in production. Plain HTTP is rejected."
+    exit 1
+fi
+
+if [ -z "$TENANT_OR_TOKEN" ]; then
+    echo "[-] CRITICAL: Tenant ID or enrollment token is required."
+    exit 1
+fi
+
 
 echo "=========================================================="
 echo "      SHIELDDESK UNIVERSAL ENDPOINT AGENT (LINUX)         "
 echo "=========================================================="
 echo "[+] Hostname:      ${HOSTNAME_ID}"
 if [[ "${TENANT_OR_TOKEN}" == sdt_* ]]; then
-    echo "[+] Enrollment Token: ${TENANT_OR_TOKEN}"
+    echo "[+] Enrollment Token: [CONFIGURED - SECURELY REDACTED]"
     AGENT_ARGS="-token ${TENANT_OR_TOKEN} -control-url ${CONTROL_PLANE_URL} -hostname ${HOSTNAME_ID}"
 else
     echo "[+] Tenant:        ${TENANT_OR_TOKEN}"
