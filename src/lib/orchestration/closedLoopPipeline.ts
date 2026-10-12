@@ -5,6 +5,8 @@ import { classifyResponseTier } from "@/lib/governance/autonomyTier";
 import { executeAgentCommand, getEndpointAgent, recordHashChainEvent } from "@/lib/fleet/fleet";
 import { VerificationEngine } from "@/lib/verification-engine";
 import { RollbackEngine } from "@/lib/rollback-engine";
+import { RollbackType } from "@/lib/rollback-engine/types";
+import { isProduction, shouldFailClosed, SecuritySafetyViolationError } from "@/lib/config/environment";
 import {
   PipelineExecutionParams,
   PipelineExecutionResult,
@@ -42,6 +44,13 @@ export class ClosedLoopOrchestrator {
     const agent = await getEndpointAgent(params.agentId, params.caller);
     if (!agent) {
       throw new Error(`AGENT_NOT_FOUND: Endpoint '${params.agentId}' not found for tenant '${params.tenantId}'.`);
+    }
+
+    if ((isProduction() || shouldFailClosed()) && params.parameters?.evidenceOverride) {
+      throw new SecuritySafetyViolationError(
+        "remediation_verification",
+        "Mock evidence overrides are strictly prohibited in production execution."
+      );
     }
 
     // 1. POLICY EVALUATION & TIER CLASSIFICATION
@@ -169,16 +178,90 @@ export class ClosedLoopOrchestrator {
       target: actionTarget,
     });
 
-    // Mock evidence matching command behavior
-    const agentEvidence: Record<string, unknown> = {
-      networkIsolated: params.action.includes("isolate"),
-      firewallDropActive: params.action.includes("block_ip") || params.action.includes("isolate"),
-      blockedIps: actionTarget ? [actionTarget] : [],
-      runningProcesses: [],
-      controlPlaneHealth: "healthy",
-      status: params.action.includes("isolate") ? "isolated" : "connected",
-      ...(params.parameters?.evidenceOverride as Record<string, unknown> || {}),
-    };
+    let agentEvidence: Record<string, unknown>;
+
+    if (isProduction() || shouldFailClosed()) {
+      if (params.parameters?.evidenceOverride) {
+        throw new SecuritySafetyViolationError(
+          "remediation_verification",
+          "Mock evidence overrides are strictly prohibited in production execution."
+        );
+      }
+
+      // Collect authentic evidence from the real endpoint
+      if (agent.status === "disconnected") {
+        agentEvidence = {
+          controlPlaneHealth: "disconnected",
+          error: "AGENT_DISCONNECTED",
+        };
+      } else {
+        try {
+          const { query } = await import("@/lib/db");
+          const logRes = await query<{ status: string; output: string }>(
+            `SELECT status, output FROM agent_command_logs
+             WHERE id = $1 AND agent_id = $2 AND tenant_id = $3 LIMIT 1;`,
+            [execResult.commandId, agent.id, params.tenantId]
+          );
+
+          const telemetryRes = await query<{ payload: Record<string, unknown> }>(
+            `SELECT payload FROM endpoint_telemetry
+             WHERE agent_id = $1 AND tenant_id = $2
+             ORDER BY timestamp DESC LIMIT 5;`,
+            [agent.id, params.tenantId]
+          );
+
+          const latestTelemetry = telemetryRes.rows.map((r) => r.payload);
+          const runningProcesses: unknown[] = [];
+          const blockedIps: string[] = [];
+
+          for (const t of latestTelemetry) {
+            if (Array.isArray(t.processes)) runningProcesses.push(...t.processes);
+            if (Array.isArray(t.runningProcesses)) runningProcesses.push(...t.runningProcesses);
+            if (Array.isArray(t.blockedIps)) blockedIps.push(...(t.blockedIps as string[]));
+          }
+
+          agentEvidence = {
+            status: agent.status,
+            controlPlaneHealth: agent.status === "connected" ? "healthy" : "degraded",
+            networkIsolated: agent.status === "isolated",
+            firewallDropActive: agent.status === "isolated" || (actionTarget ? blockedIps.includes(actionTarget) : false),
+            blockedIps,
+            runningProcesses,
+            commandStatus: logRes.rows[0]?.status,
+            commandOutput: logRes.rows[0]?.output,
+          };
+        } catch {
+          agentEvidence = {
+            controlPlaneHealth: "unavailable",
+            error: "TELEMETRY_DATA_UNAVAILABLE",
+          };
+        }
+      }
+    } else {
+      // In non-production test / simulation environments:
+      if (params.parameters?.evidenceOverride) {
+        agentEvidence = {
+          ...(params.parameters.evidenceOverride as Record<string, unknown>),
+          isSimulated: true,
+        };
+      } else if (execResult.isSimulated) {
+        agentEvidence = {
+          networkIsolated: agent.status === "isolated",
+          firewallDropActive: agent.status === "isolated" || params.action.includes("block_ip"),
+          blockedIps: actionTarget ? [actionTarget] : [],
+          runningProcesses: [],
+          controlPlaneHealth: "healthy",
+          status: agent.status,
+          isSimulated: true,
+        };
+      } else {
+        agentEvidence = {
+          status: agent.status,
+          controlPlaneHealth: "healthy",
+          runningProcesses: [],
+        };
+      }
+    }
 
     const verificationResult = await VerificationEngine.verify(
       verificationPlan,
@@ -194,14 +277,27 @@ export class ClosedLoopOrchestrator {
       let rollbackExecuted = false;
       if (params.autoRollbackOnFailure !== false) {
         const step7Start = Date.now();
+        let rollbackType: RollbackType = "snapshot_restore";
+        const actionLower = params.action.toLowerCase();
+        if (actionLower.includes("isolate") || actionLower.includes("block")) {
+          rollbackType = "network_rollback";
+        } else if (actionLower.includes("package") || actionLower.includes("patch")) {
+          rollbackType = "package_rollback";
+        } else if (actionLower.includes("service")) {
+          rollbackType = "service_rollback";
+        } else if (actionLower.includes("config")) {
+          rollbackType = "configuration_rollback";
+        }
+
         const rollbackResult = await RollbackEngine.executeRollback({
           tenantId: params.tenantId,
           agentId: agent.id,
           commandId: execResult.commandId,
           snapshotId,
-          rollbackType: "snapshot_restore",
+          rollbackType,
           reason: `Automatic reversion: Verification outcome was '${verificationResult.status}'.`,
           actorId: params.caller.id,
+          caller: params.caller,
         });
 
         rollbackExecuted = rollbackResult.success;
@@ -210,7 +306,7 @@ export class ClosedLoopOrchestrator {
           rollbackResult.success ? "success" : "failed",
           step7Start,
           `Rollback executed: ${rollbackResult.output}`,
-          { rollbackId: rollbackResult.rollbackId }
+          { rollbackId: rollbackResult.rollbackId, status: rollbackResult.status }
         );
       }
 

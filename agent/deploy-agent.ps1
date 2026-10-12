@@ -6,18 +6,23 @@
 #>
 
 param (
+    [string]$Token = "",
     [string]$ControlPlaneUrl = "http://localhost:3000",
     [string]$TenantId = "acme-tenant",
     [string]$Hostname = $env:COMPUTERNAME,
-    [string]$AgentId = [guid]::NewGuid().ToString()
+    [string]$AgentId = ""
 )
 
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "     SHIELDDESK UNIVERSAL ENDPOINT AGENT (WINDOWS)        " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "[+] Enrolling Host: $Hostname"
-Write-Host "[+] Tenant ID:      $TenantId"
-Write-Host "[+] Agent ID:       $AgentId"
+if ($Token) {
+    Write-Host "[+] Enrollment Token: $Token"
+} else {
+    Write-Host "[+] Tenant ID:      $TenantId"
+    Write-Host "[+] Agent ID:       $AgentId"
+}
 Write-Host "[+] Control Plane:  $ControlPlaneUrl"
 
 # Verify Go installation
@@ -28,7 +33,7 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
 
 # Compile Agent binary
 Write-Host "[*] Compiling ShieldDesk Endpoint Agent..." -ForegroundColor Cyan
-go build -o shielddesk-agent.exe cmd/main.go
+go build -ldflags="-s -w" -o shielddesk-agent.exe ./cmd
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to compile agent binary."
     exit 1
@@ -37,5 +42,13 @@ Write-Host "[+] Binary successfully built: shielddesk-agent.exe" -ForegroundColo
 
 # Launch Agent
 Write-Host "[*] Launching ShieldDesk Endpoint Agent daemon..." -ForegroundColor Cyan
-Start-Process -FilePath ".\shielddesk-agent.exe" -ArgumentList "-control-url $ControlPlaneUrl -tenant-id $TenantId -agent-id $AgentId -hostname $Hostname" -NoNewWindow
+$argList = if ($Token) {
+    "-token $Token -control-url $ControlPlaneUrl -hostname $Hostname"
+} elseif ($AgentId) {
+    "-control-url $ControlPlaneUrl -tenant-id $TenantId -agent-id $AgentId -hostname $Hostname"
+} else {
+    "-control-url $ControlPlaneUrl -tenant-id $TenantId -hostname $Hostname"
+}
+
+Start-Process -FilePath ".\shielddesk-agent.exe" -ArgumentList $argList -NoNewWindow
 Write-Host "[+] Agent running in background and transmitting telemetry." -ForegroundColor Green

@@ -18,6 +18,7 @@ export interface MitigationTaskRecord {
   status: "pending" | "approved" | "rejected" | "in_progress" | "completed";
   blast_radius?: string | null;
   cve_id?: string | null;
+  assigned_to?: string | null;
   incident_code?: string;
   created_at: string;
 }
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
     const isCrossTenant = canAccess(session.role, "VIEW_CROSS_TENANT");
     let querySql = `
       SELECT t.id, t.plan_id, t.tenant_id, t.horizon, t.title, t.description,
-             t.tier, t.status, t.blast_radius, t.cve_id, t.created_at,
+             t.tier, t.status, t.blast_radius, t.cve_id, t.assigned_to, t.created_at,
              i.incident_code
       FROM mitigation_tasks t
       LEFT JOIN mitigation_plans p ON p.id = t.plan_id
@@ -115,6 +116,14 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
+    // Authorization check: Analysts have read-only access and cannot create or assign tasks
+    if (session.role === "analyst") {
+      return NextResponse.json(
+        { error: "INSUFFICIENT_ROLE: Analysts have read-only access and cannot create or assign tasks." },
+        { status: 403 }
+      );
+    }
+
     const title = typeof body.title === "string" ? body.title.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "Custom task";
     const horizon = ["immediate", "short_term", "long_term"].includes(body.horizon)
@@ -125,6 +134,11 @@ export async function POST(req: NextRequest) {
       : "Tier 2";
     const blastRadius = typeof body.blastRadius === "string" ? body.blastRadius : "Host Scope";
     const cveId = typeof body.cveId === "string" ? body.cveId : null;
+    const assignedTo = typeof body.assignedTo === "string" && body.assignedTo.trim()
+      ? body.assignedTo.trim()
+      : typeof body.assigned_to === "string" && body.assigned_to.trim()
+        ? body.assigned_to.trim()
+        : null;
 
     if (!title) {
       return NextResponse.json({ error: "Task title is required" }, { status: 400 });
@@ -172,11 +186,11 @@ export async function POST(req: NextRequest) {
     try {
       const insertSql = `
         INSERT INTO mitigation_tasks (
-          id, plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at
+          id, plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, assigned_to, created_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, NOW()
+          $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, NOW()
         )
-        RETURNING id, plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, created_at
+        RETURNING id, plan_id, tenant_id, horizon, title, description, tier, status, blast_radius, cve_id, assigned_to, created_at
       `;
       const res = await query<MitigationTaskRecord>(insertSql, [
         taskId,
@@ -188,6 +202,7 @@ export async function POST(req: NextRequest) {
         tier,
         blastRadius,
         cveId,
+        assignedTo,
       ]);
 
       if (tier !== "Tier 0") {
@@ -221,6 +236,7 @@ export async function POST(req: NextRequest) {
           status: "pending",
           blast_radius: blastRadius,
           cve_id: cveId,
+          assigned_to: assignedTo,
           incident_code: "INC-1042",
           created_at: new Date().toISOString(),
         };

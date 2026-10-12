@@ -14,9 +14,15 @@ import { NextRequest, NextResponse } from "next/server";
 
 const PUBLIC_EXACT_PATHS = new Set([
   "/login",
+  "/signup",
   "/onboarding",
+  "/pricing",
+  "/status",
+  "/docs",
   "/favicon.ico",
   "/logo.png",
+  "/shielddesk-logo.png",
+  "/shield-emblem.png",
   "/robots.txt",
   "/sitemap.xml",
 ]);
@@ -24,9 +30,18 @@ const PUBLIC_EXACT_PATHS = new Set([
 const PUBLIC_PATH_PREFIXES = [
   "/api/auth/",
   "/api/health",
+  "/api/status",
+  "/api/docs",
+  "/docs/",
+  "/dashboard/integrations",
+  "/api/integrations",
+  "/api/fleet/enrollment-tokens",
   "/api/ingest/",
   "/api/agent/",
+  "/api/v1/plans",
+  "/checkout/",
   "/_next/",
+  "/favicon/",
   "/monitoring",
 ];
 
@@ -51,7 +66,7 @@ export function proxy(req: NextRequest) {
     }
   } else if (hostname.startsWith("status.")) {
     if (url.pathname === "/") {
-      url.pathname = "/api/health";
+      url.pathname = "/status";
       return NextResponse.rewrite(url);
     }
   } else if (hostname.startsWith("trust.")) {
@@ -84,22 +99,24 @@ export function proxy(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const hasSession = Boolean(sessionCookie || authHeader);
 
-  // 4. Protected route verification in production
-  if (isProd && !isPublicRoute(pathname) && !hasSession) {
-    // If it's an API route, return 401 Unauthorized
+  // 4. Protected route verification (Redirect unauthenticated visitors to /login)
+  if (!isPublicRoute(pathname) && !hasSession) {
+    // If it's an API route, return 401 Unauthorized in production
     if (pathname.startsWith("/api/")) {
-      return NextResponse.json(
-        { error: "Unauthorized: Active session required for this resource." },
-        { status: 401 }
-      );
+      if (isProd) {
+        return NextResponse.json(
+          { error: "Unauthorized: Active session required for this resource." },
+          { status: 401 }
+        );
+      }
+    } else {
+      // For web dashboard / root pages, redirect unauthenticated users to login
+      const loginUrl = new URL("/login", req.url);
+      if (pathname !== "/") {
+        loginUrl.searchParams.set("redirect", pathname);
+      }
+      return NextResponse.redirect(loginUrl);
     }
-
-    // For web dashboard / root pages, redirect to login
-    const loginUrl = new URL("/login", req.url);
-    if (pathname !== "/") {
-      loginUrl.searchParams.set("redirect", pathname);
-    }
-    return NextResponse.redirect(loginUrl);
   }
 
   // 5. Create response with sanitized request headers
@@ -128,9 +145,9 @@ export const config = {
      * Match all request paths except:
      * - _next/static (static files)
      * - _next/image (image optimization files)
-     * - favicon.ico, logo.png (public images/icons)
+     * - favicon.ico, favicon/, logo.png, shielddesk-logo.png, shield-emblem.png (public images/icons)
      */
-    "/((?!_next/static|_next/image|favicon.ico|logo.png).*)",
+    "/((?!_next/static|_next/image|favicon.ico|favicon|logo.png|shielddesk-logo.png|shield-emblem.png).*)",
   ],
 };
 

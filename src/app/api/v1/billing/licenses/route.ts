@@ -1,17 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { EntitlementService } from "@/lib/billing/entitlements";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import { trackError } from "@/lib/observability/errorTracker";
 
 /**
  * GET /api/v1/billing/licenses
- * Retrieves the current commercial license state, tier, and entitlements for the tenant.
+ * Retrieves the current commercial license state, tier, and entitlements for the authenticated tenant.
+ * Security Invariant: Tenant identity is derived strictly from the authenticated session.
  * Query parameter `offline=true` generates a signed offline entitlement cache token.
  */
 export async function GET(req: NextRequest) {
   try {
     const session = await getSessionFromRequest(req);
-    const tenantId = session?.tenantId || req.nextUrl.searchParams.get("tenantId") || "acme-tenant";
+    if (!session?.tenantId) {
+      return NextResponse.json(
+        { error: "Unauthorized: Valid authentication session required" },
+        { status: 401 }
+      );
+    }
 
+    const tenantId = session.tenantId;
     const licenseState = await EntitlementService.getLicenseState(tenantId);
     const includeOffline = req.nextUrl.searchParams.get("offline") === "true";
 
@@ -34,6 +42,7 @@ export async function GET(req: NextRequest) {
       { status: 200 }
     );
   } catch (err: unknown) {
+    trackError(err, { endpoint: "GET /api/v1/billing/licenses" });
     const msg = err instanceof Error ? err.message : "Internal Server Error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
@@ -41,17 +50,27 @@ export async function GET(req: NextRequest) {
 
 /**
  * POST /api/v1/billing/licenses
- * Activates a commercial license key for the tenant.
+ * Activates a commercial license key strictly for the authenticated tenant.
  */
 export async function POST(req: NextRequest) {
   try {
     const session = await getSessionFromRequest(req);
+    if (!session?.tenantId) {
+      return NextResponse.json(
+        { error: "Unauthorized: Valid authentication session required" },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const { licenseKey } = body;
-    const tenantId = session?.tenantId || body.tenantId || "acme-tenant";
+    const tenantId = session.tenantId;
 
     if (!licenseKey) {
-      return NextResponse.json({ error: "Missing required parameter 'licenseKey'" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing required parameter 'licenseKey'" },
+        { status: 400 }
+      );
     }
 
     const activatedLicense = await EntitlementService.activateLicense({

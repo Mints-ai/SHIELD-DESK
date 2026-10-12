@@ -23,62 +23,32 @@ export interface PlanDefinition {
   };
 }
 
-export const BILLING_PLANS: Record<BillingTier, PlanDefinition> = {
-  community: {
-    id: "community",
-    name: "ShieldDesk Community Pilot",
-    priceMonthlyUSD: 0,
-    maxEndpoints: 5,
-    retentionDays: 7,
+import { CANONICAL_CATALOG } from "@/lib/billing/catalog";
+
+export const BILLING_PLANS: Record<BillingTier, PlanDefinition> = (
+  Object.keys(CANONICAL_CATALOG) as BillingTier[]
+).reduce((acc, tier) => {
+  const cat = CANONICAL_CATALOG[tier];
+  acc[tier] = {
+    id: cat.id,
+    name: cat.name,
+    priceMonthlyUSD: cat.pricing.month.displayPrice,
+    maxEndpoints: cat.maxEndpoints,
+    retentionDays: cat.retentionDays,
     features: {
-      telemetryIngest: true,
-      realTimeDetection: true,
-      aiInvestigation: true,
-      automatedRemediationTier1: false,
-      governedRemediationTier2: true,
-      dualApprovalTier3: false,
-      siemConnectors: false,
-      customRules: false,
-      discordSlackAlerts: true,
+      telemetryIngest: cat.features.telemetryIngest,
+      realTimeDetection: cat.features.realTimeDetection,
+      aiInvestigation: cat.features.aiInvestigation,
+      automatedRemediationTier1: cat.features.automatedRemediationTier1,
+      governedRemediationTier2: cat.features.governedRemediationTier2,
+      dualApprovalTier3: cat.features.dualApprovalTier3,
+      siemConnectors: cat.features.siemConnectors,
+      customRules: cat.features.customRules,
+      discordSlackAlerts: cat.features.discordSlackAlerts,
     },
-  },
-  professional: {
-    id: "professional",
-    name: "ShieldDesk SOC Pro",
-    priceMonthlyUSD: 499,
-    maxEndpoints: 100,
-    retentionDays: 90,
-    features: {
-      telemetryIngest: true,
-      realTimeDetection: true,
-      aiInvestigation: true,
-      automatedRemediationTier1: true,
-      governedRemediationTier2: true,
-      dualApprovalTier3: true,
-      siemConnectors: true,
-      customRules: true,
-      discordSlackAlerts: true,
-    },
-  },
-  enterprise: {
-    id: "enterprise",
-    name: "ShieldDesk Autonomous Enterprise",
-    priceMonthlyUSD: 1999,
-    maxEndpoints: 10000,
-    retentionDays: 365,
-    features: {
-      telemetryIngest: true,
-      realTimeDetection: true,
-      aiInvestigation: true,
-      automatedRemediationTier1: true,
-      governedRemediationTier2: true,
-      dualApprovalTier3: true,
-      siemConnectors: true,
-      customRules: true,
-      discordSlackAlerts: true,
-    },
-  },
-};
+  };
+  return acc;
+}, {} as Record<BillingTier, PlanDefinition>);
 
 export interface TenantSubscription {
   tenantId: string;
@@ -119,6 +89,9 @@ const MOCK_SUBSCRIPTIONS: Record<string, TenantSubscription> = {
  * Returns tenant subscription and entitlement parameters.
  */
 export async function getTenantSubscription(tenantId: string): Promise<TenantSubscription> {
+  const isProd =
+    process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+
   try {
     const res = await query<{
       tenant_id: string;
@@ -147,12 +120,19 @@ export async function getTenantSubscription(tenantId: string): Promise<TenantSub
         subscriptionId: row.subscription_id,
       };
     }
-  } catch {
-    // Database offline mode
+  } catch (err: unknown) {
+    if (isProd) {
+      throw new Error(
+        `CRITICAL_DATABASE_UNAVAILABLE: Tenant subscription lookup failed in production: ${err instanceof Error ? err.message : "DB error"}`
+      );
+    }
+    // Database offline mode for non-production unit tests
   }
 
-  const sub = MOCK_SUBSCRIPTIONS[tenantId];
-  if (sub) return sub;
+  if (!isProd) {
+    const sub = MOCK_SUBSCRIPTIONS[tenantId];
+    if (sub) return sub;
+  }
 
   return {
     tenantId,
@@ -267,7 +247,12 @@ export async function updateTenantSubscription(
     subscriptionId,
   };
 
-  MOCK_SUBSCRIPTIONS[tenantId] = updated;
+  const isProd =
+    process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+
+  if (!isProd) {
+    MOCK_SUBSCRIPTIONS[tenantId] = updated;
+  }
 
   try {
     await query(
@@ -277,8 +262,13 @@ export async function updateTenantSubscription(
        SET tier = $2, status = 'active', current_period_end = $3, subscription_id = $4, updated_at = now()`,
       [tenantId, tier, periodEnd, subscriptionId]
     );
-  } catch {
-    // Non-fatal fallback
+  } catch (err: unknown) {
+    if (isProd) {
+      throw new Error(
+        `CRITICAL_DATABASE_UNAVAILABLE: Failed to persist tenant subscription in production: ${err instanceof Error ? err.message : "DB error"}`
+      );
+    }
+    // Non-fatal fallback for non-production tests
   }
 
   await recordHashChainEvent({
@@ -297,6 +287,8 @@ export async function setTenantSubscriptionStatus(
   status: TenantSubscription["status"],
   options: { tier?: BillingTier; subscriptionId?: string; currentPeriodEnd?: string } = {}
 ): Promise<TenantSubscription> {
+  const isProd =
+    process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
   const current = await getTenantSubscription(tenantId);
   const tier = options.tier || current.tier;
   const updated: TenantSubscription = {
@@ -309,7 +301,9 @@ export async function setTenantSubscriptionStatus(
     paymentProvider: "stripe",
     subscriptionId: options.subscriptionId || current.subscriptionId,
   };
-  MOCK_SUBSCRIPTIONS[tenantId] = updated;
+  if (!isProd) {
+    MOCK_SUBSCRIPTIONS[tenantId] = updated;
+  }
   try {
     await query(
       `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, subscription_id, updated_at)
@@ -317,7 +311,13 @@ export async function setTenantSubscriptionStatus(
        ON CONFLICT (tenant_id) DO UPDATE SET tier=$2, status=$3, current_period_end=$4, subscription_id=$5, updated_at=NOW()`,
       [tenantId, tier, status, updated.currentPeriodEnd, updated.subscriptionId || null]
     );
-  } catch { /* in-memory fallback */ }
+  } catch (err: unknown) {
+    if (isProd) {
+      throw new Error(
+        `CRITICAL_DATABASE_UNAVAILABLE: Failed to persist tenant subscription status in production: ${err instanceof Error ? err.message : "DB error"}`
+      );
+    }
+  }
   await recordHashChainEvent({ tenantId, eventType: "SUBSCRIPTION_STATUS_UPDATED", actorId: "billing:stripe", payload: { status, tier, subscriptionId: updated.subscriptionId } });
   return updated;
 }

@@ -55,6 +55,14 @@ export async function POST(
   }
 
   try {
+    // Authorization check: Analysts cannot dispatch remediation tasks
+    if (caller.role === "analyst") {
+      return NextResponse.json(
+        { error: "INSUFFICIENT_ROLE: Analysts cannot dispatch remediation commands to endpoints. Dispatch requires a Responder, System Admin, or Super Admin." },
+        { status: 403 }
+      );
+    }
+
     const isCrossTenant = canAccess(caller.role, "VIEW_CROSS_TENANT");
 
     // 1. Fetch Task

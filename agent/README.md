@@ -79,17 +79,40 @@ agent/
 
 ## Compilation & Run Instructions
 
-### 1. Run the Go Agent
+### 1. Build and Run the Native Go Agent
+
+#### Build with npm or go:
 ```bash
+# Via npm script
+npm run agent:build
+
+# Or directly in agent directory
 cd agent
-go run cmd/main.go \
-  -control-url http://localhost:3000 \
-  -agent-id ea111111-1111-1111-1111-111111111111 \
-  -tenant-id acme-tenant \
-  -hostname FIN-WS-042
+go build -ldflags="-s -w" -o ../bin/shielddesk-agent.exe ./cmd
 ```
 
-### 2. Build the Rust Tier 3 Daemon
+#### Dynamic Enrollment (Connecting New Endpoint):
+```powershell
+# Windows
+.\bin\shielddesk-agent.exe -token sdt_YOUR_TOKEN -control-url http://localhost:3000
+
+# Linux / macOS
+./bin/shielddesk-agent -token sdt_YOUR_TOKEN -control-url http://localhost:3000
+```
+
+#### Resuming an Existing Enrolled Host:
+```powershell
+.\bin\shielddesk-agent.exe -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000
+```
+
+#### Environment Variables (Alternative to CLI Flags):
+```bash
+export SHIELDDESK_ENROLL_TOKEN="sdt_..."
+export SHIELDDESK_CONTROL_URL="http://localhost:3000"
+./bin/shielddesk-agent
+```
+
+### 2. Build the Rust Tier 3 Daemon (Optional Break-Glass Sentinel)
 ```bash
 cd agent/rust_daemon
 cargo build --release

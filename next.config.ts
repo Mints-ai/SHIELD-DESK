@@ -29,7 +29,10 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  output: process.env.VERCEL ? undefined : "standalone",
+  typescript: {
+    ignoreBuildErrors: false,
+  },
   async headers() {
     return [
       {
@@ -40,11 +43,13 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withSentryConfig(nextConfig, {
-  silent: true,
-  widenClientFileUpload: true,
-  tunnelRoute: "/monitoring",
-  disableLogger: true,
-});
+export default process.env.NODE_ENV === "production"
+  ? withSentryConfig(nextConfig, {
+      silent: true,
+      widenClientFileUpload: true,
+      tunnelRoute: "/monitoring",
+      disableLogger: true,
+    })
+  : nextConfig;
 
 

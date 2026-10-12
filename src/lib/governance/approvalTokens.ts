@@ -101,14 +101,14 @@ export async function requestApprovalToken(
 
   try {
     const taskSql = canAccess(session.role, "VIEW_CROSS_TENANT")
-      ? "SELECT id, tenant_id FROM mitigation_tasks WHERE id = $1 LIMIT 1"
-      : "SELECT id, tenant_id FROM mitigation_tasks WHERE id = $1 AND tenant_id = $2 LIMIT 1";
+      ? "SELECT id, tenant_id, tier FROM mitigation_tasks WHERE id = $1 LIMIT 1"
+      : "SELECT id, tenant_id, tier FROM mitigation_tasks WHERE id = $1 AND tenant_id = $2 LIMIT 1";
     const taskParams = canAccess(session.role, "VIEW_CROSS_TENANT")
       ? [args.taskId]
       : [args.taskId, session.tenantId];
-    let taskCheck = { rows: [] as { id: string; tenant_id: string }[] };
+    let taskCheck = { rows: [] as { id: string; tenant_id: string; tier?: string }[] };
     try {
-      taskCheck = await query<{ id: string; tenant_id: string }>(taskSql, taskParams);
+      taskCheck = await query<{ id: string; tenant_id: string; tier?: string }>(taskSql, taskParams);
     } catch {
       // In demo mode or synthetic task cases, query may error on non-UUID task ID
     }
@@ -117,6 +117,8 @@ export async function requestApprovalToken(
     }
 
     const resolvedTaskId = taskCheck.rows.length > 0 ? taskCheck.rows[0].id : null;
+    const effectiveTier: AutonomyTier = (args.tier as AutonomyTier) || (taskCheck.rows[0]?.tier as AutonomyTier) || tier;
+    const effectiveConfidence = calculateModelConfidence(effectiveTier);
 
     let insertResult;
     try {
@@ -131,17 +133,17 @@ export async function requestApprovalToken(
           session.tenantId,
           resolvedTaskId,
           action,
-          tier,
+          effectiveTier,
           session.uid,
           blastRadius,
-          confidence,
+          effectiveConfidence,
           expiresAt,
           args.incidentId || null,
           args.planId || null,
           args.commandId || null,
           resolvedCommandHash,
           args.targetEndpointIds ? JSON.stringify(args.targetEndpointIds) : null,
-          args.approvalLevel || tier,
+          args.approvalLevel || effectiveTier,
           resolvedNonce,
         ]
       );
@@ -152,7 +154,7 @@ export async function requestApprovalToken(
           id, tenant_id, task_id, action_type, tier, status, requested_by, blast_radius, model_confidence, expires_at, created_at, updated_at
         ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, now(), now())
         RETURNING *`,
-        [tokenId, session.tenantId, resolvedTaskId, action, tier, session.uid, blastRadius, confidence, expiresAt]
+        [tokenId, session.tenantId, resolvedTaskId, action, effectiveTier, session.uid, blastRadius, effectiveConfidence, expiresAt]
       );
     }
 
@@ -282,21 +284,25 @@ export async function approveActionToken(
       };
     }
 
-    // 2. Separation of Duties enforcement:
-    // Requester cannot approve their own action request across all governed tiers.
-    if (token.requested_by === session.uid) {
-      return {
-        error: "separation_of_duties_violation",
-        message: `Separation of duties violation: you cannot approve your own action request for ${token.tier}.`,
-      };
-    }
-
-    // 3a. Per-tier permission gate — role must have the right to approve this tier
+    // 2. Per-tier permission gate: role must have the right to approve this tier
+    // Tier 1: responder, system_admin, super_admin
+    // Tier 2: system_admin, super_admin (responders cannot approve Tier 2)
+    // Tier 3: system_admin, super_admin
     const tierPermission = TIER_APPROVE_PERMISSIONS[token.tier];
     if (tierPermission && !canAccess(session.role, tierPermission)) {
       return {
         error: "insufficient_role",
-        message: `Your role '${session.role}' does not have permission to approve ${token.tier} actions. Required: ${tierPermission}.`,
+        message: `Your role '${session.role}' does not have permission to approve ${token.tier} actions. ${token.tier === "Tier 1" ? "Required: approve.tier1" : "Tier 2 and Tier 3 actions require a System Administrator or Super Admin."}`,
+      };
+    }
+
+    // 3. Separation of Duties enforcement:
+    // Only Tier 3 break-glass actions strictly enforce distinct requester & approver.
+    // Tier 1 and Tier 2 allow self-approval by qualified operators (admins for Tier 1/2, responders for Tier 1).
+    if (token.tier === "Tier 3" && token.requested_by === session.uid) {
+      return {
+        error: "separation_of_duties_violation",
+        message: `Separation of duties violation: you cannot approve your own action request for Tier 3 break-glass actions.`,
       };
     }
 
@@ -578,7 +584,7 @@ export async function listApprovalTokens(
 
   try {
     const result = await query<ApprovalTokenRecord>(
-      `SELECT t.*, mt.title as task_title, mt.description as task_description
+      `SELECT t.*, COALESCE(mt.tier, t.tier) as tier, mt.title as task_title, mt.description as task_description
        FROM approval_tokens t
        LEFT JOIN mitigation_tasks mt ON mt.id = t.task_id
        ${where}
@@ -611,11 +617,14 @@ export async function getApprovalToken(
   const tenantId = caller?.tenant_id || caller?.tenantId || "";
 
   try {
-    const tenantScope = canAccess(role, "VIEW_CROSS_TENANT") ? "" : "AND tenant_id = $2";
+    const tenantScope = canAccess(role, "VIEW_CROSS_TENANT") ? "" : "AND t.tenant_id = $2";
     const params = canAccess(role, "VIEW_CROSS_TENANT") ? [tokenId] : [tokenId, tenantId];
 
     const result = await query<ApprovalTokenRecord>(
-      `SELECT * FROM approval_tokens WHERE id = $1 ${tenantScope} LIMIT 1`,
+      `SELECT t.*, COALESCE(mt.tier, t.tier) as tier, mt.title as task_title, mt.description as task_description
+       FROM approval_tokens t
+       LEFT JOIN mitigation_tasks mt ON mt.id = t.task_id
+       WHERE t.id = $1 ${tenantScope} LIMIT 1`,
       params
     );
     if (result && result.rows.length > 0) {

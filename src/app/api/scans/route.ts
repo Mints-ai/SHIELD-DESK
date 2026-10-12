@@ -124,9 +124,9 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const lastScan = getLastScanResult();
+  const lastScan = getLastScanResult(session.tenantId);
   const cveFindings = lastScan ? lastScan.findings : [];
-  const cachedGitleaks = getLastGitleaksScanResult();
+  const cachedGitleaks = getLastGitleaksScanResult(session.tenantId);
   const secretFindings = cachedGitleaks ? cachedGitleaks.findings : [];
   const metrics = {
     totalVulnerabilities: lastScan ? lastScan.findings.length : 0,

@@ -76,7 +76,7 @@ export async function GET() {
     status: allHealthy ? "ok" : "degraded",
     environment: getClientEnvironmentMetadata(),
     database: { configured: databaseConfigured, connected: databaseConnected },
-    supabase: { configured: supabaseConfigured, connected: supabaseConnected, url: process.env.NEXT_PUBLIC_SUPABASE_URL || null },
+    supabase: { configured: supabaseConfigured, connected: supabaseConnected },
     ollama: { baseUrl: ollamaBaseUrl, reachable: ollamaReachable },
     pythonAiEngine: { baseUrl: pythonAiServiceUrl, reachable: pythonAiReachable },
   });

@@ -37,14 +37,26 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
+    const isCrossTenant = caller.role === "system_admin" || caller.role === "super_admin";
+    const canDelete = isCrossTenant || caller.role === "responder";
+    if (!canDelete) {
+      return NextResponse.json(
+        { error: "Forbidden: Administrative privileges required to purge command logs" },
+        { status: 403 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const agentId = searchParams.get("agentId") || undefined;
 
     const { query } = await import("@/lib/db");
     if (agentId) {
-      await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]);
+      if (isCrossTenant) {
+        await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]);
+      } else {
+        await query(`DELETE FROM agent_command_logs WHERE agent_id = $1 AND tenant_id = $2`, [agentId, caller.tenant_id]);
+      }
     } else {
-      const isCrossTenant = caller.role === "system_admin" || caller.role === "super_admin";
       if (isCrossTenant) {
         await query(`DELETE FROM agent_command_logs`);
       } else {

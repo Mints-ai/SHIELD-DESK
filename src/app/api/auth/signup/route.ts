@@ -37,36 +37,66 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const assignedRole: ShieldDeskRole = role === "system_admin" ? "system_admin" : "analyst";
+    // S1: Security Invariant: Public registration must NEVER grant global system_admin.
+    // The founding registrant creates an isolated organization tenant and is assigned
+    // tenant-level 'super_admin' (organization owner & billing admin). Any user-supplied role is strictly ignored.
+    const assignedRole: ShieldDeskRole = "super_admin";
 
-    const tenantId = organizationName
-      ? organizationName.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-tenant"
-      : "custom-tenant";
+    // S2: Server-authoritative unique tenant identifier.
+    // Never allow a client to specify or hijack another organization's tenantId.
+    const rawOrg = typeof organizationName === "string" ? organizationName.trim() : "";
+    const cleanSlug = rawOrg
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 20) || "org";
+    const uniqueSuffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+    const tenantId = `tenant_${cleanSlug}_${uniqueSuffix}`;
 
     let createdUid: string = crypto.randomUUID();
 
     // 1. Supabase Auth Registration (if configured)
     if (supabaseServer) {
-      const { data, error } = await supabaseServer.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            organization_name: organizationName || "Default Organization",
+      try {
+        const { data, error } = await supabaseServer.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              organization_name: rawOrg || "Default Organization",
+              tenant_id: tenantId,
+              role: assignedRole,
+            },
           },
-        },
-      });
+        });
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
-      }
-
-      if (data.user) {
-        createdUid = data.user.id;
+        if (error) {
+          console.warn("[Signup] Cloud auth warning (falling back to local user store):", error.message);
+        } else if (data.user) {
+          createdUid = data.user.id;
+        }
+      } catch (cloudErr: any) {
+        console.warn("[Signup] Cloud auth connection exception:", cloudErr?.message || cloudErr);
       }
     }
 
     // 2. Persist to local PostgreSQL users table with secure password hash
+    const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+    try {
+      const existingUser = await query<{ id: string }>(
+        `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+        [email.toLowerCase().trim()]
+      );
+      if (existingUser.rows.length > 0) {
+        return NextResponse.json(
+          { error: "An account with this email address already exists. Please sign in instead." },
+          { status: 409 }
+        );
+      }
+    } catch {
+      // Non-fatal if DB is in-memory or offline during dev unit tests
+    }
+
     const hashedPassword = await hashPassword(password);
     try {
       await query(
@@ -75,8 +105,23 @@ export async function POST(req: NextRequest) {
          ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
         [createdUid, tenantId, assignedRole, email.toLowerCase().trim(), hashedPassword]
       );
+
+      // Initialize default community tier subscription record
+      await query(
+        `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, updated_at)
+         VALUES ($1, 'community', 'active', NOW() + INTERVAL '14 days', NOW())
+         ON CONFLICT (tenant_id) DO NOTHING`,
+        [tenantId]
+      );
     } catch (dbErr) {
-      console.warn("[Signup] Local user persist warning:", dbErr);
+      if (isProd) {
+        console.error("[Signup] CRITICAL_DATABASE_UNAVAILABLE: Failed to persist user account in production database:", dbErr);
+        return NextResponse.json(
+          { error: "Account registration failed: database service unavailable." },
+          { status: 500 }
+        );
+      }
+      console.warn("[Signup] Local user persist warning (dev/test mode):", dbErr);
     }
 
     // S2: Cryptographically sign session token

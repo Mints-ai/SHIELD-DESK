@@ -19,12 +19,15 @@ import {
   Flame,
   Cloud,
   Bot,
+  CreditCard,
+  BookOpen,
+  KeyRound,
 } from "lucide-react";
 import { useChat, DEV_USERS, type DevUserId } from "@/lib/context/ChatContext";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
-import { ThemeSwitch } from "./ThemeSwitch";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
+// Tenant brand: MINTS GLOBAL (Demo Mode)
 export function TopNavBar() {
   const pathname = usePathname();
   const { activeUserId, activeUser, setActiveUserId, setIsChatOpen } = useChat();
@@ -111,10 +114,14 @@ export function TopNavBar() {
     { href: "/dashboard/plans", label: "Mitigation Plans", icon: FileText },
     { href: "/dashboard/tasks", label: "Task Board", icon: CheckSquare },
     { href: "/dashboard/fleet", label: "Fleet & Host", icon: Server },
+    { href: "/dashboard/integrations", label: "Tokens & Keys", icon: KeyRound },
     { href: "/dashboard/scanner", label: "Security Scanner", icon: Scan },
     { href: "/dashboard/threats", label: "Threat Engine", icon: Flame },
     { href: "/dashboard/compliance", label: "ISO 27001 Audit", icon: FileCheck2 },
     { href: "/dashboard/risk-scorecard", label: "Risk Scorecard", icon: BarChart3 },
+    { href: "/dashboard/billing", label: "Billing & Licenses", icon: CreditCard },
+    { href: "/status", label: "Platform Status", icon: Activity },
+    { href: "/docs", label: "Documentation", icon: BookOpen },
   ];
 
   const services = [
@@ -131,12 +138,11 @@ export function TopNavBar() {
         <button ref={navigationToggleRef} className="sd-button sd-mobile-nav-toggle !px-2" aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileNavOpen} aria-controls="workspace-navigation" onClick={() => setMobileNavOpen(!mobileNavOpen)}>
           {mobileNavOpen ? <X size={18} /> : <Menu size={18} />}
         </button>
-        <Link href="/" className="sd-mobile-brand" aria-label="ShieldDesk home"><Shield size={20} strokeWidth={1.5} aria-hidden="true" /><span>ShieldDesk</span></Link>
+        <Link href="/" className="sd-mobile-brand" aria-label="ShieldDesk home"><img src="/shield-emblem.png" alt="ShieldDesk" className="w-5 h-5 object-contain" /><span>ShieldDesk</span></Link>
         <button className="sd-button sd-header-search" onClick={() => setIsChatOpen(true)} aria-label="Open ShieldDesk AI assistant">
           <Sparkles size={17} className="text-[var(--sd-wheat)]" /><span>Ask about an incident, vulnerability, or response…</span>
         </button>
         <div className="sd-header-controls">
-          <ThemeSwitch />
           <details
             className="sd-health-menu"
             onBlur={(event) => {
@@ -155,7 +161,24 @@ export function TopNavBar() {
             }}
           >
             <summary className="sd-health-trigger"><Activity size={18} className="text-[var(--sd-wheat)]" /><div className="sd-health-caption">System health<p>{healthLoaded ? `${connectedCount} of 4 services connected` : "Checking services…"}</p></div><ChevronDown size={12} /></summary>
-            <div className="sd-popover"><p className="sd-eyebrow mb-2">System connections</p>{services.map(({ label, connected, icon: Icon }) => <div key={label} className="sd-health-row"><span><Icon size={14} />{label}</span><span className={connected ? "text-[var(--sd-success)]" : "text-[var(--sd-text-muted)]"}><i className="sd-status-dot" />{healthLoaded ? connected ? "Connected" : "Offline" : "Checking"}</span></div>)}</div>
+            <div className="sd-popover">
+              <p className="sd-eyebrow mb-2">System connections</p>
+              {services.map(({ label, connected, icon: Icon }) => (
+                <div key={label} className="sd-health-row">
+                  <span><Icon size={14} />{label}</span>
+                  <span className={connected ? "text-[var(--sd-success)]" : "text-[var(--sd-text-muted)]"}>
+                    <i className="sd-status-dot" />
+                    {healthLoaded ? (connected ? "Connected" : "Offline") : "Checking"}
+                  </span>
+                </div>
+              ))}
+              <div className="pt-2 mt-2 border-t border-[var(--sd-border)]">
+                <Link href="/status" className="flex items-center justify-between text-xs text-[var(--sd-wheat)] hover:text-[var(--sd-pine-bright)] font-medium transition-colors">
+                  <span>Full Platform Status & SLA</span>
+                  <span aria-hidden="true">&rarr;</span>
+                </Link>
+              </div>
+            </div>
           </details>
           {activeUser.role !== "analyst" && (
 
@@ -174,12 +197,12 @@ export function TopNavBar() {
               <Lock size={16} /><span>{pendingTokens.length}</span>
             </button>
           )}
-          {envMeta.devPersonasAllowed && <div className="sd-profile"><span className="sd-avatar" aria-hidden="true">{activeUser.label.split(" ").map((word) => word[0]).slice(0,2).join("")}</span><div><select aria-label="Active operator persona" value={activeUserId} onChange={(event) => setActiveUserId(event.target.value as DevUserId)}>{(Object.keys(DEV_USERS) as DevUserId[]).map((id) => <option key={id} value={id}>{DEV_USERS[id].label}</option>)}</select><p className="sd-profile-caption">{activeUser.tenantName}</p></div></div>}
+          {envMeta.devPersonasAllowed && <div className="sd-profile"><span className="sd-avatar" aria-hidden="true">{activeUser.label.split(" ").map((word) => word[0]).slice(0,2).join("")}</span><div><select aria-label="Active operator persona" value={activeUserId} onChange={(event) => setActiveUserId(event.target.value as DevUserId)} className="outline-none focus:outline-none focus:ring-0 focus-visible:outline-none border-none shadow-none cursor-pointer bg-transparent" style={{ outline: "none", border: "none", boxShadow: "none" }}>{(Object.keys(DEV_USERS) as DevUserId[]).map((id) => <option key={id} value={id}>{DEV_USERS[id].label}</option>)}</select><p className="sd-profile-caption">{activeUser.tenantName}</p></div></div>}
           <Link href="/login" className="sd-button !px-3" aria-label="Sign in"><LogIn size={16} /><span className="sd-signin-label">Sign in</span></Link>
         </div>
       </header>
       <aside id="workspace-navigation" className="sd-sidebar" data-open={mobileNavOpen} onKeyDown={(event) => { if (event.key === "Escape") { setMobileNavOpen(false); navigationToggleRef.current?.focus(); } }}>
-        <Link href="/" className="sd-brand" aria-label="ShieldDesk home"><Shield className="sd-brand-symbol" size={36} strokeWidth={1.2} /><div><div className="sd-brand-name">ShieldDesk</div><div className="sd-brand-caption">Security operations</div></div></Link>
+        <Link href="/" className="sd-brand" aria-label="ShieldDesk home"><img src="/shield-emblem.png" alt="ShieldDesk" className="w-9 h-9 object-contain flex-shrink-0" /><div><div className="sd-brand-name">ShieldDesk</div><div className="sd-brand-caption">Security operations</div></div></Link>
         <nav aria-label="Dashboard"><p className="sd-nav-label">Workspace</p>{navLinks.map(({ href, label, icon: Icon }) => <Link key={href} href={href} onClick={() => setMobileNavOpen(false)} className="sd-nav-link" aria-current={(href === "/" ? pathname === "/" : pathname?.startsWith(href)) ? "page" : undefined}><Icon size={18} strokeWidth={1.5} /><span>{label}</span></Link>)}</nav>
         <div className="sd-sidebar-bottom"><p>Clarity in every signal.<br />Confidence in every action.</p><div className="sd-sidebar-rule" /><span className="sd-sample-label"><i className="sd-status-dot" />{envMeta.isDemoMode ? "Demo environment" : "Live SOC"}</span><div className="sd-sidebar-footnote">{envMeta.isDemoMode ? "Illustrative data · Development workspace" : "Live telemetry · Governed operations"}<br />ShieldDesk · Mints Global</div></div>
       </aside>

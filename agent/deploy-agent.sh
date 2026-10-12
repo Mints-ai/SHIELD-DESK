@@ -21,7 +21,7 @@ echo "[+] Control Plane: ${CONTROL_PLANE_URL}"
 # Build Go Agent
 if command -v go >/dev/null 2>&1; then
     echo "[*] Compiling ShieldDesk Go Agent binary..."
-    go build -ldflags="-s -w" -o /usr/local/bin/shielddesk-agent cmd/main.go
+    go build -ldflags="-s -w" -o /usr/local/bin/shielddesk-agent ./cmd
     chmod +x /usr/local/bin/shielddesk-agent
 else
     echo "[-] Go compiler not found. Please compile or provide pre-built binary."

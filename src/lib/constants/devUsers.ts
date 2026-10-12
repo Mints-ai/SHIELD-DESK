@@ -19,8 +19,8 @@ export const DEV_USERS: Record<DevUserId, DevUserMetadata> = {
     label: "System Admin",
     role: "system_admin",
     tenantId: "acme-tenant",
-    tenantName: "Acme Corp",
-    email: "admin@acme.corp",
+    tenantName: "MINTS GLOBAL",
+    email: "admin@mintsglobal.ae",
     description: "Platform-wide administrator with cross-tenant visibility and Tier 3 approval authority",
   },
   "dev-super": {
@@ -28,8 +28,8 @@ export const DEV_USERS: Record<DevUserId, DevUserMetadata> = {
     label: "Super Admin",
     role: "super_admin",
     tenantId: "acme-tenant",
-    tenantName: "Acme Corp",
-    email: "superadmin@acme.corp",
+    tenantName: "MINTS GLOBAL",
+    email: "superadmin@mintsglobal.ae",
     description: "Company-level administrator — full approval authority within tenant",
   },
   "dev-responder": {
@@ -37,8 +37,8 @@ export const DEV_USERS: Record<DevUserId, DevUserMetadata> = {
     label: "Responder",
     role: "responder",
     tenantId: "acme-tenant",
-    tenantName: "Acme Corp",
-    email: "responder@acme.corp",
+    tenantName: "MINTS GLOBAL",
+    email: "responder@mintsglobal.ae",
     description: "Incident Responder — can approve Tier 1 & Tier 2 containment actions",
   },
   "dev-analyst": {
@@ -46,8 +46,8 @@ export const DEV_USERS: Record<DevUserId, DevUserMetadata> = {
     label: "Analyst",
     role: "analyst",
     tenantId: "acme-tenant",
-    tenantName: "Acme Corp",
-    email: "analyst@acme.corp",
+    tenantName: "MINTS GLOBAL",
+    email: "analyst@mintsglobal.ae",
     description: "SOC Analyst — investigate & draft plans, cannot approve actions",
   },
 };

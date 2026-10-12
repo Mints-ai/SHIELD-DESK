@@ -1,16 +1,15 @@
--- ShieldDesk schema — designed as part of this build, since the platform
--- itself doesn't exist yet (the chat widget is the first component).
--- Nothing here is "the real schema handed down from elsewhere" — this IS
--- the real schema, for now. Revise freely once the actual incidents/assets
--- pages (later phases) impose their own requirements.
+-- ============================================================================
+-- ShieldDesk Core & Commercial Production Schema
+-- Authoritative schema definition covering multi-tenant identity, incidents,
+-- telemetry, endpoint fleet, immutable hash-chain audit ledger, and Phase M
+-- commercial licensing and Stripe billing infrastructure.
+-- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto; -- for gen_random_uuid()
 
 -- ---------------------------------------------------------------------------
--- Identity: who is asking, and what tenant/role do they have.
--- No Firebase / external IdP — see lib/auth/session.ts for the dev-mode
--- bypass this backs. Swap in real credential storage when ShieldDesk has
--- its own login flow.
+-- Identity & RBAC: Multi-tenant user credentials, roles, and TOTP/MFA state.
+-- Enforces strict tenant isolation and role-based access control.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
   id            text PRIMARY KEY,   -- opaque user id
@@ -138,6 +137,7 @@ CREATE TABLE IF NOT EXISTS mitigation_tasks (
   status        text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'in_progress', 'completed')),
   blast_radius  text,
   cve_id        text,
+  assigned_to   text REFERENCES users(id),
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_mitigation_tasks_plan ON mitigation_tasks (plan_id);
@@ -518,6 +518,190 @@ BEGIN
       );
   END IF;
 END $$;
+
+-- ============================================================================
+-- Phase M: Commercial Licensing, Stripe Billing & Customer Purchase Schema
+-- ============================================================================
+
+-- 1. Billing Customers (Binds authenticated tenant to Stripe Customer)
+CREATE TABLE IF NOT EXISTS billing_customers (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL UNIQUE,
+    stripe_customer_id VARCHAR(128) NOT NULL UNIQUE,
+    billing_email VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_customers_lookup 
+    ON billing_customers (tenant_id, stripe_customer_id);
+
+-- 2. Product Catalogue and Price Mappings
+CREATE TABLE IF NOT EXISTS product_catalog_prices (
+    id VARCHAR(64) PRIMARY KEY,
+    plan_id VARCHAR(32) NOT NULL, -- community, professional, enterprise
+    billing_interval VARCHAR(16) NOT NULL, -- month, year
+    currency VARCHAR(8) NOT NULL DEFAULT 'USD',
+    stripe_price_id VARCHAR(128) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    entitlement_version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (plan_id, billing_interval, currency)
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_catalog_prices_lookup 
+    ON product_catalog_prices (plan_id, billing_interval, is_active);
+
+-- 3. Checkout Attempts (Pre-checkout ledger and correlation)
+CREATE TABLE IF NOT EXISTS checkout_attempts (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL,
+    initiating_user_id VARCHAR(64) NOT NULL,
+    stripe_checkout_session_id VARCHAR(128) UNIQUE,
+    plan_id VARCHAR(32) NOT NULL,
+    billing_interval VARCHAR(16) NOT NULL DEFAULT 'month',
+    currency VARCHAR(8) NOT NULL DEFAULT 'USD',
+    deployment_type VARCHAR(32) NOT NULL DEFAULT 'saas', -- saas, customer-hosted
+    status VARCHAR(32) NOT NULL DEFAULT 'pending', -- pending, completed, expired, failed
+    idempotency_key VARCHAR(128) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkout_attempts_tenant 
+    ON checkout_attempts (tenant_id, status, created_at DESC);
+
+-- 4. Tenant Subscriptions (Canonical state of tenant subscription)
+CREATE TABLE IF NOT EXISTS tenant_subscriptions (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL UNIQUE,
+    stripe_customer_id VARCHAR(128),
+    stripe_subscription_id VARCHAR(128) UNIQUE,
+    tier VARCHAR(32) NOT NULL DEFAULT 'community', -- community, professional, enterprise
+    billing_interval VARCHAR(16) NOT NULL DEFAULT 'month',
+    status VARCHAR(32) NOT NULL DEFAULT 'active', -- trialing, active, past_due, grace_period, suspended, cancelled, expired
+    current_period_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    current_period_end TIMESTAMPTZ NOT NULL,
+    cancel_at_period_end BOOLEAN NOT NULL DEFAULT false,
+    canceled_at TIMESTAMPTZ,
+    grace_period_until TIMESTAMPTZ,
+    entitlement_version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_subscriptions_tenant_status 
+    ON tenant_subscriptions (tenant_id, status);
+
+-- 5. Subscription Status Transition Audit History
+CREATE TABLE IF NOT EXISTS subscription_status_history (
+    id VARCHAR(64) PRIMARY KEY,
+    subscription_id VARCHAR(64) NOT NULL,
+    tenant_id VARCHAR(64) NOT NULL,
+    from_status VARCHAR(32),
+    to_status VARCHAR(32) NOT NULL,
+    reason VARCHAR(255),
+    actor_id VARCHAR(128) NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    transitioned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_history_tenant 
+    ON subscription_status_history (tenant_id, transitioned_at DESC);
+
+-- 6. Invoices
+CREATE TABLE IF NOT EXISTS invoices (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL,
+    subscription_id VARCHAR(64),
+    stripe_invoice_id VARCHAR(128) NOT NULL UNIQUE,
+    invoice_number VARCHAR(64),
+    currency VARCHAR(8) NOT NULL DEFAULT 'USD',
+    amount_due_cents INTEGER NOT NULL DEFAULT 0,
+    amount_paid_cents INTEGER NOT NULL DEFAULT 0,
+    amount_remaining_cents INTEGER NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'draft', -- draft, open, paid, void, uncollectible, failed
+    period_start TIMESTAMPTZ,
+    period_end TIMESTAMPTZ,
+    hosted_invoice_url TEXT,
+    invoice_pdf_url TEXT,
+    paid_at TIMESTAMPTZ,
+    due_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_tenant 
+    ON invoices (tenant_id, status, created_at DESC);
+
+-- 7. Product Licenses (Never persists raw secret; stores keyed digest & safe display hints)
+CREATE TABLE IF NOT EXISTS product_licenses (
+    id VARCHAR(64) PRIMARY KEY,
+    tenant_id VARCHAR(64) NOT NULL,
+    subscription_id VARCHAR(64),
+    license_key_hash VARCHAR(128) NOT NULL UNIQUE, -- SHA-256(pepper + key)
+    display_prefix VARCHAR(16) NOT NULL, -- e.g. 'SD-PRO'
+    display_suffix VARCHAR(16) NOT NULL, -- e.g. '9F2B'
+    tier VARCHAR(32) NOT NULL DEFAULT 'community',
+    status VARCHAR(32) NOT NULL DEFAULT 'active', -- draft, active, grace_period, suspended, expired, revoked
+    max_endpoints INTEGER NOT NULL DEFAULT 5,
+    max_users INTEGER NOT NULL DEFAULT 10,
+    features TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    signing_key_id VARCHAR(64) NOT NULL DEFAULT 'sd-k1',
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    grace_period_days INTEGER NOT NULL DEFAULT 14,
+    revoked_at TIMESTAMPTZ,
+    revocation_reason TEXT,
+    replaces_license_id VARCHAR(64),
+    replaced_by_license_id VARCHAR(64),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_licenses_lookup 
+    ON product_licenses (tenant_id, status, expires_at);
+
+-- 8. License Activations (Hardware & Installation binding with challenge verification)
+CREATE TABLE IF NOT EXISTS license_activations (
+    id VARCHAR(64) PRIMARY KEY,
+    license_id VARCHAR(64) NOT NULL REFERENCES product_licenses(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(64) NOT NULL,
+    installation_id VARCHAR(128) NOT NULL,
+    device_identity VARCHAR(128) NOT NULL,
+    certificate_fingerprint VARCHAR(128) NOT NULL,
+    platform VARCHAR(32) NOT NULL DEFAULT 'linux', -- linux, windows, macos
+    product_version VARCHAR(32) NOT NULL DEFAULT '2.4.0',
+    activation_state VARCHAR(32) NOT NULL DEFAULT 'active', -- active, past_due, suspended, revoked, deactivated
+    activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_heartbeat_at TIMESTAMPTZ,
+    deactivated_at TIMESTAMPTZ,
+    deactivation_reason TEXT,
+    UNIQUE (tenant_id, installation_id),
+    UNIQUE (tenant_id, device_identity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_license_activations_lookup 
+    ON license_activations (tenant_id, license_id, activation_state);
+
+-- 9. Durable Stripe Webhook Inbox
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+    id VARCHAR(64) PRIMARY KEY,
+    stripe_event_id VARCHAR(128) NOT NULL UNIQUE,
+    event_type VARCHAR(64) NOT NULL,
+    tenant_id VARCHAR(64),
+    status VARCHAR(32) NOT NULL DEFAULT 'pending', -- pending, processing, processed, failed, duplicate
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    lease_expires_at TIMESTAMPTZ,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_stripe_webhook_inbox_processing 
+    ON stripe_webhook_events (status, created_at ASC);
+
 
 
 

@@ -12,8 +12,14 @@ export const isSupabaseServerConfigured = Boolean(
   supabaseUrl && supabaseServiceKey && supabaseUrl.startsWith("http")
 );
 
+class ServerDummyWS {}
+
 export const supabaseServer = isSupabaseServerConfigured
   ? createClient(supabaseUrl, supabaseServiceKey, {
       auth: { persistSession: false },
+      realtime: {
+        transport: typeof WebSocket !== "undefined" ? WebSocket : (ServerDummyWS as any),
+      },
     })
   : null;
+

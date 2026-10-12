@@ -238,7 +238,7 @@ export async function GET(req: NextRequest) {
 
     // Use dynamic threat alert store for authorized users only.
     const securityAlerts = canViewAuthAlerts
-      ? getThreatAlertsForUser(session.uid)
+      ? getThreatAlertsForUser(session.uid, session.tenantId, session.role)
       : [];
 
     // Dynamically compute all 3 anomaly metrics from real live telemetry stores
@@ -673,7 +673,7 @@ export async function POST(req: NextRequest) {
         success: true,
         message: "Anomaly telemetry reset to nominal baselines.",
         anomaly_baselines: nominalBaselines,
-        security_alerts: isSystemAdmin ? getThreatAlertsForUser(session.uid) : [],
+        security_alerts: isSystemAdmin ? getThreatAlertsForUser(session.uid, session.tenantId, session.role) : [],
       });
     }
 
@@ -701,7 +701,7 @@ export async function POST(req: NextRequest) {
       if (!canManageContainment) {
         return NextResponse.json({ error: "Forbidden: Alert acknowledgement restricted" }, { status: 403 });
       }
-      const acknowledged = acknowledgeThreatAlert(body.alert_id, session.uid);
+      const acknowledged = acknowledgeThreatAlert(body.alert_id, session.uid, session.tenantId, session.role);
       return NextResponse.json({ success: acknowledged });
     }
 

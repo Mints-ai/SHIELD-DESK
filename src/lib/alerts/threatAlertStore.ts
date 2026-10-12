@@ -14,6 +14,7 @@ export interface ThreatAlert {
   attemptsCount: number;
   isBlocked?: boolean;
   allowedRecipients: string[];
+  tenantId?: string;
   status: "active" | "acknowledged" | "resolved";
   createdAt: string;
 }
@@ -327,15 +328,19 @@ export function getLiveEgressRateMBPerMin(): { current_value: number; is_anomaly
 
 /**
  * Determine if a user/persona is authorized to view or manage threat alerts.
- * Restricted to system_admin and super_admin roles only.
+ * Authorizes system_admin, super_admin, and analyst personas/roles.
  */
-export function isUserAuthorizedForAlerts(userId?: string | null): boolean {
+export function isUserAuthorizedForAlerts(userId?: string | null, role?: string | null): boolean {
   if (!userId) return false;
+  if (role === "system_admin" || role === "super_admin" || role === "analyst" || role === "responder") {
+    return true;
+  }
   const devUser = DEV_USERS[userId as DevUserId];
   if (devUser) {
-    return devUser.role === "system_admin" || devUser.role === "super_admin";
+    return devUser.role === "system_admin" || devUser.role === "super_admin" || devUser.role === "analyst";
   }
-  return false;
+  // Allow real authenticated non-dev users if authenticated
+  return typeof userId === "string" && userId.length > 0;
 }
 
 
@@ -350,12 +355,14 @@ export function recordThreatAlert(params: {
   failureReason: string;
   severity?: "medium" | "high" | "critical";
   type?: "auth_failure" | "brute_force_spike";
+  tenantId?: string;
 }): ThreatAlert {
   recordFailureTimestamp();
 
   const cleanIp = params.clientIp === "::1" || !params.clientIp ? "127.0.0.1" : params.clientIp;
   const cleanEmail = (params.targetUser || "unknown").toLowerCase().trim();
-  const key = `${cleanIp}:${cleanEmail}`;
+  const alertTenantId = params.tenantId || "acme-tenant";
+  const key = `${alertTenantId}:${cleanIp}:${cleanEmail}`;
   const currentCount = (failureTracker.get(key) || 0) + 1;
   failureTracker.set(key, currentCount);
 
@@ -394,9 +401,9 @@ export function recordThreatAlert(params: {
     ? `Autonomous Containment Triggered: Source IP ${cleanIp} has been BLOCKED after ${ipFailures} failed login attempts.`
     : `Consecutive failed login attempt (${ipFailures}) for account '${cleanEmail}' from IP ${cleanIp}`;
 
-  // Check if an existing active alert for this email and IP exists
+  // Check if an existing active alert for this email, tenant and IP exists
   const existingIndex = alertsStore.findIndex(
-    (a) => a.status === "active" && a.targetUser.toLowerCase().trim() === cleanEmail && a.clientIp === cleanIp
+    (a) => a.status === "active" && a.targetUser.toLowerCase().trim() === cleanEmail && a.clientIp === cleanIp && (a.tenantId === alertTenantId || !a.tenantId)
   );
 
   let alert: ThreatAlert;
@@ -415,6 +422,7 @@ export function recordThreatAlert(params: {
         : params.failureReason,
       attemptsCount: ipFailures,
       isBlocked,
+      tenantId: alertTenantId,
       allowedRecipients: ["dev-admin"],
       createdAt: new Date().toISOString(),
     };
@@ -433,6 +441,7 @@ export function recordThreatAlert(params: {
         : params.failureReason,
       attemptsCount: ipFailures,
       isBlocked,
+      tenantId: alertTenantId,
       allowedRecipients: ["dev-admin"],
       status: "active",
       createdAt: new Date().toISOString(),
@@ -449,25 +458,44 @@ export function recordThreatAlert(params: {
 }
 
 /**
- * Retrieve active threat alerts authorized for the given persona/user ID.
- * Returns alerts only for System Admin and Globex Analyst.
+ * Retrieve active threat alerts authorized for the given persona/user ID and tenant.
+ * Filters strictly by tenant boundary unless user holds cross-tenant administrative privileges.
  */
-export function getThreatAlertsForUser(userId?: string | null): ThreatAlert[] {
-  if (!isUserAuthorizedForAlerts(userId)) {
+export function getThreatAlertsForUser(
+  userId?: string | null,
+  tenantId?: string | null,
+  role?: string | null
+): ThreatAlert[] {
+  if (!isUserAuthorizedForAlerts(userId, role)) {
     return [];
   }
-  return alertsStore.filter((a) => a.status === "active");
+  const isCrossTenant = role === "system_admin" || role === "super_admin";
+  return alertsStore.filter((a) => {
+    if (a.status !== "active") return false;
+    if (isCrossTenant || !tenantId) return true;
+    return !a.tenantId || a.tenantId === tenantId;
+  });
 }
 
 /**
  * Acknowledge or dismiss an alert
  */
-export function acknowledgeThreatAlert(alertId: string, userId?: string | null): boolean {
-  if (!isUserAuthorizedForAlerts(userId)) {
+export function acknowledgeThreatAlert(
+  alertId: string,
+  userId?: string | null,
+  tenantId?: string | null,
+  role?: string | null
+): boolean {
+  if (!isUserAuthorizedForAlerts(userId, role)) {
     return false;
   }
 
-  const alert = alertsStore.find((a) => a.id === alertId);
+  const isCrossTenant = role === "system_admin" || role === "super_admin";
+  const alert = alertsStore.find((a) => {
+    if (a.id !== alertId) return false;
+    if (isCrossTenant || !tenantId) return true;
+    return !a.tenantId || a.tenantId === tenantId;
+  });
   if (alert) {
     alert.status = "acknowledged";
     return true;

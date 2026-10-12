@@ -113,7 +113,11 @@ export class EntitlementService {
    * Retrieves the active or registered commercial license for a tenant.
    */
   public static async getLicense(tenantId: string): Promise<TenantLicenseRecord | null> {
-    if (this.inMemoryLicenses.has(tenantId)) {
+    const isProd =
+      (process.env.NODE_ENV === "production" || process.env.APP_ENV === "production") &&
+      (process.env.NODE_ENV !== "test" || process.env.SHIELDDESK_ENFORCE_PROD_DB === "true");
+
+    if (!isProd && this.inMemoryLicenses.has(tenantId)) {
       return this.inMemoryLicenses.get(tenantId) || null;
     }
 
@@ -145,8 +149,13 @@ export class EntitlementService {
         this.inMemoryLicenses.set(tenantId, record);
         return record;
       }
-    } catch {
-      // Fallback
+    } catch (err: unknown) {
+      if (isProd) {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to query tenant licenses in production: ${err instanceof Error ? err.message : "DB error"}`
+        );
+      }
+      // Fallback for non-production tests
     }
 
     return null;
@@ -282,6 +291,7 @@ export class EntitlementService {
 
     return record;
   }
+
 
   /**
    * Non-Negotiable Rule 4 & Entitlement Verification Guard:
@@ -494,7 +504,24 @@ export class EntitlementService {
     const license = await this.getLicense(tenantId);
     if (license) {
       license.status = status;
+      license.updatedAt = new Date().toISOString();
       this.inMemoryLicenses.set(tenantId, license);
+    } else {
+      this.inMemoryLicenses.set(tenantId, {
+        id: `lic-${tenantId}`,
+        tenantId,
+        licenseKey: "",
+        tier: "community",
+        status,
+        maxEndpoints: 0,
+        maxUsers: 0,
+        features: [],
+        expiresAt: new Date().toISOString(),
+        gracePeriodDays: 0,
+        signature: "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
     }
     try {
       await query(`UPDATE tenant_licenses SET status = $1, updated_at = NOW() WHERE tenant_id = $2`, [status, tenantId]);

@@ -1,44 +1,65 @@
 # ShieldDesk — Governed Rollback Engine
 
-**Document Version:** 1.0.0  
-**Date:** 2026-10-09  
-**Status:** `IMPLEMENTED` / `TESTED`  
-**Primary Engine:** [src/lib/remediation/rollbackEngine.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/src/lib/remediation/rollbackEngine.ts)
+**Document Version:** 2.0.0  
+**Date:** 2026-10-10  
+**Status:** `IMPLEMENTED` / `VERIFIED`  
+**Primary Engine:** [src/lib/rollback-engine/engine.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/src/lib/rollback-engine/engine.ts)  
+**Endpoint Handler:** [agent/pkg/handlers/actions.go](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/agent/pkg/handlers/actions.go)
 
 ---
 
-## 1. Rollback Architecture
+## 1. Governed Rollback Lifecycle & Core Principle
 
 Remediation operations in enterprise production environments carry inherent operational risk (e.g. unintended network partition, critical service failure, or dependency breakage).
 
-ShieldDesk enforces pre-execution snapshot capture and automated governed reversion:
-1. **Pre-Execution Snapshot:** Prior to executing any Tier 1–3 state-changing command, the agent captures an atomic snapshot of the relevant subsystem (`safety_snapshot_id`).
-2. **Automated Rollback Trigger:** If post-execution verification fails or the operation times out, the `ClosedLoopOrchestrator` automatically triggers `RollbackEngine.executeRollback()`.
-3. **Cryptographic Ledger Registration:** Rollback operations are dispatched using signed control-plane commands and permanently recorded in the `hash_chain_audit` ledger.
+In accordance with ShieldDesk's core engineering principle—**PROVE BEFORE YOU ACT**—rollback operations:
+1. **Never bypass normal governance controls:** Rollbacks execute through the identical authorization, policy evaluation, signed command dispatch, and evidence verification channels as primary actions.
+2. **Never claim success without independent verification:** An enqueued rollback command, HTTP 200 response, or audit entry is not proof of state restoration. Restoration must be verified on the host.
+3. **Fail closed:** If a rollback target or snapshot cannot be validated, the rollback is flagged as `ROLLBACK_BLOCKED` or `ROLLBACK_FAILED`, and the incident remains open for manual intervention.
+
+### Rollback Outcome States
+
+| State | Definition | Success Semantics |
+| :--- | :--- | :--- |
+| `ROLLBACK_REQUESTED` | Rollback triggered by verification failure or operator command; pending dispatch | In-progress |
+| `ROLLBACK_BLOCKED` | Rollback denied by kill-switch, tenant boundary, missing agent, or unsupported capability | `false` |
+| `ROLLBACK_DISPATCHED` | Cryptographically signed reverse command enqueued to target agent channel | Dispatched (`true`) |
+| `ROLLBACK_IN_PROGRESS` | Agent acknowledged receipt; rollback command actively executing on host | In-progress |
+| `ROLLBACK_FAILED` | Command failed on host, timeout occurred, or agent severed connection | `false` |
+| `RESTORATION_VERIFIED` | Host state independently re-verified (e.g., firewall restored, service up, connectivity recovered) | `true` |
+| `RESTORATION_UNVERIFIED` | Command reported exit 0, but host telemetry could not independently verify state recovery | `false` |
 
 ---
 
-## 2. Reversible Action Matrix
+## 2. Reversible Action Matrix & Real Snapshot Semantics
 
-| Remediation Action | Reverse Action | Snapshot Resource | Verification Check |
-| :--- | :--- | :--- | :--- |
-| `isolate_host` | `restore_host` | Pre-isolation routing & firewall state | Ping/socket test restores connectivity |
-| `block_ip` | `unblock_ip` | Pre-block iptables/netsh rule chain | Rule removed from table |
-| `kill_process` | `service.restart` | Service config and PID tree | Service daemon actively running |
-| `quarantine_file` | `unquarantine_file` | Encrypted quarantine vault file blob | File restored to original path & SHA-256 verified |
+| Remediation Action | Reverse Action | Snapshot Resource | Verification Check | Host Support Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `isolate_host` | `restore_host` | WFW export (`.wfw`) on Windows; `iptables-save` on Linux | Control-plane socket check & ping restoration | `VERIFIED` (Native Agent) |
+| `block_ip <IP>` | Netsh/iptables rule deletion | Rule chain baseline snapshot | Rule absent from table; destination reachable | `VERIFIED` (Native Agent) |
+| `kill_process <PID>` | `service.restart <name>` | PID process table snapshot & service mapping | Service daemon active in OS process table | `VERIFIED` (Systemd / WinSvc) |
+| `quarantine_file` | `unquarantine_file` | Encrypted quarantine vault blob | File restored to original path & SHA-256 verified | `IMPLEMENTED` (Broker) |
+| `apply_patch` | `package_downgrade` | Package manager rollback baseline (`apt`/`yum`/`winget`) | Package version check matches baseline | `BLOCKED_ON_INFRASTRUCTURE` (Requires Host Pkg Repos) |
+
+> [!IMPORTANT]
+> **Snapshot Semantics:**  
+> - **Native Agent Firewall Snapshot:** Real OS-level snapshot. Windows exports active policy via `netsh advfirewall export <snapId>.wfw`; Linux exports rules via `iptables-save`. Reversion applies `netsh advfirewall import` or `iptables-restore`.  
+> - **Filesystem / OS Snapshot:** Full volume LVM/VSS snapshots require dedicated virtualization or storage layer integration (e.g., AWS EBS, VMware, Proxmox). When running without volume snapshot agents, filesystem actions are restricted to configuration file backups.
 
 ---
 
 ## 3. Rollback Failure Injection & Canary Defenses
 
-Implemented in [tests/phase-h-execution-broker.test.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/tests/phase-h-execution-broker.test.ts) and [src/lib/broker/executionBroker.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/src/lib/broker/executionBroker.ts):
-- During agent updates or batch mitigations, canary rollouts deploy to a single endpoint first.
-- If health metrics or verification checks fail on the canary host, the release is immediately aborted and canary rollback is triggered across the fleet.
+Validated in:
+- [tests/rollback-failure-injection.test.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/tests/rollback-failure-injection.test.ts): 8 injected failure scenarios (patch, service, network, snapshot corruption, disk full, agent disconnect, reboot, and partial execution).
+- [tests/phase-h-execution-broker.test.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/tests/phase-h-execution-broker.test.ts): Canary rollouts halt on first failure and trigger automated rollback across canary cohorts.
+- [tests/safety-boundary.test.ts](file:///d:/Ddeveloped_things/shield_deskmain/shielddesk/tests/safety-boundary.test.ts): Emergency kill-switch strictly blocks rollback dispatch with `ROLLBACK_BLOCKED`.
 
 ---
 
-## 4. Verification Evidence
+## 4. Verification Evidence & Automated Test Matrix
 
-Verified in:
-- `tests/verification-and-rollback-engine.test.ts` (Subtest 2: *RollbackEngine (Governed Reversion)* passing)
-- `tests/closed-loop-orchestration-pipeline.test.ts` (Subtest 3: *Verification Failure Triggers Automatic Rollback* passing)
+- `tests/verification-and-rollback-engine.test.ts`: Governed reversion and state verification.
+- `tests/closed-loop-orchestration-pipeline.test.ts`: Verification failure automatically triggers governed rollback.
+- `tests/safety-boundary.test.ts`: Production safety boundaries and kill-switch enforcement on rollback.
+- `agent/pkg/handlers/actions_test.go`: Native Go agent snapshot capture and rollback handlers.

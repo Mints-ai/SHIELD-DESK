@@ -1,6 +1,5 @@
 "use client";
 
-import { ThemeSwitch } from "@/components/navigation/ThemeSwitch";
 
 import React, { useState } from "react";
 import Link from "next/link";
@@ -19,13 +18,13 @@ import {
 
 export default function OnboardingPage() {
   const [step, setStep] = useState(1);
-  const [orgName, setOrgName] = useState("Acme Cybersecurity");
+  const [orgName, setOrgName] = useState("MINTS GLOBAL");
   const [osTab, setOsTab] = useState<"windows" | "linux">("windows");
   const [copied, setCopied] = useState(false);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerified, setMfaVerified] = useState(false);
 
-  const mockToken = "sdt_secops_live_9f83a2c07e1";
+  const mockToken = "sdt_sample_enrollment_token_00000000";
   const controlPlaneUrl = "https://control.shielddesk.io";
 
   const windowsCmd = `powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '${controlPlaneUrl}/install-windows.ps1' -OutFile 'install.ps1'; .\\install.ps1 -ControlPlane '${controlPlaneUrl}' -EnrollToken '${mockToken}'"`;
@@ -42,8 +41,8 @@ export default function OnboardingPage() {
       {/* Header */}
       <header className="max-w-4xl mx-auto w-full flex flex-wrap items-center justify-between gap-4 py-4 border-b border-[var(--sd-border)]">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-[var(--sd-pine-dim)] border border-[var(--sd-pine-border)] rounded-lg">
-            <Shield className="w-6 h-6 text-[var(--sd-wheat)]" />
+          <div className="w-10 h-10 p-1 bg-[var(--sd-pine-dim)] border border-[var(--sd-pine-border)] rounded-lg flex items-center justify-center">
+            <img src="/shield-emblem.png" alt="ShieldDesk" className="w-full h-full object-contain" />
           </div>
           <div>
             <span className="font-medium text-lg tracking-wider text-[var(--sd-text)]">SHIELD<span className="text-[var(--sd-wheat)]">DESK</span></span>
@@ -68,7 +67,6 @@ export default function OnboardingPage() {
             </div>
           ))}
         </div>
-        <ThemeSwitch />
       </header>
 
       <p className="max-w-2xl mx-auto mt-8 text-[13px] text-[var(--sd-text-muted)]">Sample onboarding walkthrough. The enrollment token, MFA secret, and connection status below are illustrative.</p>

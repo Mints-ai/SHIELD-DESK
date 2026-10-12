@@ -65,48 +65,36 @@ function setCached<T>(key: string, data: T): void {
  * Prioritizes active disk state so edits in .env.local take effect immediately.
  */
 export function getShodanApiKey(): string | undefined {
-  // Check .env.local and .env first so user changes take immediate effect
-  try {
-    const root = process.cwd();
-    const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
-    for (const p of envPaths) {
-      if (fs.existsSync(p)) {
-        const content = fs.readFileSync(p, "utf-8");
-        let foundInFile = false;
-        for (const line of content.split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-          const [key, ...vals] = trimmed.split("=");
-          if (key.trim() === "SHODAN_API_KEY") {
-            foundInFile = true;
-            const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
-            if (val && val.length > 0) {
-              process.env.SHODAN_API_KEY = val;
-              return val;
-            } else {
-              // Explicitly empty in .env.local (e.g. SHODAN_API_KEY=)
-              delete process.env.SHODAN_API_KEY;
-              cache.clear();
-              return undefined;
-            }
-          }
-        }
-        // If developer has a .env.local file but completely deleted or commented out SHODAN_API_KEY:
-        if (p.endsWith(".env.local") && !foundInFile) {
-          delete process.env.SHODAN_API_KEY;
-          cache.clear();
-          return undefined;
-        }
-      }
-    }
-  } catch {
-    // Ignore FS errors
-  }
-
-  // Fallback to process.env only if .env files don't exist
   const envVal = process.env.SHODAN_API_KEY?.trim();
   if (envVal && envVal.length > 0) {
     return envVal;
+  }
+
+  // Only scan local .env files on disk in development mode
+  if (process.env.NODE_ENV === "development") {
+    try {
+      const root = process.cwd();
+      const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
+      for (const p of envPaths) {
+        if (fs.existsSync(p)) {
+          const content = fs.readFileSync(p, "utf-8");
+          for (const line of content.split("\n")) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+            const [key, ...vals] = trimmed.split("=");
+            if (key.trim() === "SHODAN_API_KEY") {
+              const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
+              if (val && val.length > 0) {
+                process.env.SHODAN_API_KEY = val;
+                return val;
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore FS errors in dev
+    }
   }
 
   // Key is absent

@@ -7,36 +7,36 @@ export interface HibpStatus {
 }
 
 export function getHibpApiKey(): string | undefined {
-  try {
-    const root = process.cwd();
-    const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
-    for (const p of envPaths) {
-      if (fs.existsSync(p)) {
-        const content = fs.readFileSync(p, "utf-8");
-        for (const line of content.split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-          const [key, ...vals] = trimmed.split("=");
-          if (key.trim() === "HIBP_API_KEY") {
-            const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
-            if (val && val.length > 0) {
-              process.env.HIBP_API_KEY = val;
-              return val;
-            } else {
-              delete process.env.HIBP_API_KEY;
-              return undefined;
+  const envVal = process.env.HIBP_API_KEY?.trim();
+  if (envVal && envVal.length > 0) {
+    return envVal;
+  }
+
+  // Only scan local .env files on disk in development mode
+  if (process.env.NODE_ENV === "development") {
+    try {
+      const root = process.cwd();
+      const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
+      for (const p of envPaths) {
+        if (fs.existsSync(p)) {
+          const content = fs.readFileSync(p, "utf-8");
+          for (const line of content.split("\n")) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+            const [key, ...vals] = trimmed.split("=");
+            if (key.trim() === "HIBP_API_KEY") {
+              const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
+              if (val && val.length > 0) {
+                process.env.HIBP_API_KEY = val;
+                return val;
+              }
             }
           }
         }
       }
+    } catch {
+      // Ignore FS error in dev
     }
-  } catch {
-    // Ignore FS error
-  }
-
-  const envVal = process.env.HIBP_API_KEY?.trim();
-  if (envVal && envVal.length > 0) {
-    return envVal;
   }
 
   delete process.env.HIBP_API_KEY;

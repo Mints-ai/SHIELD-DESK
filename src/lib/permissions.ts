@@ -59,7 +59,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "task.assign",
     "approve.tier1",
     "approve.tier2",
-    // Responders can contain threats (Tier 1 & 2) but NOT break-glass (Tier 3).
+    // Responders can contain threats (Tier 1 & 2) but CANNOT approve break-glass (Tier 3).
   ],
   analyst: [
     "incident.read",

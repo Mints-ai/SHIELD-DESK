@@ -1,16 +1,26 @@
-# ShieldDesk™ — Evidence-Driven Security Operations & Remediation Platform
+<p align="center">
+  <img src="public/shielddesk-logo.png" alt="ShieldDesk™ — See Risk. Act With Confidence." width="520" />
+</p>
 
-[![Next.js](https://img.shields.io/badge/Next.js-16.3.5-black?style=flat&logo=next.js)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-19.2.8-blue?style=flat&logo=react)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Strict%20Zero%20Errors-brightgreen?style=flat&logo=typescript)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/Tests-350%20Passed%20%7C%2051%20Suites-brightgreen?style=flat)]()
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql)](https://www.postgresql.org/)
-[![Sentry](https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry)](https://sentry.io/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css)](https://tailwindcss.com/)
-[![Trivy](https://img.shields.io/badge/Trivy-v0.74.0_Integrated-007acc?style=flat&logo=aqua)]()
-[![Gitleaks](https://img.shields.io/badge/Gitleaks-v8.30.1_Integrated-0052cc?style=flat&logo=git)]()
-[![Launch Readiness](https://img.shields.io/badge/Launch_Readiness-Ready%20For%20Controlled%20Pilot-blue?style=flat)]()
-[![License](https://img.shields.io/badge/License-Proprietary-red?style=flat)]()
+<h1 align="center">ShieldDesk™ — Evidence-Driven Security Operations & Remediation Platform</h1>
+
+<p align="center">
+  <strong>Autonomous Security Operations Center (SOC) co-pilot, fleet PKI control plane, and zero-trust remediation orchestration.</strong>
+</p>
+
+<p align="center">
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.3.5-black?style=flat&logo=next.js" alt="Next.js" /></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19.2.8-blue?style=flat&logo=react" alt="React" /></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict%20Zero%20Errors-brightgreen?style=flat&logo=typescript" alt="TypeScript" /></a>
+  <img src="https://img.shields.io/badge/Tests-380%20Tests%20%7C%2054%20Suites%20Passed-brightgreen?style=flat" alt="Tests" />
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql" alt="PostgreSQL" /></a>
+  <a href="https://sentry.io/"><img src="https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry" alt="Sentry" /></a>
+  <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css" alt="Tailwind CSS" /></a>
+  <img src="https://img.shields.io/badge/Trivy-v0.74.0_Integrated-007acc?style=flat&logo=aqua" alt="Trivy" />
+  <img src="https://img.shields.io/badge/Gitleaks-v8.30.1_Integrated-0052cc?style=flat&logo=git" alt="Gitleaks" />
+  <img src="https://img.shields.io/badge/Launch_Readiness-Ready%20For%20Controlled%20Pilot-blue?style=flat" alt="Launch Readiness" />
+  <img src="https://img.shields.io/badge/License-Proprietary-red?style=flat" alt="License" />
+</p>
 
 **ShieldDesk™** is an **Evidence-Driven Security Operations & Remediation Platform** engineered around the unyielding invariant: **PROVE BEFORE YOU ACT**. It ingests enterprise security telemetry, models digital assets, prioritizes attack paths from cryptographic evidence, evaluates decisions and autonomous policy, enforces dual-custody approval workflows, and dispatches cryptographically signed commands with real-time physical state verification and automated rollback.
 
@@ -19,36 +29,53 @@
 ## Live Platform Interface & Control Plane
 
 ### 1. Security Operations & Incident Workspace
-![ShieldDesk Security Operations Workspace](docs/screenshots/soc-incident-workspace.png)
+![ShieldDesk Security Operations Workspace](docs/screenshots/v2/soc-incident-workspace.png)
 *Real-time incident triage console featuring live telemetry correlation (CrowdStrike Falcon, Microsoft Defender, Wazuh), severity classification, attack timeline visualization, and autonomous AI copilot investigation trigger.*
 
 ### 2. Executive Risk Scorecard & Cyber Posture Index
-![ShieldDesk Executive Risk Scorecard](docs/screenshots/risk-scorecard.png)
+![ShieldDesk Executive Risk Scorecard](docs/screenshots/v2/risk-scorecard.png)
 *CISO and executive intelligence dashboard displaying organizational Cyber Posture Index, estimated financial loss avoided, active threats contained, benchmark MTTD/MTTR response velocity, and role-based operator persona switching.*
 
 ### 3. Fleet Management & Endpoint PKI Authority
-![ShieldDesk Fleet Management](docs/screenshots/fleet-management.png)
+![ShieldDesk Fleet Management](docs/screenshots/v2/fleet-management.png)
 *Enterprise endpoint fleet control plane displaying mTLS X.509 certificate lifecycles, Go universal agent heartbeats (Windows/Linux), host isolation state, and cryptographically signed command dispatch queues.*
 
 ### 4. Native YARA Malware Threat Engine
-![ShieldDesk Threat Intelligence & YARA](docs/screenshots/threat-intel-yara.png)
+![ShieldDesk Threat Intelligence & YARA](docs/screenshots/v2/threat-intel-yara.png)
 *High-performance native YARA malware detection engine featuring AST lexer/parser sandbox, real-time ruleset compiler, custom rule syntax validator, and streaming telemetry match monitors.*
 
 ### 5. 3-Horizon Remediation Planning & Governance
-![ShieldDesk Remediation Planning](docs/screenshots/remediation-plans.png)
+![ShieldDesk Remediation Planning](docs/screenshots/v2/remediation-plans.png)
 *Structured 3-horizon remediation orchestrator (Immediate Containment, Short-Term Patching, Long-Term Zero-Trust Hardening) with 4-tier human governance, separation-of-duties enforcement, and RFC 6238 TOTP MFA gates.*
 
 ### 6. Continuous Compliance Matrix & Audit Evidence Vault
-![ShieldDesk Compliance Matrix](docs/screenshots/compliance-matrix.png)
+![ShieldDesk Compliance Matrix](docs/screenshots/v2/compliance-matrix.png)
 *Automated regulatory compliance mapping across SOC 2 Type II, ISO 27001:2022, NIST CSF 2.0, HIPAA Security Rule, and PCI-DSS v4.0 with SHA-256 Merkle hash-chain tamper-evident audit ledgers.*
 
 ### 7. Vulnerability & Secret Scanner Console
-![ShieldDesk Vulnerability Scanner](docs/screenshots/vulnerability-scanner.png)
+![ShieldDesk Vulnerability Scanner](docs/screenshots/v2/vulnerability-scanner.png)
 *Deep filesystem and container security scanner integrating Aqua Security Trivy for CVE identification and Gitleaks for high-entropy credential and private key leak detection across source trees.*
 
 ### 8. 4-Step Self-Service Enterprise Onboarding
-![ShieldDesk Onboarding Wizard](docs/screenshots/onboarding-wizard.png)
+![ShieldDesk Onboarding Wizard](docs/screenshots/v2/onboarding-wizard.png)
 *Zero-friction organizational onboarding wizard generating tenant-scoped API keys, one-line universal PowerShell/Bash agent installation commands, and SaaS quota provisioning.*
+
+### 9. Enterprise Sign-In Gate & Operator Authentication
+![ShieldDesk Enterprise Sign-In Gate](docs/screenshots/v2/sign-in-screen.png)
+*Distraction-free authentication portal featuring corporate credentials, hardware MFA / TOTP token verification, tenant onboarding links, and autonomous containment SLA consent governance.*
+
+### 10. Brand Identity & High-Resolution Favicon Suite
+The platform incorporates official high-resolution 3D branding and an enterprise favicon suite for web, desktop, and mobile operating environments:
+
+| Asset | Path | Resolution / Spec | Usage |
+| :--- | :--- | :--- | :--- |
+| **Primary 3D Shield Logo** | `public/shielddesk-logo.png`<br>`docs/shielddesk-logo.png` | 1024×682 Transparent PNG | Full brand mark with typography and tagline for headers and media. |
+| **Standalone 3D Shield Emblem** | `public/shield-emblem.png` | 382×423 Transparent PNG | Isolated 3D metallic shield for sidebar, mobile nav, and UI components. |
+| **Favicon (.ico)** | `src/app/favicon.ico`<br>`public/favicon.ico` | Standard Multi-Res ICO | Browser tab, Next.js root metadata, and desktop shortcut icon. |
+| **Web Favicons** | `public/favicon/favicon-32x32.png`<br>`public/favicon/favicon-16x16.png` | 32×32 & 16×16 PNG | High-density retina displays and bookmark bars. |
+| **Apple Touch Icon** | `public/favicon/apple-touch-icon.png`<br>`src/app/apple-icon.png` | 180×180 PNG | iOS / iPadOS home screen web applications. |
+| **Android Chrome Icons** | `public/favicon/android-chrome-192x192.png`<br>`public/favicon/android-chrome-512x512.png` | 192×192 & 512×512 PNG | PWA install targets and Android launcher icons. |
+| **Web App Manifest** | `public/favicon/site.webmanifest` | W3C Standard Manifest | Progressive Web App installation and standalone window mode. |
 
 ---
 
@@ -149,73 +176,61 @@ CONSTRAINT check_separation_of_duties
 CONSTRAINT check_tier3_dual_approval_separation
   CHECK (secondary_approved_by IS NULL OR approved_by <> secondary_approved_by)
 ```
-- **System Admin Self-Approval (Tier 1 & Tier 2)**: For reversible and medium-risk containment tasks (e.g. host quarantine, session revocation), a System Administrator (`system_admin` or `super_admin`) is authorized to sign off and execute a task even if created by them, avoiding operational deadlocks during active incidents.
-- **Analyst Zero-Approval Rule**: Analysts (`analyst` and `user` roles) have **zero sign-off authority under any circumstance**. They can discover threats, investigate root causes, and draft/assign tasks, but cannot authorize remediation execution.
+- **Self-Approval (Tier 1 & Tier 2)**: For reversible and containment tasks (e.g. host quarantine, session revocation), authorized operators (`system_admin`, `super_admin`, `responder`) are permitted to sign off and execute tasks even if created by them, avoiding operational deadlocks during active incidents.
+- **Analyst Zero-Authority Rule**: Analysts (`analyst` role) have **zero write, assignment, or sign-off authority**. They are read-only viewers who can investigate threats and view plans, but cannot draft tasks, modify tasks, or authorize remediation execution.
 - **Tier 3 Break-Glass Separation**: For destructive actions (e.g. credential revocation, fleet reboot), strict dual-authorization is mandatory: an administrator cannot approve their own Tier 3 request, and two distinct administrators must independently sign off.
 
 ---
 
-## 3.1 Remediation Task Management & UI Block Architecture
+## 3.1 Remediation Task Board & Operational Workflow
 
-The **Task Board** (`/dashboard/tasks`) coordinates the end-to-end lifecycle of security remediation tasks from analyst discovery to signed endpoint execution.
+The **Task Board** (`/dashboard/tasks`) coordinates the end-to-end lifecycle of security remediation tasks from discovery to cryptographically signed endpoint execution.
 
-### The Requester vs. Approver Lifecycle (Governance Rules)
-- **Who can Draft Tasks?**: Any operational user or analyst (`analyst`, `responder`, `system_admin`, `super_admin`) can draft custom or AI-suggested remediation tasks.
-- **Who can Approve Tasks?**: Only authorized administrators and responders (`system_admin`, `super_admin`, `responder`). **Analysts cannot approve tasks under any circumstances.**
-- **Admin Self-Approval for Containment (Tier 1 & 2)**: To ensure immediate incident response, System Administrators can approve and dispatch Tier 1 and Tier 2 tasks they drafted themselves without requiring peer hand-offs.
-- **Tier 3 Dual-Approval Enforcement**: For high-impact Tier 3 break-glass tasks, self-approval is rejected (`Separation of Duties Violation (403)`), requiring a second distinct administrator to sign off.
+### The 4-Stage Task Pipeline & Workflow
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Analyst as SOC Analyst (Requester)
+    actor Operator as Responder / Admin
     participant Board as Task Board (/dashboard/tasks)
     participant DB as PostgreSQL
-    actor Admin as SOC Lead / Admin (Approver)
     participant Agent as Endpoint Agent Daemon
 
-    Analyst->>Board: Draft New Remediation Task (e.g. Isolate FIN-WS-042)
-    Board->>DB: INSERT INTO mitigation_tasks (status='pending', requested_by=Analyst)
+    Operator->>Board: Draft & Assign Task (Title, Tier 1-3, Assignee, Plan)
+    Board->>DB: INSERT INTO mitigation_tasks (status='pending')
     DB-->>Board: Lands in "Pending Authorization" lane
-    Admin->>Board: Clicks "Sign Off Now"
-    Admin->>Board: Reviews Blast Radius & AI Confidence -> Clicks "Approve & Execute"
-    Board->>DB: UPDATE approval_tokens (status='approved', approved_by=Admin)
-    DB-->>Board: Moves to "Authorized & Queued" lane
-    Admin->>Board: Clicks "Dispatch to Agent"
+    Operator->>Board: Opens "Sign Off Now" Modal
+    Note over Operator,Board: Tier 1 & 2: Self-approval permitted<br/>Tier 3: Dual-Admin SoD strictly enforced
+    Operator->>DB: UPDATE approval_tokens (status='approved')
+    DB-->>Board: Transitions to "Authorized & Queued" lane
+    Operator->>Board: Clicks "Dispatch to Agent"
     Board->>DB: Status transitions to "Executing" (in_progress)
-    Board->>Agent: RSA-2048 Signed Command Dispatched
-    Agent-->>Board: Pre-flight Snapshot Verified -> Command Executed -> Result Signed
+    Board->>Agent: RSA-2048 Signed Command Dispatched over mTLS
+    Agent-->>Board: Pre-flight Snapshot -> Command Executed -> Result Signed
     Board->>DB: Status transitions to "Executed & Verified" (completed)
+    Note over Board,DB: Fail-safe Rollback: Unreachable agents automatically revert task to "Approved"
 ```
 
----
+#### Who Can Do What? (Operational Matrix)
 
-### Detailed Breakdown of Every Task Module Block
-
-#### 1. Kanban Board Lanes (Operational Lifecycle)
-| Lane | State | Description & Purpose |
-| :--- | :--- | :--- |
-| **Pending Authorization** | `pending` | Newly created tasks requiring governance approval before any agent command can be dispatched. Non-approver analysts can inspect, edit, or delete tasks here. |
-| **Authorized & Queued** | `approved` | Tasks that have successfully passed human sign-off with a valid cryptographic approval token. Ready for the SOC team to dispatch to the targeted endpoint. |
-| **Executing** | `in_progress` | Active execution phase. Shows live spinners and progress indicators while the agent daemon creates a safety snapshot and runs the remediation script. |
-| **Executed & Verified** | `completed` | Finished actions. Confirmed and recorded in the tamper-evident hash-chain audit ledger with terminal logs and endpoint return codes. |
+| Operational Stage | Who Can Perform | Who Is Blocked | Governance Rules & Behavior |
+| :--- | :--- | :--- | :--- |
+| **1. Draft & Assign Tasks** | `responder`, `system_admin`, `super_admin` | 🟢 `analyst` *(Read-only)* | Quick Draft bar & creation modal allow setting Title, Horizon, Autonomy Tier, and Assignee. Analyst sees no creation controls. |
+| **2. Edit, Re-assign & Delete** | `responder`, `system_admin`, `super_admin` | 🟢 `analyst` *(Read-only)* | In the Task Detail Drawer, operators can change Autonomy Tier, re-assign operator, change target mitigation plan, or delete tasks. Analysts see static read-only text. |
+| **3. Authorize (Tier 1 & 2)** | `responder`, `system_admin`, `super_admin` | 🟢 `analyst` *(Read-only)* | Covers low-risk reversible and containment actions (e.g. host quarantine, session revocation). Self-approval is permitted for prompt containment. |
+| **4. Authorize (Tier 3 Break-Glass)** | `system_admin`, `super_admin` | 🔵 `responder`<br>🟢 `analyst` | High-impact actions (e.g. credential rotation, firewall wipe). **Strict Separation of Duties**: The requester cannot self-approve; dual distinct admin sign-offs are mandatory. |
+| **5. Dispatch to Endpoint** | `responder`, `system_admin`, `super_admin` | 🟢 `analyst` *(Read-only)* | Cryptographically signs command payload with RSA-2048 and dispatches to endpoint daemon. If execution fails or agent is unreachable, status rolls back safely to `approved`. |
 
 ---
 
-#### 2. Task Card & Detail Drawer Component Blocks
+#### Kanban Board State Machine
 
-| Block Name | UI Element | Operational Necessity & Why It Exists |
+| Lane | State | Description |
 | :--- | :--- | :--- |
-| **Status Block** | Badge (`Pending`, `Approved`, `Executing`, `Executed`) | Provides instantaneous visibility into where the task sits in the governance pipeline, preventing premature or duplicate action attempts. |
-| **Horizon Block** | Horizon Tag (`Immediate`, `Short-term`, `Long-term`) | Categorizes remediation urgency: <br>• **Immediate**: Emergency triage & active containment (e.g. isolate host).<br>• **Short-term**: Vulnerability remediation (e.g. deploy patch).<br>• **Long-term**: Architectural posture hardening (e.g. firewall microsegmentation). |
-| **Autonomy Tier Block** | Interactive Selector (`Tier 1`, `Tier 2`, `Tier 3`) | **Critical Governance Gate**: Dictates whether this task can run autonomously (Tier 1), requires one authorized human approver (Tier 2), or mandates dual SuperAdmin sign-off (Tier 3). Can be re-classified dynamically by authorized operators. |
-| **Blast Radius Block** | Text Tag (`Host Scope`, `Subnet Scope`, `Global`) | Defines the expected blast radius and network impact zone. Informs the approver of potential operational disruption prior to approving containment. |
-| **Description & Mitigation Scope** | Text Block | Detailed instructions and rationale explaining why the action was recommended by the AI advisor or SOC analyst. |
-| **Incident Context & Plan Switcher** | Incident Box & Dropdown | Explicitly anchors the task to its parent security incident (e.g. `INC-4223`) and allows analysts to re-assign tasks between incident mitigation plans dynamically. |
-| **Governance Sign-Off History** | Token List & Audit Table | **Regulatory & Audit Evidence**: Displays the unique UUID token, active requester, verified approver, approval timestamp, and rejection reason if denied. Guarantees non-repudiation. |
-| **Agent Dispatch Logs** | Terminal Console Output | Real-time CLI standard out / standard error captured directly from the endpoint daemon (e.g., PowerShell or Linux bash execution output) proving that the remediation command actually executed. |
-| **Dispatch to Agent** | Primary CTA Button (Golden Theme) | Cryptographically signs the task payload and transmits it over mTLS to the endpoint daemon with automatic fallback and snapshot validation. |
-| **Delete Task** | Destructive Action Button (Crimson) | Allows analysts to prune obsolete, rejected, or duplicate remediation tasks with foreign-key cascade cleanup. |
+| **Pending Authorization** | `pending` | Newly created tasks awaiting governance approval. Authorized operators click **Sign Off** to review blast radius, TTL, and AI confidence. |
+| **Authorized & Queued** | `approved` | Tasks sealed with a cryptographic approval token. Qualified operators click **Dispatch to Agent** to execute on endpoints. |
+| **Executing** | `in_progress` | Active execution phase showing live spinners while the agent creates a safety snapshot and runs the remediation script. |
+| **Executed & Audited** | `completed` | Completed actions confirmed with terminal output, exit codes, and recorded in the tamper-evident hash-chain audit ledger. |
 
 ---
 
@@ -223,14 +238,14 @@ sequenceDiagram
 
 ShieldDesk is built from the ground up for strict multi-tenancy. Every database query, fleet command, and AI context prompt is strictly bound to the authenticated caller's tenant:
 
-### Active Operator Personas & Role Hierarchy (`src/lib/permissions.ts`)
-The top navigation bar provides a live role-persona switcher (backed by `db/migrations/phase_l_rbac_roles.sql`) allowing operators to quickly evaluate system behavior across distinct privilege tiers:
-- **`system_admin` (System Admin)**: Global platform administrator with cross-tenant visibility (`VIEW_CROSS_TENANT`), user management, emergency fleet kill-switch rights, and self-approval authority for Tier 1 & Tier 2 containment tasks.
-- **`super_admin` (Super Admin)**: Tenant organization administrator with Tier 3 dual-approval authority (`approve.tier3`) and break-glass privileges.
-- **`responder` (Responder)**: Incident response engineer; signs off on Tier 1 and Tier 2 containment tasks (`approve.tier1`, `approve.tier2`) and dispatches containment commands to enrolled agents.
-- **`analyst` (Analyst)**: Security operations analyst; drafts mitigation tasks (`task.assign`), investigates incidents, and simulates attack graphs. **Strictly restricted from approving any remediation actions (`approve.*` permissions revoked).**
-- **`viewer` (Viewer)**: Read-only stakeholder; cannot approve tokens, cannot draft tasks (rejected with `403 Forbidden`), and cannot execute state-changing actions.
-- **`user` (Standard User)**: Basic tenant operator with incident and CVE read/investigation permissions; zero approval rights.
+### 4-Role RBAC Model (`src/lib/permissions.ts`)
+
+| Role | Classification | Permissions & Authority | Restrictions |
+| :--- | :--- | :--- | :--- |
+| 🔴 **`system_admin`** | **Platform Administrator** | `VIEW_CROSS_TENANT`, `MANAGE_USERS`, `incident.read`, `incident.investigate`, `cve.read`, `incident.mitigate`, `task.assign`, `approve.tier1`, `approve.tier2`, `approve.tier3` | Full control across all tenants; highest authority. |
+| 🟠 **`super_admin`** | **Company Administrator** | `MANAGE_USERS`, `incident.read`, `incident.investigate`, `cve.read`, `incident.mitigate`, `task.assign`, `approve.tier1`, `approve.tier2`, `approve.tier3` | Full company-level control; tenant-bound (no cross-tenant view). |
+| 🔵 **`responder`** | **Incident Responder** | `incident.read`, `incident.investigate`, `cve.read`, `incident.mitigate`, `task.assign`, `approve.tier1`, `approve.tier2` | Can contain active threats and dispatch tasks; **❌ Cannot approve Tier 3 break-glass**. |
+| 🟢 **`analyst`** | **SOC Analyst (Read-Only)** | `incident.read`, `incident.investigate`, `cve.read` | **Viewer only**: ❌ Cannot execute mitigations, ❌ Cannot assign tasks, ❌ Cannot edit/delete tasks, ❌ Cannot approve, ❌ Cannot dispatch. |
 
 ### Anti-Enumeration Defense
 Probing resources (incidents, plans, agent telemetry) belonging to another tenant returns `404 Not Found` rather than `403 Forbidden`, denying attackers confirmation of resource existence across tenant boundaries.
@@ -436,6 +451,11 @@ All routes reside under `src/app/api/` and enforce strict session authentication
 | `GET`, `POST` | `/api/threats` | Authenticated tenant user | BFF gateway delegating to Go Threat Engine (:8003) for authoritative rules, 3σ baselines, and containment |
 | `POST` | `/api/ingest/webhooks` | HMAC / API Key | Validates signature, scrubs PII/secrets, and normalizes alerts into incidents |
 | `GET` | `/api/compliance` | Authenticated tenant user | Generates SOC 2, ISO 27001, and NIST CSF compliance posture reports |
+| `POST` | `/api/compliance/scan` | `compliance.scan` | Triggers multi-framework automated control scans (ISO 27001, SOC 2, NIST CSF, HIPAA, PCI-DSS) |
+| `POST` | `/api/compliance/verify` | Authenticated tenant user | Cryptographically validates control evidence Merkle hash-chain attestations |
+| `GET`, `POST` | `/api/compliance/control/[id]` | `compliance.read/audit` | Retrieves control evidence bundles, automated test telemetry, and auditor sign-offs |
+| `GET`, `POST` | `/api/compliance/policies` | `admin`, `auditor` | Manages organizational security policy vault entries and versioned signature hashes |
+| `GET`, `POST` | `/api/compliance/report` | Authenticated tenant user | Generates audit-ready compliance posture reports (JSON, CSV, PDF) |
 | `GET` | `/api/reports/scorecard` | Authenticated tenant user | Aggregates executive security risk scorecards |
 | `POST` | `/api/auth/login` | Public (Rate-limited) | Authenticates credentials, verifies MFA TOTP, sets secure session cookie |
 | `POST` | `/api/auth/signup` | Public (Rate-limited) | Provisions a new tenant organization and primary administrator |
@@ -501,6 +521,7 @@ ShieldDesk persists state across a resilient PostgreSQL schema designed with Row
 - **`phase_j_agent_license_activation.sql`**: Hardware fingerprint and license entitlement binding tables.
 - **`phase_k_yara_malware_rules.sql`**: YARA and Sigma detection rule definitions and tenant subscriptions.
 - **`phase_l_rbac_roles.sql`**: Unified 6-tier RBAC role definitions and fine-grained permissions matrix.
+- **`phase_l_compliance_vault.sql`**: Continuous multi-framework control catalog, tenant scan histories, evidence bundles, and cryptographic hash-chain verification logs.
 
 ---
 
@@ -580,7 +601,7 @@ cd services/threat && go run .             # Go Threat Engine (:8003)
 ShieldDesk maintains rigorous automated test suites across both TypeScript/Node.js (covering Phases A through L) and Go:
 
 ```bash
-# 1. Run TypeScript Test Suite (49 test suites across all phases)
+# 1. Run TypeScript Test Suite (380 tests across 54 test suites)
 npm test
 
 # 2. Run Go Threat Engine Test Suite (6 tests, 100% passing)
@@ -593,6 +614,9 @@ npx tsc --noEmit
 
 ### Test Suite Highlights:
 - `services/threat/http_server_test.go` (6 tests): Health endpoint validation, tenant-isolated state containment, 60-second sliding-window anomaly calculation, HTTP containment block/unblock, cross-tenant isolation enforcement (`TestIsIPBlockedAndAlerts`), and detection engine pipeline.
+- `tests/compliance-api.test.ts` (6 tests): End-to-end multi-framework scan triggering, control evidence attachment, auditor sign-off, and policy vault operations.
+- `tests/compliance-export-integrity.test.ts` (5 tests): Cryptographic Merkle tree verification, SHA-256 tamper detection on exported evidence bundles, and RFC-4180 CSV compliance.
+- `tests/compliance-frameworks.test.ts` (4 tests): Multi-framework mapping validation across ISO 27001:2022, SOC 2 Type II, NIST CSF 2.0, HIPAA Security Rule, and PCI-DSS v4.0.
 - `tests/trivy.test.ts` (5 tests): Deterministic binary discovery, CWE-78 CLI flag injection prevention, nonexistent filesystem path guards, live filesystem scan execution, and container `/app` path normalization.
 - `tests/agent-remediation-api.test.ts` (6 tests): Remote agent command queueing, pre-flight snapshot requirements, kill-switch locking, and blast-radius throttle downgrade.
 - `tests/approval-tokens.test.ts` (7 tests): Tier 2 single approval, Tier 3 dual named SuperAdmin approval, anti-replay, and DB Separation of Duties constraints.
@@ -619,11 +643,15 @@ npx tsc --noEmit
 ```text
 shielddesk/
 ├── docs/
-│   ├── screenshots/               # Production UI walkthrough captures (Workspace & Scorecard)
+│   ├── screenshots/               # 9 Production UI walkthrough captures (Workspace, Scorecard, Matrix, etc.)
 │   ├── launch-gates/              # Public launch readiness gate documents (Pilot, OS matrix, Legal)
 │   ├── GAP_ANALYSIS.md            # Comprehensive spec-to-code gap matrix across Phases A–I
 │   ├── PRODUCTION_READINESS_AUDIT.md # Evidence-based readiness evaluation and capability statuses
 │   └── PRODUCTION_LAUNCH_CHECKLIST.md # Gate completion status tracking
+├── public/
+│   ├── favicon/                   # Multi-platform favicon suite (ICO, 16/32 PNG, Apple, Android, Manifest)
+│   ├── screenshots/               # High-resolution production UI captures
+│   └── shielddesk-logo.png        # Official ShieldDesk 3D metallic shield brand emblem
 ├── src/
 │   ├── app/
 │   │   ├── api/
@@ -642,7 +670,7 @@ shielddesk/
 │   │   │   ├── scim/              # RFC 7644 SCIM 2.0 enterprise identity provisioning (/v2/Users, /v2/Groups)
 │   │   │   ├── v1/                # Advanced engines (twin, decisions, remediation, compliance, ai)
 │   │   │   ├── ingest/            # Authenticated alert webhook ingest
-│   │   │   ├── compliance/        # Compliance posture reporting (SOC2, ISO27001)
+│   │   │   ├── compliance/        # Continuous audit routes (/control/[id], /policies, /report, /scan, /verify)
 │   │   │   └── reports/           # Executive risk scorecards
 │   │   ├── dashboard/             # SOC operational interfaces
 │   │   │   ├── tasks/             # Kanban board with tier-gated approvals
@@ -650,12 +678,13 @@ shielddesk/
 │   │   │   ├── fleet/             # Endpoint agent fleet manager
 │   │   │   ├── scanner/           # Live Trivy vulnerability & secret leak posture
 │   │   │   ├── threats/           # Threat detection & rule configuration
-│   │   │   ├── compliance/        # Regulatory framework scorecards
+│   │   │   ├── compliance/        # Multi-framework compliance matrix & audit vault
 │   │   │   └── risk-scorecard/    # Executive risk metrics & posture index
 │   │   ├── login/                 # Public login, tenant registration, & MFA gate (chat widget suppressed)
 │   │   ├── onboarding/            # 4-step guided organization & agent onboarding
 │   │   └── page.tsx               # Root SOC overview console (Incident Workspace)
-│   ├── components/                # React UI components (AI chat, governance, navigation)
+│   ├── components/                # React UI components (AI chat, governance, compliance modals, navigation)
+│   │   └── compliance/            # FrameworkSelector, ComplianceScanBanner, Evidence & Policy modals
 │   ├── proxy.ts                   # Edge security middleware: header spoofing defense & route guard
 │   └── lib/
 │       ├── auth/                  # HMAC session tokens, scrypt passwords, Supabase SSR, TOTP
@@ -666,7 +695,7 @@ shielddesk/
 │       ├── security-twin/         # PostgreSQL CTE graph queries & sync pipeline
 │       ├── decision-engine/       # Evidence Engine with SHA-256 hashes & decision records
 │       ├── verification-engine/   # Deterministic host verification & continuous recheck schedules
-│       ├── compliance/            # Merkle tree evidence vault & RFC-4180 export generator
+│       ├── compliance/            # Framework mappings (ISO/SOC2/NIST/HIPAA), scanners, verifiers, Merkle vaults
 │       ├── ai/                    # LLM Gateway, prompt registry, evaluation lab benchmark suite
 │       ├── gitleaks.ts            # Gitleaks secret scanner execution engine & parser
 │       ├── trivy.ts               # Aqua Trivy vulnerability scanner execution engine & parser
@@ -692,9 +721,9 @@ shielddesk/
 │   └── llm-gateway/               # Prompt versioning & AI evaluation harness
 ├── db/
 │   ├── schema.sql                 # Core DDL: 20 tables, constraints, RLS policies
-│   ├── migrations/                # 13 Phase migrations (launch_readiness_001 to phase_l_rbac_roles)
+│   ├── migrations/                # 14 Phase migrations (launch_readiness_001 to phase_l_compliance_vault)
 │   └── seed.sql                   # Endpoint agent, incident, and audit fixtures
-├── tests/                         # Node.js native test harness (49 test suites covering phases A–L)
+├── tests/                         # Node.js native test harness (380 tests across 54 test suites)
 ├── sentry.client.config.ts        # Client Sentry error and performance monitoring
 ├── sentry.server.config.ts        # Server Sentry error tracking
 ├── sentry.edge.config.ts          # Edge Sentry error tracking

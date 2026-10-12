@@ -438,7 +438,7 @@ export default function SOCDashboardPage() {
                 <CheckCircle className="h-6 w-6 text-[var(--sd-pine-bright)]/40 mx-auto mb-2" />
                 <h4 className="text-xs font-semibold text-[var(--sd-pine)]">Zero Incidents</h4>
                 <p className="text-[11px] text-[var(--sd-text-muted)] mt-1 leading-relaxed">
-                  No active incidents for <span className="font-mono text-[var(--sd-pine)] font-medium">{activeUser.tenantId}</span>.
+                  No active incidents for <span className="font-mono text-[var(--sd-pine)] font-medium">{activeUser.tenantName || activeUser.tenantId}</span>.
                 </p>
               </div>
             ) : (
