@@ -15,6 +15,7 @@ export interface PlanSummaryRecord {
   version: number;
   summary: string;
   task_count: number;
+  completed_task_count: number;
   created_at: string;
 }
 
@@ -31,6 +32,7 @@ const FALLBACK_PLANS: Record<string, PlanSummaryRecord[]> = {
       summary:
         "Emergency containment protocol for PAN-OS GlobalProtect command injection. Isolates VPN gateway, revokes active sessions, and applies hotfix hotfix-panos-10.2.9-h1.",
       task_count: 5,
+      completed_task_count: 2,
       created_at: "2026-09-23T20:00:00Z",
     },
     {
@@ -44,6 +46,7 @@ const FALLBACK_PLANS: Record<string, PlanSummaryRecord[]> = {
       summary:
         "Lateral movement prevention and local admin credential rotation following anomalous LSASS memory access detection.",
       task_count: 4,
+      completed_task_count: 0,
       created_at: "2026-09-23T19:15:00Z",
     },
     {
@@ -57,6 +60,7 @@ const FALLBACK_PLANS: Record<string, PlanSummaryRecord[]> = {
       summary:
         "Phishing triage and payload detonation analysis. Quarantined malicious macro template and blocked domain telemetry at firewall perimeter.",
       task_count: 3,
+      completed_task_count: 3,
       created_at: "2026-09-23T18:30:00Z",
     },
   ],
@@ -75,7 +79,8 @@ export async function GET(req: NextRequest) {
       WITH plan_summaries AS (
         SELECT p.id, p.incident_id, p.tenant_id, p.version, p.status, p.summary, p.created_at,
                i.incident_code, i.title as incident_title, i.severity as incident_severity,
-               COUNT(t.id)::int as task_count
+               COUNT(t.id)::int as task_count,
+               COUNT(CASE WHEN t.status = 'completed' THEN 1 END)::int as completed_task_count
         FROM mitigation_plans p
         LEFT JOIN incidents i ON i.id = p.incident_id
         LEFT JOIN mitigation_tasks t ON t.plan_id = p.id
@@ -105,7 +110,7 @@ export async function GET(req: NextRequest) {
         FROM plan_summaries
       )
       SELECT id, incident_id, tenant_id, version, status, summary, created_at,
-             incident_code, incident_title, incident_severity, task_count
+             incident_code, incident_title, incident_severity, task_count, completed_task_count
       FROM ranked_plans
       WHERE incident_plan_rank = 1
       ORDER BY created_at DESC

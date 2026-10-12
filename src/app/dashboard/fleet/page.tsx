@@ -21,11 +21,7 @@ import {
   Radio,
   Wifi,
   Pause,
-  Key,
   Plus,
-  Copy,
-  ClipboardCheck,
-  Plug,
   MonitorDot,
   ExternalLink,
   Trash2,
@@ -33,6 +29,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ConnectEndpointModal } from "@/components/fleet/ConnectEndpointModal";
 
 interface CommandLogEntry {
   id: string;
@@ -43,12 +40,6 @@ interface CommandLogEntry {
   output: string;
   agentId?: string;
   executedAt?: string;
-}
-
-interface EnrollResult {
-  token: string;
-  expiresAt: string;
-  tenantId: string;
 }
 
 // Maps each command value to its required autonomy tier
@@ -103,14 +94,8 @@ export default function FleetPage() {
     message: string;
   } | null>(null);
 
-  // Enrollment panel state
-  const [showEnrollPanel, setShowEnrollPanel] = useState(false);
-  const [enrollLabel, setEnrollLabel] = useState("");
-  const [enrollExpiry, setEnrollExpiry] = useState("24");
-  const [enrollResult, setEnrollResult] = useState<EnrollResult | null>(null);
-  const [enrollLoading, setEnrollLoading] = useState(false);
-  const [enrollError, setEnrollError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
+  // Connect endpoint modal state
+  const [showConnectModal, setShowConnectModal] = useState(false);
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -524,59 +509,10 @@ export default function FleetPage() {
     }
   };
 
-  // Generate enrollment token
-  const handleGenerateToken = async () => {
-    setEnrollLoading(true);
-    setEnrollError(null);
-    setEnrollResult(null);
-    try {
-      const res = await fetch("/api/fleet/enrollment-tokens", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-ShieldDesk-User": activeUserId,
-        },
-        body: JSON.stringify({
-          label: enrollLabel || "Manual enrollment",
-          expiresInHours: Number(enrollExpiry) || 24,
-          maxUses: 1,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setEnrollResult({
-          token: data.token,
-          expiresAt: data.expiresAt,
-          tenantId: data.tenantId,
-        });
-      } else {
-        setEnrollError(data.error || "Failed to generate token");
-      }
-    } catch (err) {
-      setEnrollError(err instanceof Error ? err.message : "Network error");
-    } finally {
-      setEnrollLoading(false);
-    }
-  };
-
-  const handleCopy = async (text: string, type: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(type);
-    setTimeout(() => setCopied(null), 2000);
-  };
-
   const serverURL =
     typeof window !== "undefined"
       ? window.location.origin
       : "http://localhost:3000";
-
-  const goCommand = enrollResult
-    ? `.\\shielddesk-agent.exe -token ${enrollResult.token} -control-url ${serverURL}`
-    : "";
-
-  const nodeCommand = enrollResult
-    ? `node agent/agent-daemon.js --token ${enrollResult.token} --control-url ${serverURL}`
-    : "";
 
   const filteredLogs = commandLogs.filter((log) => {
     if (filterAgentId === "all") return true;
@@ -638,22 +574,19 @@ export default function FleetPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Connect Endpoint Button */}
+            {/* Connect Endpoints Button */}
             <button
-              onClick={() => {
-                setShowEnrollPanel((v) => !v);
-                setEnrollResult(null);
-                setEnrollError(null);
-              }}
+              onClick={() => setShowConnectModal(true)}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-2 rounded-full border text-[12px] font-medium transition cursor-pointer shadow-xs",
-                showEnrollPanel
+                showConnectModal
                   ? "bg-[var(--sd-pine)] text-[var(--sd-on-accent)] border-[var(--sd-pine)]"
                   : "sd-surface border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text)]"
               )}
+              title="Connect a real endpoint to the ShieldDesk fleet"
             >
               <Plus className="h-3 w-3" />
-              <span>Connect Endpoint</span>
+              <span>Connect Endpoints</span>
             </button>
 
             {/* Toggle Pause / Resume Live Stream */}
@@ -713,170 +646,18 @@ export default function FleetPage() {
           </div>
         </div>
 
-        {/* ── Connect Endpoint Enrollment Panel ── */}
-        {showEnrollPanel && (
-          <div className="rounded-2xl border border-[var(--sd-pine)]/40 bg-[var(--sd-panel-raised)] p-6 space-y-5 shadow-md">
-            <div className="flex items-center gap-2 mb-1">
-              <Plug className="h-4 w-4 text-[var(--sd-pine)]" />
-              <h2 className="text-[14px] font-medium text-[var(--sd-pine)] uppercase tracking-wider font-mono">
-                Connect a Real Endpoint
-              </h2>
-            </div>
-            <p className="text-[13px] text-[var(--sd-text-muted)] leading-relaxed max-w-2xl">
-              Generate a one-time enrollment token. Run the ShieldDesk agent
-              binary on your target machine with this token — it will self-register
-              and start reporting live telemetry immediately.
-            </p>
-
-            {!enrollResult ? (
-              <div className="flex flex-wrap gap-3 items-end">
-                <div className="flex-1 min-w-[180px]">
-                  <label className="text-[11px] font-medium text-[var(--sd-text-muted)] block mb-1.5">
-                    Label (optional)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. My Laptop, Server-01"
-                    value={enrollLabel}
-                    onChange={(e) => setEnrollLabel(e.target.value)}
-                    className="sd-input w-full bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-[13px] text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
-                  />
-                </div>
-                <div className="w-36">
-                  <label className="text-[11px] font-medium text-[var(--sd-text-muted)] block mb-1.5">
-                    Expires in
-                  </label>
-                  <select
-                    value={enrollExpiry}
-                    onChange={(e) => setEnrollExpiry(e.target.value)}
-                    className="sd-input w-full bg-[var(--sd-bg)] border border-[var(--sd-border)] rounded-xl px-3.5 py-2 text-[13px] text-[var(--sd-text)] focus:outline-none focus:border-[var(--sd-pine)] font-mono"
-                  >
-                    <option value="1">1 hour</option>
-                    <option value="6">6 hours</option>
-                    <option value="24">24 hours</option>
-                    <option value="72">72 hours</option>
-                  </select>
-                </div>
-                <button
-                  onClick={handleGenerateToken}
-                  disabled={enrollLoading}
-                  className="sd-button sd-button-primary px-5 py-2 rounded-xl text-[13px] font-medium flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  <Key className="h-3.5 w-3.5" />
-                  {enrollLoading ? "Generating..." : "Generate Token"}
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 text-emerald-400 text-[13px] font-mono">
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span>
-                    Token generated — expires{" "}
-                    {new Date(enrollResult.expiresAt).toLocaleString()}
-                  </span>
-                </div>
-
-                {/* Token display */}
-                <div className="rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] p-4 space-y-3">
-                  <div>
-                    <p className="text-[11px] font-mono text-[var(--sd-text-muted)] mb-1.5 uppercase tracking-wider">
-                      Enrollment Token (shown once)
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <code className="flex-1 text-[12px] font-mono text-[var(--sd-pine)] bg-[var(--sd-panel-raised)] px-3 py-2 rounded-lg border border-[var(--sd-border)] break-all select-all">
-                        {enrollResult.token}
-                      </code>
-                      <button
-                        onClick={() => handleCopy(enrollResult.token, "token")}
-                        className="p-2 rounded-lg hover:bg-[var(--sd-panel-hover)] border border-[var(--sd-border)] transition cursor-pointer"
-                        title="Copy token"
-                      >
-                        {copied === "token" ? (
-                          <ClipboardCheck className="h-4 w-4 text-emerald-400" />
-                        ) : (
-                          <Copy className="h-4 w-4 text-[var(--sd-text-muted)]" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Option 1: Native Go Agent Binary (Primary / Recommended) */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[11px] font-mono text-[var(--sd-text-muted)] uppercase tracking-wider font-semibold">
-                        Option 1: Native Go Agent (Recommended & Production-Grade)
-                      </p>
-                      <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                        Go Native Binary
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <code className="flex-1 text-[11px] font-mono text-emerald-300 bg-[var(--sd-panel-raised)] px-3 py-2 rounded-lg border border-[var(--sd-border)] break-all select-all whitespace-pre-wrap">
-                        {goCommand}
-                      </code>
-                      <button
-                        onClick={() => handleCopy(goCommand, "go-cmd")}
-                        className="p-2 rounded-lg hover:bg-[var(--sd-panel-hover)] border border-[var(--sd-border)] transition cursor-pointer mt-0.5"
-                        title="Copy Go command"
-                      >
-                        {copied === "go-cmd" ? (
-                          <ClipboardCheck className="h-4 w-4 text-emerald-400" />
-                        ) : (
-                          <Copy className="h-4 w-4 text-[var(--sd-text-muted)]" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Option 2: Node.js Agent Daemon (Fallback) */}
-                  <div className="space-y-1.5 pt-2 border-t border-[var(--sd-border)]">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[11px] font-mono text-[var(--sd-text-muted)] uppercase tracking-wider">
-                        Option 2: Node.js Agent Daemon (Dev / Script Fallback)
-                      </p>
-                      <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
-                        node agent/agent-daemon.js
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <code className="flex-1 text-[11px] font-mono text-amber-300 bg-[var(--sd-panel-raised)] px-3 py-2 rounded-lg border border-[var(--sd-border)] break-all select-all whitespace-pre-wrap">
-                        {nodeCommand}
-                      </code>
-                      <button
-                        onClick={() => handleCopy(nodeCommand, "node-cmd")}
-                        className="p-2 rounded-lg hover:bg-[var(--sd-panel-hover)] border border-[var(--sd-border)] transition cursor-pointer mt-0.5"
-                        title="Copy Node command"
-                      >
-                        {copied === "node-cmd" ? (
-                          <ClipboardCheck className="h-4 w-4 text-emerald-400" />
-                        ) : (
-                          <Copy className="h-4 w-4 text-[var(--sd-text-muted)]" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setEnrollResult(null);
-                    setEnrollLabel("");
-                  }}
-                  className="text-[12px] text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] underline font-mono cursor-pointer transition"
-                >
-                  Generate another token
-                </button>
-              </div>
-            )}
-
-            {enrollError && (
-              <div className="flex items-center gap-2 text-red-400 text-[12px] font-mono bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                <span>{enrollError}</span>
-              </div>
-            )}
-          </div>
-        )}
+        {/* ── Connect Endpoint Modal ── */}
+        <ConnectEndpointModal
+          isOpen={showConnectModal}
+          onClose={() => setShowConnectModal(false)}
+          activeUserId={activeUserId}
+          serverUrl={serverURL}
+          existingAgents={agents}
+          onEndpointConnected={() => {
+            fetchFleet(true);
+            fetchLogs();
+          }}
+        />
 
         {/* Fleet KPI Banner */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -992,7 +773,7 @@ export default function FleetPage() {
               </p>
             </div>
             <button
-              onClick={() => setShowEnrollPanel(true)}
+              onClick={() => setShowConnectModal(true)}
               className="sd-button sd-button-primary flex items-center gap-2 px-5 py-2.5 rounded-xl text-[13px] font-medium cursor-pointer shadow-xs"
             >
               <Plus className="h-4 w-4" />

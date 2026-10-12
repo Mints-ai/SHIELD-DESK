@@ -83,7 +83,15 @@ describe("Trivy Vulnerability Scanner Suite", () => {
         assert.ok(first.remediation, "Finding must include actionable remediation");
       }
     } catch (err: any) {
-      if (err.message?.includes("DB") || err.message?.includes("download") || err.message?.includes("ETIMEDOUT")) {
+      if (
+        err.message?.includes("DB") ||
+        err.message?.includes("download") ||
+        err.message?.includes("ETIMEDOUT") ||
+        err.message?.includes("timed out") ||
+        err.message?.includes("timeout") ||
+        err.message?.includes("ECONNRESET") ||
+        err.message?.includes("rate limit")
+      ) {
         t.skip(`Skipping live scan test due to upstream DB reachability: ${err.message}`);
         return;
       }
@@ -109,7 +117,15 @@ describe("Trivy Vulnerability Scanner Suite", () => {
       assert.ok(result, "Scanning /app should safely resolve without throwing");
       assert.ok(Array.isArray(result.findings), "Findings array should be returned");
     } catch (err: any) {
-      if (err.message?.includes("DB") || err.message?.includes("download") || err.message?.includes("ETIMEDOUT")) {
+      if (
+        err.message?.includes("DB") ||
+        err.message?.includes("download") ||
+        err.message?.includes("ETIMEDOUT") ||
+        err.message?.includes("timed out") ||
+        err.message?.includes("timeout") ||
+        err.message?.includes("ECONNRESET") ||
+        err.message?.includes("rate limit")
+      ) {
         t.skip(`Skipping /app normalization live scan due to upstream DB reachability: ${err.message}`);
         return;
       }
