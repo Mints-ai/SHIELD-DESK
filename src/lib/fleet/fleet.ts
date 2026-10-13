@@ -200,6 +200,17 @@ function computeHash(prevHash: string, payload: Record<string, unknown>, actorId
 /**
  * Lists endpoint agents for the caller with strict tenant boundary.
  */
+export function removeMockEndpointAgent(agentId: string, tenantId?: string): boolean {
+  const idx = MOCK_ENDPOINT_AGENTS.findIndex(
+    (a) => (a.id === agentId || a.hostname === agentId) && (!tenantId || a.tenant_id === tenantId)
+  );
+  if (idx !== -1) {
+    MOCK_ENDPOINT_AGENTS.splice(idx, 1);
+    return true;
+  }
+  return false;
+}
+
 export async function listEndpointAgents(caller: SessionUser): Promise<EndpointAgentRecord[]> {
   const canCrossTenant =
     canAccess(caller.role, "VIEW_CROSS_TENANT") ||
@@ -207,46 +218,12 @@ export async function listEndpointAgents(caller: SessionUser): Promise<EndpointA
     caller.role === "super_admin";
 
   try {
-    const sql = canCrossTenant
-      ? `SELECT * FROM endpoint_agents ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`
-      : `SELECT * FROM endpoint_agents WHERE tenant_id = $1 ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`;
-    const params = canCrossTenant ? [] : [caller.tenant_id];
-
-    const result = await query(sql, params);
-    if (result && result.rows.length > 0) {
-      return result.rows.map((row: Record<string, unknown>) => {
-        const lastSeenRaw = row.last_seen_at || row.last_heartbeat || row.created_at || new Date();
-        const lastSeenDate = new Date(lastSeenRaw as string | number | Date);
-        const createdRaw = row.created_at || new Date();
-        const createdDate = new Date(createdRaw as string | number | Date);
-        return {
-          id: String(row.id),
-          tenant_id: String(row.tenant_id),
-          hostname: String(row.hostname),
-          ip_address: String(row.ip_address || "Unknown"),
-          os_type: (row.os_type || "linux") as OsType,
-          agent_version: String(row.agent_version || "0.4.2"),
-          status: (row.status || "connected") as AgentStatus,
-          cpu_usage: Number(row.cpu_usage || 0),
-          memory_usage: Number(row.memory_usage || 0),
-          eps: Number(row.eps || 0),
-          kill_switch_active: Boolean(row.kill_switch_active),
-          safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
-          last_heartbeat: isNaN(lastSeenDate.getTime()) ? new Date().toISOString() : lastSeenDate.toISOString(),
-          created_at: isNaN(createdDate.getTime()) ? new Date().toISOString() : createdDate.toISOString(),
-        };
-      });
-    }
-  } catch {
-    // Fall back to in-memory live telemetry store
-  }
-
-  try {
     const { getLiveFleetAgents } = await import("./liveTelemetry");
-    const live = await getLiveFleetAgents(caller);
-    if (live && live.length > 0) return live;
+    // When PostgreSQL is reachable, return the exact live fleet (even if 0 rows remain after user removal)
+    // and enforce the 15-second heartbeat timeout so offline/stopped endpoints are marked 'disconnected'.
+    return await getLiveFleetAgents(caller);
   } catch {
-    // Fall back to in-memory store
+    // Database offline or test mode — fall back to in-memory store
   }
 
   return MOCK_ENDPOINT_AGENTS.filter(

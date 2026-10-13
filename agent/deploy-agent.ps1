@@ -7,22 +7,43 @@
 
 param (
     [string]$Token = "",
-    [string]$ControlPlaneUrl = "http://localhost:3000",
-    [string]$TenantId = "acme-tenant",
+    [string]$ControlPlaneUrl = "",
+    [string]$TenantId = "",
     [string]$Hostname = $env:COMPUTERNAME,
-    [string]$AgentId = ""
+    [string]$AgentId = "",
+    [switch]$Dev = $false
 )
 
 $origDir = Get-Location
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Definition }
 if (-not $scriptDir) { $scriptDir = $origDir.Path }
 
+# Safety & Parameter Validation
+if ($Dev) {
+    if (-not $ControlPlaneUrl) { $ControlPlaneUrl = "http://localhost:3000" }
+    if (-not $TenantId) { $TenantId = "acme-tenant" }
+} else {
+    if (-not $ControlPlaneUrl) {
+        Write-Error "CRITICAL: -ControlPlaneUrl is required. Specify https://your-control-plane (or pass -Dev for local lab evaluation)."
+        exit 1
+    }
+    if (-not ($ControlPlaneUrl.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase))) {
+        Write-Error "SECURITY ERROR: Control plane URL must use HTTPS in production. Plain HTTP is rejected."
+        exit 1
+    }
+    if (-not $Token -and -not $TenantId) {
+        Write-Error "CRITICAL: Either -Token (enrollment token) or -TenantId is required for installation."
+        exit 1
+    }
+}
+
+
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "     SHIELDDESK UNIVERSAL ENDPOINT AGENT (WINDOWS)        " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "[+] Enrolling Host: $Hostname"
 if ($Token) {
-    Write-Host "[+] Enrollment Token: $Token"
+    Write-Host "[+] Enrollment Token: [CONFIGURED - SECURELY REDACTED]"
 } else {
     Write-Host "[+] Tenant ID:      $TenantId"
     Write-Host "[+] Agent ID:       $AgentId"

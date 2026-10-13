@@ -26,7 +26,7 @@ function Write-Status {
 }
 
 # ---- Prerequisite checks -----------------------------------
-function Check-Prerequisites {
+function Test-Prerequisites {
     Write-Host "  Checking prerequisites..." -ForegroundColor DarkGray
     $missing = @()
     if (-not (Get-Command "python"  -ErrorAction SilentlyContinue)) { $missing += "python  (Python 3.10+)" }
@@ -96,7 +96,7 @@ function Wait-ForPort {
 }
 
 # ---- Stream all job output until Ctrl+C --------------------
-function Stream-Jobs {
+function Watch-Jobs {
     param($Jobs)
     while ($true) {
         foreach ($job in $Jobs) {
@@ -160,7 +160,7 @@ function Stop-AllServices {
 # ============================================================
 
 Write-Banner
-Check-Prerequisites
+Test-Prerequisites
 
 # Ensure no orphaned microservices from previous sessions are blocking ports
 Get-Process -Name "ingest", "threat", "webhook", "orchestrator", "nats-server", "shielddesk-agent" -ErrorAction SilentlyContinue |
@@ -187,7 +187,7 @@ if ($hasNats) {
     $natsExe = if (Test-Path $natsLocal) { $natsLocal } else { "nats-server" }
     $natsData = Join-Path $ROOT "tools\nats\data"
     if (!(Test-Path $natsData)) { New-Item -ItemType Directory -Force -Path $natsData | Out-Null }
-    $natsCmd = "cmd.exe /c `"`"$natsExe`" -js -sd `"$natsData`" -p 4222 -m 8222`""
+    $natsCmd = "& `"$natsExe`" -js -sd `"$natsData`" -p 4222 -m 8222"
     $natsJob = Start-Service "NATS" $natsCmd $ROOT $envMap
     Wait-ForPort 4222 "NATS JetStream" 20 | Out-Null
 } else {
@@ -205,23 +205,23 @@ $pythonJob  = Start-Service "PythonBrain" "python server.py" $PYTHON    $envMap
 $nextJob    = Start-Service "NextJS"      "npm run dev"    $ROOT        $envMap
 $threatDir  = Join-Path $ROOT "services\threat"
 $threatExe  = Join-Path $threatDir "threat.exe"
-$threatCmd  = if (Test-Path $threatExe) { "cmd.exe /c threat.exe" } else { "go run ." }
+$threatCmd  = if (Test-Path $threatExe) { ".\threat.exe" } else { "go run ." }
 $threatJob  = Start-Service "GoThreat"    $threatCmd       $threatDir   $envMap
 $webhookDir = Join-Path $ROOT "services\webhooks"
 $webhookExe = Join-Path $webhookDir "webhook.exe"
-$webhookCmd = if (Test-Path $webhookExe) { "cmd.exe /c webhook.exe" } else { "go run ." }
+$webhookCmd = if (Test-Path $webhookExe) { ".\webhook.exe" } else { "go run ." }
 $webhookJob = Start-Service "GoWebhook"   $webhookCmd      $webhookDir  $envMap
 $ingestDir  = Join-Path $ROOT "services\ingest"
 $ingestExe  = Join-Path $ingestDir "ingest.exe"
-$ingestCmd  = if (Test-Path $ingestExe) { "cmd.exe /c ingest.exe" } else { "go run ." }
+$ingestCmd  = if (Test-Path $ingestExe) { ".\ingest.exe" } else { "go run ." }
 $ingestJob  = Start-Service "GoIngest"    $ingestCmd       $ingestDir   $envMap
 $patchDir   = Join-Path $ROOT "ssh-patch-orchestrator"
 $patchExe   = Join-Path $patchDir "orchestrator.exe"
-$patchCmd   = if (Test-Path $patchExe) { "cmd.exe /c orchestrator.exe server --port 8006" } else { "go run ./cmd/orchestrator server --port 8006" }
+$patchCmd   = if (Test-Path $patchExe) { ".\orchestrator.exe server --port 8006" } else { "go run ./cmd/orchestrator server --port 8006" }
 $patchJob   = Start-Service "GoPatch"     $patchCmd        $patchDir    $envMap
 $agentDir   = Join-Path $ROOT "agent"
 $agentExe   = Join-Path $ROOT "bin\shielddesk-agent.exe"
-$agentCmd   = if (Test-Path $agentExe) { "cmd.exe /c `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
+$agentCmd   = if (Test-Path $agentExe) { "& `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
 $agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
 
 $allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob, $agentJob)
@@ -270,7 +270,7 @@ Write-Host "  ---- Live Logs Below ----" -ForegroundColor DarkGray
 Write-Host ""
 
 try {
-    Stream-Jobs $allJobs
+    Watch-Jobs $allJobs
 } finally {
     Stop-AllServices $allJobs
 }

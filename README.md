@@ -12,7 +12,7 @@
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.3.5-black?style=flat&logo=next.js" alt="Next.js" /></a>
   <a href="https://react.dev/"><img src="https://img.shields.io/badge/React-19.2.8-blue?style=flat&logo=react" alt="React" /></a>
   <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict%20Zero%20Errors-brightgreen?style=flat&logo=typescript" alt="TypeScript" /></a>
-  <img src="https://img.shields.io/badge/Tests-380%20Tests%20%7C%2054%20Suites%20Passed-brightgreen?style=flat" alt="Tests" />
+  <img src="https://img.shields.io/badge/Tests-420%20Tests%20%7C%2036%20Suites%20Passed-brightgreen?style=flat" alt="Tests" />
   <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16+-blue?style=flat&logo=postgresql" alt="PostgreSQL" /></a>
   <a href="https://sentry.io/"><img src="https://img.shields.io/badge/Sentry-Enabled-362D59?style=flat&logo=sentry" alt="Sentry" /></a>
   <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=flat&logo=tailwind-css" alt="Tailwind CSS" /></a>

@@ -1,0 +1,28 @@
+ShieldDesk™ Commercial & Community Source License
+Copyright (c) 2026 Mints AI / ShieldDesk Contributors. All rights reserved.
+
+1. COMMERCIAL SOFTWARE LICENSE (PROFESSIONAL & ENTERPRISE EDITIONS)
+Subject to the terms and conditions of an active commercial subscription agreement
+with Mints AI ("Licensor"), Licensor grants the licensed organization a non-exclusive,
+non-transferable, revocable license to deploy, operate, and utilize ShieldDesk™
+services and binaries up to the purchased endpoint and seat quotas.
+
+All proprietary rights, trade secrets, trademarks, patents, and copyright in and to
+the ShieldDesk software, control plane, agents, algorithms, and documentation
+remain the exclusive property of Mints AI.
+
+2. COMMUNITY EVALUATION & SELF-HOSTED EDITION
+For users deploying the ShieldDesk Community Edition:
+- You are granted a limited, personal, non-exclusive license to inspect, evaluate,
+  and self-host ShieldDesk within an internal lab, development, or evaluation environment,
+  subject to the 5-endpoint limit defined in the software catalogue.
+- You may not sublicense, sell, rent, lease, or distribute the software as a commercial
+  hosted SaaS or managed detection service without an executed Enterprise Partner agreement.
+- The software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+  INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+  PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+3. GOVERNING LAW & RESTRICTIONS
+Reverse engineering of license signing keys, tampering with cryptographic quotas,
+or circumvention of autonomy dual-custody governance controls is strictly prohibited.
+Contact: licensing@shielddesk.com | legal@mints.ai

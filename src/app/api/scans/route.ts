@@ -133,9 +133,51 @@ export async function GET(req: NextRequest) {
     critical: lastScan ? lastScan.summary.critical : 0,
     high: lastScan ? lastScan.summary.high : 0,
     secretsExposed: secretFindings.length,
-    patchedHosts: 14,
-    pendingPatches: 2,
+    patchedHosts: 0,
+    pendingPatches: 0,
   };
+
+  const recentScans: Array<Record<string, unknown>> = [];
+  if (lastScan) {
+    recentScans.push({
+      id: `scan-trivy-${lastScan.scannedTarget.replace(/[^a-zA-Z0-9]/g, "-")}`,
+      type: "Trivy Container & OS Scan",
+      target: lastScan.scannedTarget,
+      status: "COMPLETED",
+      vulnerabilities: lastScan.findings.length,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  if (cachedGitleaks) {
+    recentScans.push({
+      id: `scan-git-${cachedGitleaks.scannedTarget.replace(/[^a-zA-Z0-9]/g, "-")}`,
+      type: "Gitleaks Secrets Scan",
+      target: cachedGitleaks.scannedTarget,
+      status: "COMPLETED",
+      secretsFound: cachedGitleaks.findings.length,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  if (recentScans.length === 0 && !isProduction() && isDemoMode()) {
+    recentScans.push(
+      {
+        id: "scan-demo-01",
+        type: "Trivy Container & OS Scan (Demo)",
+        target: "eval/workstation:demo",
+        status: "COMPLETED",
+        vulnerabilities: 4,
+        timestamp: "5 mins ago",
+      },
+      {
+        id: "scan-demo-02",
+        type: "Gitleaks Secrets Scan (Demo)",
+        target: "eval/repo (main)",
+        status: "COMPLETED",
+        secretsFound: 2,
+        timestamp: "18 mins ago",
+      }
+    );
+  }
 
   return NextResponse.json({
     status: "ok",
@@ -151,31 +193,7 @@ export async function GET(req: NextRequest) {
     findings: cveFindings,
     cveFindings,
     secretFindings,
-    recentScans: [
-      {
-        id: "scan-trivy-9012",
-        type: "Trivy Container & OS Scan",
-        target: "registry.shielddesk.internal/api:v2.4",
-        status: "COMPLETED",
-        vulnerabilities: 4,
-        timestamp: "5 mins ago",
-      },
-      {
-        id: "scan-git-4421",
-        type: "Gitleaks Secrets Scan",
-        target: "repo/shielddesk-backend (main)",
-        status: "COMPLETED",
-        secretsFound: 2,
-        timestamp: "18 mins ago",
-      },
-      {
-        id: "scan-patch-1092",
-        type: "SSH Patch Orchestrator (LVM Snapshot)",
-        target: "srv-prod-api-01 (10.0.4.12)",
-        status: "VERIFIED_SAFE",
-        timestamp: "1 hour ago",
-      },
-    ],
+    recentScans,
   });
 }
 
@@ -401,7 +419,7 @@ export async function POST(req: NextRequest) {
         // Fallback or fail closed
       }
 
-      if (shouldFailClosed()) {
+      if (shouldFailClosed() || isProduction()) {
         return NextResponse.json(
           {
             error: "KMS / IAM key rotation service is unreachable. Action aborted under production fail-closed policy.",
@@ -424,7 +442,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "apply_patch") {
-      if (shouldFailClosed()) {
+      if (shouldFailClosed() || isProduction()) {
         return NextResponse.json(
           {
             error: "Remote host patch daemon is not connected. Patching cannot be executed or claimed without a live agent connection.",
