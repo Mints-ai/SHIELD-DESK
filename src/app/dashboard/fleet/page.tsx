@@ -33,6 +33,10 @@ import {
   Network,
   Sliders,
   Key,
+  X,
+  Shield,
+  Zap,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { validateIpAddress } from "@/lib/utils/ipValidation";
@@ -126,6 +130,33 @@ export default function FleetPage() {
   } | null>(null);
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [monitoringLastFetchedAt, setMonitoringLastFetchedAt] = useState<Date | null>(null);
+  const [processSearchQuery, setProcessSearchQuery] = useState("");
+
+  // Endpoint Firewall Authority & Management State
+  const [showFwModal, setShowFwModal] = useState(false);
+  const [fwActionLoading, setFwActionLoading] = useState(false);
+  const [fwFeedback, setFwFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [fwRuleName, setFwRuleName] = useState("");
+  const [fwRuleDir, setFwRuleDir] = useState<"in" | "out">("in");
+  const [fwRuleAction, setFwRuleAction] = useState<"block" | "allow">("block");
+  const [fwRuleProto, setFwRuleProto] = useState<"TCP" | "UDP" | "ANY">("TCP");
+  const [fwRulePort, setFwRulePort] = useState("");
+  const [fwRuleIp, setFwRuleIp] = useState("");
+  const [fwRuleTokenId, setFwRuleTokenId] = useState("");
+
+  // Microsoft Defender Authority & Remediation State
+  const [showDefenderModal, setShowDefenderModal] = useState(false);
+  const [defenderActionLoading, setDefenderActionLoading] = useState(false);
+  const [defenderFeedback, setDefenderFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [defenderExclusionPath, setDefenderExclusionPath] = useState("");
+  const [defenderTokenId, setDefenderTokenId] = useState("");
+  const [defenderDetectionSearch, setDefenderDetectionSearch] = useState("");
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -632,6 +663,137 @@ export default function FleetPage() {
       setSavingPolicy(false);
     }
   };
+
+  // Firewall Authority & Dynamic Enforcement Handlers
+  const handleFirewallAction = async (payload: Record<string, unknown>) => {
+    if (!selectedAgent) return;
+    setFwActionLoading(true);
+    setFwFeedback(null);
+    try {
+      const res = await fetch(`/api/fleet/${selectedAgent.id}/firewall`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFwFeedback({
+          type: "success",
+          message: data.message || "Firewall rule enforced successfully with snapshot protection.",
+        });
+        fetchMonitoring(selectedAgent.id, true);
+        fetchLogs();
+      } else {
+        setFwFeedback({
+          type: "error",
+          message: data.error || "Failed to execute firewall action.",
+        });
+      }
+    } catch {
+      setFwFeedback({
+        type: "error",
+        message: "Network error communicating with endpoint firewall.",
+      });
+    } finally {
+      setFwActionLoading(false);
+    }
+  };
+
+  const handleCreateRuleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = fwRuleName.trim();
+    if (!cleanName) {
+      setFwFeedback({ type: "error", message: "Rule name is required." });
+      return;
+    }
+    await handleFirewallAction({
+      action: "add_rule",
+      rule: {
+        name: cleanName,
+        direction: fwRuleDir,
+        action: fwRuleAction,
+        protocol: fwRuleProto,
+        port: fwRulePort.trim() || undefined,
+        remoteIp: fwRuleIp.trim() || undefined,
+      },
+      approvalTokenId: fwRuleTokenId.trim() || undefined,
+    });
+    setFwRuleName("");
+    setFwRulePort("");
+    setFwRuleIp("");
+  };
+
+  const handleDeleteRule = async (ruleName: string) => {
+    if (!confirm(`Permanently remove firewall rule '${ruleName}' from ${selectedAgent?.hostname}?`)) return;
+    await handleFirewallAction({
+      action: "delete_rule",
+      ruleName,
+      approvalTokenId: fwRuleTokenId.trim() || undefined,
+    });
+  };
+
+  const handleToggleProfile = async (profileName: string, currentState: string) => {
+    const nextState = currentState === "ON" ? "off" : "on";
+    await handleFirewallAction({
+      action: "set_profile",
+      profile: profileName.toLowerCase(),
+      state: nextState,
+      approvalTokenId: fwRuleTokenId.trim() || undefined,
+    });
+  };
+
+  const handleToggleDefaultInbound = async (currentInbound: string) => {
+    const nextIn = currentInbound === "BLOCK" ? "allow" : "block";
+    const currentOut = monitoringData?.firewall_baseline?.baseline?.defaultOutbound || "ALLOW";
+    await handleFirewallAction({
+      action: "set_default",
+      inbound: nextIn,
+      outbound: currentOut.toLowerCase(),
+      approvalTokenId: fwRuleTokenId.trim() || undefined,
+    });
+  };
+
+  // Microsoft Defender Authority Handlers
+  const handleDefenderAction = async (payload: Record<string, unknown>) => {
+    if (!selectedAgent) return;
+    setDefenderActionLoading(true);
+    setDefenderFeedback(null);
+    try {
+      const res = await fetch(`/api/fleet/${selectedAgent.id}/defender`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDefenderFeedback({
+          type: "success",
+          message: data.message || "Defender operation executed successfully.",
+        });
+        fetchMonitoring(selectedAgent.id, true);
+        fetchLogs();
+      } else {
+        setDefenderFeedback({
+          type: "error",
+          message: data.error || "Failed to execute Defender operation.",
+        });
+      }
+    } catch {
+      setDefenderFeedback({
+        type: "error",
+        message: "Network error communicating with endpoint Defender agent.",
+      });
+    } finally {
+      setDefenderActionLoading(false);
+    }
+  };
+
   const filteredLogs = commandLogs.filter((log) => {
     if (filterAgentId === "all") return true;
     return (
@@ -1175,7 +1337,7 @@ export default function FleetPage() {
                 )}
               >
                 <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                <span>Core Functions Monitoring &amp; Governance</span>
+                <span>Endpoint Task Manager &amp; Live Telemetry</span>
                 <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   Authority Approved
                 </span>
@@ -1682,7 +1844,7 @@ export default function FleetPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono flex items-center gap-2">
                       <Eye className="h-4 w-4" />
-                      Sampled Live Core Telemetry &amp; Functions (Genuine Host Data)
+                      Endpoint Task Manager, Security Subsystems &amp; Live Telemetry
                     </h3>
                     <div className="flex items-center gap-3 text-[11px] font-mono">
                       {selectedAgent?.status === "connected" ? (
@@ -1823,51 +1985,125 @@ export default function FleetPage() {
                       )}
                     </div>
 
-                    {/* 3. Process Inventory Inspector */}
+                    {/* 3. Process Inventory Inspector & Task Manager */}
                     <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-3">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <Cpu className="h-4 w-4 text-[var(--sd-pine)]" />
                           <h4 className="text-[13px] font-medium font-mono text-[var(--sd-text)]">
-                            Running Process Inventory
+                            Windows Task Manager &amp; Process Inventory
                           </h4>
                         </div>
-                        <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
-                          {monitoringData?.process_inventory?.enabled ? "MONITORED" : "EXCLUDED"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            {monitoringData?.process_inventory?.processes?.length || 0} Tasks Active
+                          </span>
+                          <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
+                            {monitoringData?.process_inventory?.enabled ? "MONITORED" : "EXCLUDED"}
+                          </span>
+                        </div>
                       </div>
 
                       {monitoringData?.process_inventory?.enabled ? (
-                        <div className="overflow-x-auto max-h-60">
-                          <table className="w-full text-left text-[11px] font-mono">
-                            <thead>
-                              <tr className="border-b border-[var(--sd-border)] text-[var(--sd-text-dim)] sticky top-0 bg-[var(--sd-panel)]">
-                                <th className="py-1">PID</th>
-                                <th className="py-1">Executable Name</th>
-                                <th className="py-1">RAM</th>
-                                <th className="py-1">Protection</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-[var(--sd-border)]/40">
-                              {monitoringData.process_inventory.processes?.map((p: any, idx: number) => (
-                                <tr key={idx} className="hover:bg-[var(--sd-panel-raised)]/50">
-                                  <td className="py-1 text-emerald-400">{p.pid}</td>
-                                  <td className="py-1 text-[var(--sd-text)] truncate max-w-[140px]">{p.name}</td>
-                                  <td className="py-1 text-[var(--sd-text-muted)]">{p.memoryMb} MB</td>
-                                  <td className="py-1">
-                                    {p.protected ? (
-                                      <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[10px]">
-                                        KERNEL PROTECTED
-                                      </span>
-                                    ) : (
-                                      <span className="text-[var(--sd-text-dim)] text-[10px]">USER PROCESS</span>
-                                    )}
-                                  </td>
+                        <>
+                          {/* Search bar inside Task Manager */}
+                          <div className="flex items-center gap-2">
+                            <Search className="h-3.5 w-3.5 text-[var(--sd-text-dim)] shrink-0" />
+                            <input
+                              type="text"
+                              placeholder="Search running tasks by name or PID (e.g. chrome, node, 5432)..."
+                              value={processSearchQuery}
+                              onChange={(e) => setProcessSearchQuery(e.target.value)}
+                              className="sd-input w-full bg-[var(--sd-panel)] border border-[var(--sd-border)] rounded-lg px-2.5 py-1 text-[11px] font-mono text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)]"
+                            />
+                            {processSearchQuery && (
+                              <button
+                                type="button"
+                                onClick={() => setProcessSearchQuery("")}
+                                className="text-[10px] font-mono text-[var(--sd-text-dim)] hover:text-[var(--sd-text)] px-1.5 py-0.5 rounded border border-[var(--sd-border)] cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="overflow-x-auto max-h-72">
+                            <table className="w-full text-left text-[11px] font-mono">
+                              <thead>
+                                <tr className="border-b border-[var(--sd-border)] text-[var(--sd-text-dim)] sticky top-0 bg-[var(--sd-panel)]">
+                                  <th className="py-1">PID</th>
+                                  <th className="py-1">Executable Name</th>
+                                  <th className="py-1">RAM</th>
+                                  <th className="py-1">Protection</th>
+                                  <th className="py-1 text-right">Task Action</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                              </thead>
+                              <tbody className="divide-y divide-[var(--sd-border)]/40">
+                                {(monitoringData.process_inventory.processes || [])
+                                  .filter((p: any) =>
+                                    processSearchQuery.trim() === "" ||
+                                    p.name?.toLowerCase().includes(processSearchQuery.toLowerCase()) ||
+                                    String(p.pid).includes(processSearchQuery.trim())
+                                  )
+                                  .map((p: any, idx: number) => (
+                                    <tr key={idx} className="hover:bg-[var(--sd-panel-raised)]/50">
+                                      <td className="py-1 text-emerald-400">{p.pid}</td>
+                                      <td className="py-1 text-[var(--sd-text)] truncate max-w-[150px]" title={p.name}>
+                                        {p.name}
+                                      </td>
+                                      <td className="py-1 text-[var(--sd-text-muted)]">{p.memoryMb} MB</td>
+                                      <td className="py-1">
+                                        {p.protected ? (
+                                          <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[10px]">
+                                            KERNEL PROTECTED
+                                          </span>
+                                        ) : (
+                                          <span className="text-[var(--sd-text-dim)] text-[10px]">USER PROCESS</span>
+                                        )}
+                                      </td>
+                                      <td className="py-1 text-right">
+                                        {!p.protected && (
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              if (!confirm(`Terminate process "${p.name}" (PID: ${p.pid}) on ${selectedAgent?.hostname}?`)) return;
+                                              try {
+                                                const res = await fetch("/api/fleet/execute", {
+                                                  method: "POST",
+                                                  headers: {
+                                                    "Content-Type": "application/json",
+                                                    "X-ShieldDesk-User": activeUserId,
+                                                  },
+                                                  body: JSON.stringify({
+                                                    agentId: selectedAgent?.id,
+                                                    command: `kill_process ${p.pid}`,
+                                                    tier: "Tier 2",
+                                                  }),
+                                                });
+                                                const data = await res.json();
+                                                if (res.ok && data.success) {
+                                                  alert(`Process ${p.name} (PID ${p.pid}) terminated successfully.`);
+                                                  if (selectedAgent) fetchMonitoring(selectedAgent.id, true);
+                                                } else {
+                                                  alert(`Failed to terminate process: ${data.error || data.message || "Unknown error"}`);
+                                                }
+                                              } catch (err: any) {
+                                                alert(`Error terminating process: ${err.message}`);
+                                              }
+                                            }}
+                                            className="px-2 py-0.5 rounded text-[10px] font-mono text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 transition cursor-pointer"
+                                            title={`End task for PID ${p.pid}`}
+                                          >
+                                            End Task
+                                          </button>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
                       ) : (
                         <div className="p-4 rounded-xl bg-[var(--sd-panel)]/50 border border-[var(--sd-border)] text-center text-[12px] font-mono text-[var(--sd-text-muted)] space-y-1">
                           <p className="text-amber-400 font-medium">🔒 Process Inventory Disabled by Policy</p>
@@ -1878,37 +2114,173 @@ export default function FleetPage() {
                       )}
                     </div>
 
-                    {/* 4. Firewall Ruleset Baseline Inspector */}
-                    <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-3">
+                    {/* 4. Firewall Ruleset Baseline & Live Authority Inspector */}
+                    <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <ShieldAlert className="h-4 w-4 text-[var(--sd-pine)]" />
                           <h4 className="text-[13px] font-medium font-mono text-[var(--sd-text)]">
-                            Firewall &amp; Packet Filter Integrity
+                            Firewall &amp; Packet Filter Authority
                           </h4>
                         </div>
-                        <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
-                          {monitoringData?.firewall_baseline?.enabled ? "MONITORED" : "EXCLUDED"}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          {monitoringData?.firewall_baseline?.enabled && (
+                            <button
+                              type="button"
+                              onClick={() => setShowFwModal(true)}
+                              className="px-2 py-0.5 rounded text-[11px] font-mono border border-[var(--sd-pine)] text-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/10 transition cursor-pointer flex items-center gap-1"
+                            >
+                              <Sliders className="h-3 w-3" />
+                              <span>Manage Rules</span>
+                            </button>
+                          )}
+                          <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
+                            {monitoringData?.firewall_baseline?.enabled ? "MONITORED" : "EXCLUDED"}
+                          </span>
+                        </div>
                       </div>
 
                       {monitoringData?.firewall_baseline?.enabled ? (
-                        <div className="space-y-2 text-[12px] font-mono">
-                          <div className="flex justify-between py-1 border-b border-[var(--sd-border)]/40">
+                        <div className="space-y-3 text-[12px] font-mono">
+                          {/* Firewall Enforcement & Profiles */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 py-1 border-b border-[var(--sd-border)]/40">
                             <span className="text-[var(--sd-text-dim)]">Firewall Enforcement:</span>
-                            <span className="text-emerald-400 font-semibold">{monitoringData.firewall_baseline.baseline?.firewallState}</span>
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  "font-semibold px-2 py-0.5 rounded text-[11px] border",
+                                  monitoringData.firewall_baseline.baseline?.firewallState === "ENFORCING"
+                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                                    : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                                )}
+                              >
+                                {monitoringData.firewall_baseline.baseline?.firewallState || "ENFORCING"}
+                              </span>
+                              {/* Profile toggles */}
+                              {monitoringData.firewall_baseline.baseline?.profiles?.map((prof: any) => (
+                                <button
+                                  key={prof.name}
+                                  type="button"
+                                  onClick={() => handleToggleProfile(prof.name, prof.state)}
+                                  disabled={fwActionLoading}
+                                  className={cn(
+                                    "px-1.5 py-0.5 rounded text-[10px] border transition cursor-pointer disabled:opacity-50",
+                                    prof.state === "ON"
+                                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20"
+                                      : "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20"
+                                  )}
+                                  title={`Click to toggle ${prof.name} profile`}
+                                >
+                                  {prof.name}: {prof.state}
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                          <div className="flex justify-between py-1 border-b border-[var(--sd-border)]/40">
+
+                          {/* Default Inbound & Outbound Policies */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 py-1 border-b border-[var(--sd-border)]/40">
                             <span className="text-[var(--sd-text-dim)]">Default Policies:</span>
-                            <span className="text-[var(--sd-text)]">Inbound: {monitoringData.firewall_baseline.baseline?.defaultInbound} &bull; Outbound: {monitoringData.firewall_baseline.baseline?.defaultOutbound}</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleDefaultInbound(monitoringData.firewall_baseline.baseline?.defaultInbound || "BLOCK")}
+                                disabled={fwActionLoading}
+                                className={cn(
+                                  "px-2 py-0.5 rounded text-[10px] border transition cursor-pointer hover:opacity-80 disabled:opacity-50",
+                                  monitoringData.firewall_baseline.baseline?.defaultInbound === "BLOCK"
+                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                                    : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                                )}
+                                title="Click to toggle default inbound traffic policy"
+                              >
+                                Inbound: {monitoringData.firewall_baseline.baseline?.defaultInbound || "BLOCK"}
+                              </button>
+                              <span className="text-[var(--sd-text-dim)]">&bull;</span>
+                              <span className="text-[var(--sd-text)]">
+                                Outbound: {monitoringData.firewall_baseline.baseline?.defaultOutbound || "ALLOW"}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex justify-between py-1 border-b border-[var(--sd-border)]/40">
-                            <span className="text-[var(--sd-text-dim)]">Active ShieldDesk Rules:</span>
-                            <span className="text-[var(--sd-text)]">{monitoringData.firewall_baseline.baseline?.activeShieldDeskRules} dynamic rules</span>
+
+                          {/* Active Rules Count */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 py-1 border-b border-[var(--sd-border)]/40">
+                            <span className="text-[var(--sd-text-dim)]">ShieldDesk Dynamic Rules:</span>
+                            <span className="text-[var(--sd-text)] font-semibold">
+                              {monitoringData.firewall_baseline.baseline?.activeShieldDeskRules || 0} active rules
+                            </span>
                           </div>
-                          <div className="flex justify-between py-1">
-                            <span className="text-[var(--sd-text-dim)]">Last Baseline Snapshot Audit:</span>
-                            <span className="text-emerald-400">{monitoringData.firewall_baseline.baseline?.lastSnapshotAudit}</span>
+
+                          {/* Quick Action Buttons */}
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => setShowFwModal(true)}
+                              className="px-2.5 py-1 rounded-lg bg-[var(--sd-pine)]/10 hover:bg-[var(--sd-pine)]/20 border border-[var(--sd-pine)]/40 text-[var(--sd-pine)] text-[11px] font-mono transition cursor-pointer flex items-center gap-1"
+                            >
+                              <Plus className="h-3 w-3" />
+                              <span>Add Custom Rule</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFirewallAction({
+                                action: "add_rule",
+                                rule: { name: "ShieldDesk-Block-SMB-445", direction: "in", action: "block", protocol: "TCP", port: "445" }
+                              })}
+                              disabled={fwActionLoading}
+                              className="px-2 py-1 rounded-lg bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] text-amber-400 text-[11px] font-mono transition cursor-pointer disabled:opacity-50"
+                              title="Block Inbound SMB port 445"
+                            >
+                              Block SMB (445)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFirewallAction({
+                                action: "add_rule",
+                                rule: { name: "ShieldDesk-Block-RDP-3389", direction: "in", action: "block", protocol: "TCP", port: "3389" }
+                              })}
+                              disabled={fwActionLoading}
+                              className="px-2 py-1 rounded-lg bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] text-amber-400 text-[11px] font-mono transition cursor-pointer disabled:opacity-50"
+                              title="Block Inbound RDP port 3389"
+                            >
+                              Block RDP (3389)
+                            </button>
+                          </div>
+
+                          {/* Active Rules Micro-Table */}
+                          {monitoringData.firewall_baseline.baseline?.rules && monitoringData.firewall_baseline.baseline.rules.length > 0 && (
+                            <div className="mt-2 space-y-1.5 border-t border-[var(--sd-border)]/40 pt-2">
+                              <span className="text-[11px] text-[var(--sd-text-dim)] uppercase font-medium">Active Enforced Rules</span>
+                              <div className="space-y-1 max-h-32 overflow-y-auto">
+                                {monitoringData.firewall_baseline.baseline.rules.map((r: any, idx: number) => (
+                                  <div key={idx} className="flex items-center justify-between p-1.5 rounded bg-[var(--sd-panel)] border border-[var(--sd-border)]/60 text-[11px]">
+                                    <div className="flex items-center gap-2 truncate">
+                                      <span className={cn("px-1 py-0.2 rounded text-[10px] font-semibold", r.action === "block" ? "bg-red-500/20 text-red-400" : "bg-emerald-500/20 text-emerald-400")}>
+                                        {r.action.toUpperCase()} {r.direction.toUpperCase()}
+                                      </span>
+                                      <span className="text-[var(--sd-text)] truncate max-w-[130px] font-medium">{r.name}</span>
+                                      {(r.localPort || r.remotePort || r.remoteIp) && (
+                                        <span className="text-[var(--sd-text-muted)] text-[10px]">
+                                          {r.localPort ? `Port:${r.localPort}` : ""} {r.remoteIp ? `IP:${r.remoteIp}` : ""}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteRule(r.name)}
+                                      disabled={fwActionLoading}
+                                      className="text-red-400 hover:text-red-300 p-1 cursor-pointer disabled:opacity-50"
+                                      title="Delete Rule"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="pt-1 text-[11px] text-[var(--sd-text-dim)] flex items-center justify-between">
+                            <span>Audit: {monitoringData.firewall_baseline.baseline?.lastSnapshotAudit}</span>
                           </div>
                         </div>
                       ) : (
@@ -2007,6 +2379,511 @@ export default function FleetPage() {
                         </div>
                       )}
                     </div>
+
+                    {/* 7. Microsoft Defender & EDR Authority */}
+                    <div className="lg:col-span-2 rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="h-4 w-4 text-[var(--sd-pine)]" />
+                          <h4 className="text-[13px] font-medium font-mono text-[var(--sd-text)] flex items-center gap-2">
+                            Microsoft Defender &amp; EDR Authority
+                            {monitoringData?.defender_authority?.defender?.activeThreatsCount > 0 ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 font-semibold animate-pulse">
+                                {monitoringData.defender_authority.defender.activeThreatsCount} DETECTED THREATS
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                PROTECTING
+                              </span>
+                            )}
+                          </h4>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowDefenderModal(true)}
+                            className="px-2 py-0.5 rounded text-[11px] font-mono border border-[var(--sd-pine)] text-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/10 transition cursor-pointer flex items-center gap-1"
+                          >
+                            <Sliders className="h-3 w-3" />
+                            <span>Manage Defender</span>
+                          </button>
+                          <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
+                            {monitoringData?.defender_authority?.enabled ? "MONITORED" : "EXCLUDED"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {defenderFeedback && (
+                        <div
+                          className={cn(
+                            "p-2.5 rounded-xl border text-[11px] font-mono flex items-center justify-between",
+                            defenderFeedback.type === "success"
+                              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                              : "bg-red-500/10 border-red-500/30 text-red-300"
+                          )}
+                        >
+                          <span>{defenderFeedback.message}</span>
+                          <button
+                            type="button"
+                            onClick={() => setDefenderFeedback(null)}
+                            className="text-[var(--sd-text-dim)] hover:text-[var(--sd-text)] cursor-pointer"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+
+                      {monitoringData?.defender_authority?.enabled ? (
+                        <div className="space-y-4 text-[12px] font-mono">
+                          {/* Protection Subsystems & Shields Matrix */}
+                          <div>
+                            <span className="text-[11px] text-[var(--sd-text-dim)] uppercase font-medium block mb-2">
+                              Active Protection Subsystems &amp; EDR Shields
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+                              {/* 1. Real-Time Protection */}
+                              <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Real-Time</span>
+                                  <button
+                                    type="button"
+                                    disabled={defenderActionLoading}
+                                    onClick={() =>
+                                      handleDefenderAction({
+                                        action: "toggle_realtime",
+                                        state: monitoringData?.defender_authority?.defender?.realTimeProtectionEnabled ? "off" : "on",
+                                      })
+                                    }
+                                    className={cn(
+                                      "px-2 py-0.5 rounded text-[10px] font-semibold border transition cursor-pointer disabled:opacity-50",
+                                      monitoringData?.defender_authority?.defender?.realTimeProtectionEnabled
+                                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20"
+                                        : "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20"
+                                    )}
+                                    title="Click to toggle Real-Time Protection"
+                                  >
+                                    {monitoringData?.defender_authority?.defender?.realTimeProtectionEnabled ? "ENABLED" : "DISABLED"}
+                                  </button>
+                                </div>
+                                <p className="text-[10px] text-[var(--sd-text-muted)]">
+                                  Continuous memory hook inspection
+                                </p>
+                              </div>
+
+                              {/* 2. Behavior Monitor */}
+                              <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Behavior Monitor</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    {monitoringData?.defender_authority?.defender?.behaviorMonitorEnabled ? "ACTIVE" : "STANDBY"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-[var(--sd-text-muted)]">
+                                  Heuristic &amp; zero-day anomaly engine
+                                </p>
+                              </div>
+
+                              {/* 3. IOAV Protection */}
+                              <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">IOAV Attachment</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    {monitoringData?.defender_authority?.defender?.ioavProtectionEnabled ? "ACTIVE" : "STANDBY"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-[var(--sd-text-muted)]">
+                                  Download payload &amp; file validation
+                                </p>
+                              </div>
+
+                              {/* 4. Tamper Protection */}
+                              <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Tamper Guard</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    {monitoringData?.defender_authority?.defender?.tamperProtectionSource || "ENFORCED"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-[var(--sd-text-muted)]">
+                                  Guards security configs from tampering
+                                </p>
+                              </div>
+
+                              {/* 5. PUA Protection */}
+                              <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">PUA Protection</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    {monitoringData?.defender_authority?.defender?.puaProtection || "Enabled (Block)"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-[var(--sd-text-muted)]">
+                                  Blocks unwanted software installers
+                                </p>
+                              </div>
+
+                              {/* 6. Network Inspection (NIS) */}
+                              <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Network Inspection</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    {monitoringData?.defender_authority?.defender?.nisProtectionEnabled ? "ACTIVE (NIS)" : "STANDBY"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-[var(--sd-text-muted)]">
+                                  Protocol vulnerability shielding
+                                </p>
+                              </div>
+
+                              {/* 7. Controlled Folder Access / Ransomware */}
+                              <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Ransomware Guard</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                                    {monitoringData?.defender_authority?.defender?.controlledFolderAccess || "Disabled"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-[var(--sd-text-muted)]">
+                                  Controlled folder ransomware lockdown
+                                </p>
+                              </div>
+
+                              {/* 8. Script Scanning (AMSI) */}
+                              <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Script &amp; AMSI</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    {monitoringData?.defender_authority?.defender?.scriptScanning ? "ACTIVE" : "STANDBY"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-[var(--sd-text-muted)]">
+                                  PowerShell &amp; script runtime analysis
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Definitions Intelligence & Scan Operations */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1 border-t border-[var(--sd-border)]/40">
+                            {/* Security Intelligence */}
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] text-[var(--sd-text-dim)] uppercase font-medium">Security Intelligence</span>
+                                <button
+                                  type="button"
+                                  disabled={defenderActionLoading}
+                                  onClick={() => handleDefenderAction({ action: "update_signatures" })}
+                                  className="px-2 py-0.5 rounded text-[10px] font-mono border border-[var(--sd-pine)] text-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/10 transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                >
+                                  <RefreshCw className={cn("h-2.5 w-2.5", defenderActionLoading && "animate-spin")} />
+                                  <span>Update Signatures</span>
+                                </button>
+                              </div>
+                              <div className="p-3 rounded-xl bg-[var(--sd-panel)]/40 border border-[var(--sd-border)]/60 space-y-1.5 text-[11px]">
+                                <div className="flex justify-between">
+                                  <span className="text-[var(--sd-text-dim)]">Signature Version:</span>
+                                  <span className="text-emerald-400 font-semibold">
+                                    {monitoringData?.defender_authority?.defender?.signatureVersion || "1.459.691.0"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-[var(--sd-text-dim)]">NIS Signature Version:</span>
+                                  <span className="text-emerald-400 font-semibold">
+                                    {monitoringData?.defender_authority?.defender?.nisSignatureVersion || "1.459.691.0"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-[var(--sd-text-dim)]">Last Updated:</span>
+                                  <span className="text-[var(--sd-text)]">
+                                    {monitoringData?.defender_authority?.defender?.signatureLastUpdated || "Recent"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-[var(--sd-text-dim)]">Engine Version:</span>
+                                  <span className="text-[var(--sd-text-muted)]">
+                                    {monitoringData?.defender_authority?.defender?.engineVersion || "1.1.26080.3"}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Scan Actions */}
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] text-[var(--sd-text-dim)] uppercase font-medium">Scan Operations</span>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={defenderActionLoading}
+                                    onClick={() => handleDefenderAction({ action: "quick_scan" })}
+                                    className="px-2.5 py-0.5 rounded text-[10px] font-mono bg-[var(--sd-pine)] text-[var(--sd-on-accent)] font-semibold hover:opacity-90 transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    <Zap className="h-2.5 w-2.5" />
+                                    <span>Quick Scan</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={defenderActionLoading}
+                                    onClick={() => handleDefenderAction({ action: "full_scan" })}
+                                    className="px-2.5 py-0.5 rounded text-[10px] font-mono border border-[var(--sd-border)] hover:border-[var(--sd-pine)] text-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/10 transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                  >
+                                    <Shield className="h-2.5 w-2.5" />
+                                    <span>Full Scan</span>
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="p-3 rounded-xl bg-[var(--sd-panel)]/40 border border-[var(--sd-border)]/60 space-y-1.5 text-[11px]">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-[var(--sd-text-dim)]">Last Quick Scan:</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[var(--sd-text)]">
+                                      {monitoringData?.defender_authority?.defender?.quickScanEndTime || "No record"}
+                                    </span>
+                                    {monitoringData?.defender_authority?.defender?.quickScanOverdue && (
+                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                        OVERDUE
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-[var(--sd-text-dim)]">Last Full Scan:</span>
+                                  <span className="text-[var(--sd-text)]">
+                                    {monitoringData?.defender_authority?.defender?.fullScanEndTime || "Never completed"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-[var(--sd-text-dim)]">Antivirus Protection:</span>
+                                  <span className="text-emerald-400 font-semibold">
+                                    {monitoringData?.defender_authority?.defender?.antivirusEnabled ? "ACTIVE (Enforced)" : "INACTIVE"}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Active Detected Threats */}
+                          <div className="space-y-2 border-t border-[var(--sd-border)]/40 pt-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[11px] text-[var(--sd-text-dim)] uppercase font-medium">
+                                Active Threat Inventory ({monitoringData?.defender_authority?.defender?.threats?.length || 0})
+                              </span>
+                              {monitoringData?.defender_authority?.defender?.threats?.length > 0 && (
+                                <button
+                                  type="button"
+                                  disabled={defenderActionLoading}
+                                  onClick={() => handleDefenderAction({ action: "remediate_threat", threatId: "all" })}
+                                  className="px-2 py-0.5 rounded text-[10px] font-mono bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30 transition cursor-pointer disabled:opacity-50"
+                                >
+                                  Remediate All Threats
+                                </button>
+                              )}
+                            </div>
+
+                            {monitoringData?.defender_authority?.defender?.threats &&
+                            monitoringData.defender_authority.defender.threats.length > 0 ? (
+                              <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                                {monitoringData.defender_authority.defender.threats.map((t: any, idx: number) => (
+                                  <div
+                                    key={idx}
+                                    className="flex items-center justify-between p-2 rounded-xl bg-amber-500/5 border border-amber-500/20 text-[11px]"
+                                  >
+                                    <div className="flex items-center gap-2 truncate">
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                        SEV: {t.severity}
+                                      </span>
+                                      {t.category && (
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-[var(--sd-panel)] text-[var(--sd-text-dim)] border border-[var(--sd-border)]">
+                                          {t.category}
+                                        </span>
+                                      )}
+                                      <span className="text-amber-200 font-medium truncate max-w-[220px]">
+                                        {t.threatName}
+                                      </span>
+                                      <span className="text-[var(--sd-text-dim)] text-[10px]">
+                                        ID: {t.threatId}
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={defenderActionLoading}
+                                      onClick={() =>
+                                        handleDefenderAction({
+                                          action: "remediate_threat",
+                                          threatId: t.threatId,
+                                        })
+                                      }
+                                      className="px-2 py-0.5 rounded text-[10px] font-mono border border-red-500/40 text-red-400 hover:bg-red-500/20 transition cursor-pointer disabled:opacity-50"
+                                    >
+                                      Remediate
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="p-2.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex items-center gap-2 text-[11px] text-emerald-400">
+                                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                                <span>Endpoint host is completely clean. No active or unresolved threat detections.</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Threat Detection History & Targeted File Resources */}
+                          {monitoringData?.defender_authority?.defender?.detections &&
+                            monitoringData.defender_authority.defender.detections.length > 0 && (
+                              <div className="space-y-2 border-t border-[var(--sd-border)]/40 pt-2">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] text-[var(--sd-text-dim)] uppercase font-medium">
+                                      Threat Detection History &amp; Targeted Resources ({monitoringData.defender_authority.defender.detections.length})
+                                    </span>
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-[var(--sd-panel)] border border-[var(--sd-border)] text-[var(--sd-text-muted)]">
+                                      Live EDR Forensic Log
+                                    </span>
+                                  </div>
+                                  <div className="relative">
+                                    <input
+                                      type="text"
+                                      value={defenderDetectionSearch}
+                                      onChange={(e) => setDefenderDetectionSearch(e.target.value)}
+                                      placeholder="Filter detections or infected files..."
+                                      className="w-full sm:w-56 px-2.5 py-1 text-[11px] rounded-lg bg-[var(--sd-panel)] border border-[var(--sd-border)] text-[var(--sd-text)] placeholder-[var(--sd-text-muted)] outline-none focus:border-[var(--sd-pine)]"
+                                    />
+                                    {defenderDetectionSearch && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setDefenderDetectionSearch("")}
+                                        className="absolute right-2 top-1.5 text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                  {monitoringData.defender_authority.defender.detections
+                                    .filter((det: any) => {
+                                      if (!defenderDetectionSearch.trim()) return true;
+                                      const term = defenderDetectionSearch.toLowerCase();
+                                      return (
+                                        String(det.threatId).toLowerCase().includes(term) ||
+                                        String(det.threatName || "").toLowerCase().includes(term) ||
+                                        String(det.domainUser || "").toLowerCase().includes(term) ||
+                                        String(det.processName || "").toLowerCase().includes(term) ||
+                                        String(det.cleaningAction || "").toLowerCase().includes(term) ||
+                                        (det.resources && det.resources.some((r: string) => r.toLowerCase().includes(term)))
+                                      );
+                                    })
+                                    .map((det: any, idx: number) => (
+                                      <div
+                                        key={idx}
+                                        className="p-3 rounded-xl bg-[var(--sd-panel)]/50 border border-[var(--sd-border)] text-[11px] space-y-1.5"
+                                      >
+                                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-semibold text-amber-300">
+                                              {det.threatName || `Threat #${det.threatId}`}
+                                            </span>
+                                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                                              ID: {det.threatId}
+                                            </span>
+                                            {det.cleaningAction && (
+                                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold">
+                                                {det.cleaningAction.toUpperCase()}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="flex items-center gap-3 text-[10px] text-[var(--sd-text-dim)]">
+                                            {det.initialDetectionTime && (
+                                              <span>Detected: {det.initialDetectionTime}</span>
+                                            )}
+                                            {det.remediationTime && (
+                                              <span className="hidden sm:inline">Remediated: {det.remediationTime}</span>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-3 text-[10px] text-[var(--sd-text-dim)]">
+                                          {det.domainUser && (
+                                            <span>
+                                              <span className="text-[var(--sd-text-muted)]">User: </span>
+                                              <span className="text-[var(--sd-text)]">{det.domainUser}</span>
+                                            </span>
+                                          )}
+                                          {det.processName && (
+                                            <span>
+                                              <span className="text-[var(--sd-text-muted)]">Process: </span>
+                                              <span className="text-[var(--sd-text)]">{det.processName}</span>
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        {det.resources && det.resources.length > 0 && (
+                                          <div className="mt-1 space-y-1">
+                                            <span className="text-[10px] text-red-400 font-semibold block">Targeted Infected Resources:</span>
+                                            <div className="space-y-1 max-h-24 overflow-y-auto">
+                                              {det.resources.map((res: string, rIdx: number) => (
+                                                <div
+                                                  key={rIdx}
+                                                  className="p-1.5 rounded-lg bg-[var(--sd-bg)]/80 border border-[var(--sd-border)]/70 text-[10px] font-mono break-all text-[var(--sd-text-dim)] hover:text-[var(--sd-text)] transition"
+                                                >
+                                                  {res}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                          {/* Extended Defender Engine & Cloud Protection Telemetry */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-[var(--sd-border)]/40 text-[11px]">
+                            <div className="p-2 rounded-lg bg-[var(--sd-panel)]/30 border border-[var(--sd-border)]/50">
+                              <span className="text-[var(--sd-text-dim)] block text-[10px]">Product / Service Version</span>
+                              <span className="text-[var(--sd-text)] font-semibold">
+                                {monitoringData?.defender_authority?.defender?.productVersion || "4.18.26080.4"}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-[var(--sd-panel)]/30 border border-[var(--sd-border)]/50">
+                              <span className="text-[var(--sd-text-dim)] block text-[10px]">Cloud Protection (MAPS)</span>
+                              <span className="text-emerald-400 font-semibold">
+                                {monitoringData?.defender_authority?.defender?.cloudProtection?.mapsReporting || "Advanced MAPS"}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-[var(--sd-panel)]/30 border border-[var(--sd-border)]/50">
+                              <span className="text-[var(--sd-text-dim)] block text-[10px]">Sample Submission</span>
+                              <span className="text-[var(--sd-text)] font-semibold">
+                                {monitoringData?.defender_authority?.defender?.cloudProtection?.submitSamplesConsent || "Send Safe Samples Automatically"}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-[var(--sd-panel)]/30 border border-[var(--sd-border)]/50">
+                              <span className="text-[var(--sd-text-dim)] block text-[10px]">Smart App / Device Ctrl</span>
+                              <span className="text-[var(--sd-text)] font-semibold">
+                                {monitoringData?.defender_authority?.defender?.smartAppControl || "Off"} &bull; {monitoringData?.defender_authority?.defender?.deviceControl || "Disabled"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="pt-1 text-[11px] text-[var(--sd-text-dim)] flex items-center justify-between">
+                            <span>Audit: {monitoringData?.defender_authority?.defender?.lastAudit || "Baseline verified"}</span>
+                            {monitoringData?.defender_authority?.defender?.computerId && (
+                              <span className="hidden sm:inline text-[10px]">ID: {monitoringData.defender_authority.defender.computerId}</span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded-xl bg-[var(--sd-panel)]/50 border border-[var(--sd-border)] text-center text-[12px] font-mono text-[var(--sd-text-muted)] space-y-1">
+                          <p className="text-amber-400 font-medium">🔒 Defender Authority Gated by Policy</p>
+                          <p className="text-[11px] text-[var(--sd-text-dim)]">
+                            Requires Tier 2 Authority Approval to inspect and manage endpoint Microsoft Defender EDR controls.
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2014,6 +2891,396 @@ export default function FleetPage() {
           </div>
         )}
       </main>
+
+      {/* ── Firewall Authority & Rule Manager Modal ── */}
+      {showFwModal && selectedAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-3xl rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text)] shadow-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-4">
+              <div className="flex items-center gap-2.5">
+                <ShieldAlert className="h-5 w-5 text-[var(--sd-pine)]" />
+                <div>
+                  <h3 className="text-base font-semibold font-mono text-[var(--sd-text)]">
+                    Endpoint Firewall Authority &amp; Rule Manager
+                  </h3>
+                  <p className="text-[12px] font-mono text-[var(--sd-text-dim)]">
+                    Target: <span className="text-emerald-400 font-semibold">{selectedAgent.hostname}</span> &bull; {selectedAgent.ip_address}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFwModal(false);
+                  setFwFeedback(null);
+                }}
+                className="text-[var(--sd-text-dim)] hover:text-[var(--sd-text)] p-1.5 rounded-lg hover:bg-[var(--sd-panel)] transition cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Failsafe Notice */}
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-mono text-emerald-300 flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+              <span>
+                Failsafe Active: Every rule change takes a pre-flight snapshot. If control-plane connectivity is severed, the agent auto-reverts within 5s.
+              </span>
+            </div>
+
+            {/* Feedback Alert */}
+            {fwFeedback && (
+              <div
+                className={cn(
+                  "p-3 rounded-xl text-[12px] font-mono flex items-center gap-2",
+                  fwFeedback.type === "success"
+                    ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
+                    : "bg-red-500/10 border border-red-500/30 text-red-400"
+                )}
+              >
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{fwFeedback.message}</span>
+              </div>
+            )}
+
+            {/* Add Custom Rule Form */}
+            <form onSubmit={handleCreateRuleSubmit} className="space-y-3 p-4 rounded-xl bg-[var(--sd-panel)] border border-[var(--sd-border)]">
+              <h4 className="text-[12px] font-semibold font-mono uppercase tracking-wider text-[var(--sd-pine)] flex items-center gap-1.5">
+                <Plus className="h-3.5 w-3.5" />
+                <span>Enforce New Firewall Rule</span>
+              </h4>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-[12px] font-mono">
+                <div>
+                  <label className="block text-[var(--sd-text-dim)] text-[10px] uppercase mb-1">Rule Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Block-Port-8080"
+                    value={fwRuleName}
+                    onChange={(e) => setFwRuleName(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[var(--sd-text)] focus:border-[var(--sd-pine)] outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[var(--sd-text-dim)] text-[10px] uppercase mb-1">Direction &amp; Action</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <select
+                      value={fwRuleDir}
+                      onChange={(e) => setFwRuleDir(e.target.value as "in" | "out")}
+                      className="px-2 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[var(--sd-text)] text-[11px]"
+                    >
+                      <option value="in">Inbound</option>
+                      <option value="out">Outbound</option>
+                    </select>
+                    <select
+                      value={fwRuleAction}
+                      onChange={(e) => setFwRuleAction(e.target.value as "block" | "allow")}
+                      className="px-2 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[var(--sd-text)] text-[11px]"
+                    >
+                      <option value="block">Block (Drop)</option>
+                      <option value="allow">Allow</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[var(--sd-text-dim)] text-[10px] uppercase mb-1">Protocol</label>
+                  <select
+                    value={fwRuleProto}
+                    onChange={(e) => setFwRuleProto(e.target.value as "TCP" | "UDP" | "ANY")}
+                    className="w-full px-2 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[var(--sd-text)] text-[11px]"
+                  >
+                    <option value="TCP">TCP</option>
+                    <option value="UDP">UDP</option>
+                    <option value="ANY">Any Protocol</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[var(--sd-text-dim)] text-[10px] uppercase mb-1">Port (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 445, 3389"
+                    value={fwRulePort}
+                    onChange={(e) => setFwRulePort(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[var(--sd-text)] focus:border-[var(--sd-pine)] outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[var(--sd-text-dim)] text-[10px] uppercase mb-1">Remote IP / CIDR (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 198.51.100.23"
+                    value={fwRuleIp}
+                    onChange={(e) => setFwRuleIp(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[var(--sd-text)] focus:border-[var(--sd-pine)] outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[var(--sd-text-dim)] text-[10px] uppercase mb-1">Authority Token</label>
+                  <input
+                    type="text"
+                    placeholder="Auto-signed as SecOps Admin"
+                    value={fwRuleTokenId}
+                    onChange={(e) => setFwRuleTokenId(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[var(--sd-text)] text-[11px] focus:border-[var(--sd-pine)] outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="submit"
+                  disabled={fwActionLoading}
+                  className="px-4 py-2 rounded-xl bg-[var(--sd-pine)] text-[var(--sd-on-accent)] font-semibold text-[12px] font-mono hover:opacity-90 transition cursor-pointer disabled:opacity-50 flex items-center gap-2"
+                >
+                  {fwActionLoading && <RefreshCw className="h-3 w-3 animate-spin" />}
+                  <span>Enforce &amp; Cryptographically Sign Rule</span>
+                </button>
+              </div>
+            </form>
+
+            {/* Current Active Rules Table */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-[12px] font-semibold font-mono uppercase tracking-wider text-[var(--sd-text)]">
+                  Live Rules Inventory ({monitoringData?.firewall_baseline?.baseline?.rules?.length || 0})
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => selectedAgent && fetchMonitoring(selectedAgent.id, true)}
+                  disabled={fwActionLoading}
+                  className="text-[11px] font-mono text-[var(--sd-pine)] hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className={cn("h-3 w-3", fwActionLoading && "animate-spin")} />
+                  <span>Refresh Rules</span>
+                </button>
+              </div>
+
+              <div className="border border-[var(--sd-border)] rounded-xl overflow-hidden max-h-56 overflow-y-auto">
+                <table className="w-full text-left text-[11px] font-mono">
+                  <thead className="bg-[var(--sd-panel)] text-[var(--sd-text-dim)] border-b border-[var(--sd-border)] sticky top-0">
+                    <tr>
+                      <th className="p-2">Rule Name</th>
+                      <th className="p-2">Direction</th>
+                      <th className="p-2">Action</th>
+                      <th className="p-2">Proto</th>
+                      <th className="p-2">Port / Target</th>
+                      <th className="p-2 text-right">Delete</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--sd-border)]/40">
+                    {monitoringData?.firewall_baseline?.baseline?.rules && monitoringData.firewall_baseline.baseline.rules.length > 0 ? (
+                      monitoringData.firewall_baseline.baseline.rules.map((r: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-[var(--sd-panel-raised)]/50">
+                          <td className="p-2 text-[var(--sd-text)] font-medium truncate max-w-[180px]">{r.name}</td>
+                          <td className="p-2 uppercase text-[var(--sd-text-dim)]">{r.direction}</td>
+                          <td className="p-2">
+                            <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-semibold", r.action === "block" ? "bg-red-500/20 text-red-400" : "bg-emerald-500/20 text-emerald-400")}>
+                              {r.action.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="p-2 text-[var(--sd-text-dim)]">{r.protocol || "TCP"}</td>
+                          <td className="p-2 text-[var(--sd-text)]">
+                            {r.localPort ? `Port:${r.localPort}` : ""} {r.remoteIp ? `IP:${r.remoteIp}` : ""}
+                            {!r.localPort && !r.remoteIp ? "All Traffic" : ""}
+                          </td>
+                          <td className="p-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRule(r.name)}
+                              disabled={fwActionLoading}
+                              className="text-red-400 hover:text-red-300 p-1 cursor-pointer disabled:opacity-50"
+                              title="Delete rule"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={6} className="p-6 text-center text-[var(--sd-text-muted)]">
+                          No ShieldDesk dynamic firewall rules enforced on this endpoint.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Microsoft Defender EDR Authority Manager Modal ── */}
+      {showDefenderModal && selectedAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-[var(--sd-surface)] border border-[var(--sd-border)] rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-5 animate-in fade-in-50 zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--sd-border)]">
+              <div className="flex items-center gap-2.5">
+                <ShieldCheck className="h-5 w-5 text-[var(--sd-pine)]" />
+                <div>
+                  <h3 className="text-[15px] font-semibold text-[var(--sd-text)] font-mono">
+                    Microsoft Defender EDR Authority Console
+                  </h3>
+                  <p className="text-[11px] text-[var(--sd-text-muted)] font-mono">
+                    Cryptographically Governed Endpoint Control &bull; Host: {selectedAgent.hostname}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDefenderModal(false)}
+                className="text-[var(--sd-text-dim)] hover:text-[var(--sd-text)] p-1 rounded-lg hover:bg-[var(--sd-panel)] cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {defenderFeedback && (
+              <div
+                className={cn(
+                  "p-3 rounded-xl border text-[12px] font-mono flex items-center justify-between",
+                  defenderFeedback.type === "success"
+                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                    : "bg-red-500/10 border-red-500/30 text-red-300"
+                )}
+              >
+                <span>{defenderFeedback.message}</span>
+                <button
+                  type="button"
+                  onClick={() => setDefenderFeedback(null)}
+                  className="text-[var(--sd-text-dim)] hover:text-[var(--sd-text)] cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+
+            {/* Quick Action Matrix */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                type="button"
+                disabled={defenderActionLoading}
+                onClick={() => handleDefenderAction({ action: "quick_scan" })}
+                className="p-3 rounded-xl bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] text-left space-y-1 transition cursor-pointer disabled:opacity-50"
+              >
+                <div className="flex items-center gap-1.5 text-emerald-400 font-semibold text-[12px] font-mono">
+                  <Zap className="h-3.5 w-3.5" />
+                  <span>Quick Scan</span>
+                </div>
+                <p className="text-[10px] text-[var(--sd-text-dim)] font-mono">
+                  Scan common memory, boot sectors, &amp; startup directories
+                </p>
+              </button>
+
+              <button
+                type="button"
+                disabled={defenderActionLoading}
+                onClick={() => handleDefenderAction({ action: "full_scan" })}
+                className="p-3 rounded-xl bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] text-left space-y-1 transition cursor-pointer disabled:opacity-50"
+              >
+                <div className="flex items-center gap-1.5 text-[var(--sd-pine)] font-semibold text-[12px] font-mono">
+                  <Shield className="h-3.5 w-3.5" />
+                  <span>Full System Scan</span>
+                </div>
+                <p className="text-[10px] text-[var(--sd-text-dim)] font-mono">
+                  Inspect all storage drives, processes, and registries
+                </p>
+              </button>
+
+              <button
+                type="button"
+                disabled={defenderActionLoading}
+                onClick={() => handleDefenderAction({ action: "update_signatures" })}
+                className="p-3 rounded-xl bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] text-left space-y-1 transition cursor-pointer disabled:opacity-50"
+              >
+                <div className="flex items-center gap-1.5 text-amber-400 font-semibold text-[12px] font-mono">
+                  <RefreshCw className={cn("h-3.5 w-3.5", defenderActionLoading && "animate-spin")} />
+                  <span>Update Intelligence</span>
+                </div>
+                <p className="text-[10px] text-[var(--sd-text-dim)] font-mono">
+                  Pull latest signature definitions from Microsoft cloud
+                </p>
+              </button>
+            </div>
+
+            {/* Add Exclusion Form */}
+            <div className="p-4 rounded-xl bg-[var(--sd-panel)]/50 border border-[var(--sd-border)] space-y-3">
+              <h4 className="text-[12px] font-semibold font-mono text-[var(--sd-text)] uppercase">
+                Configure Directory or Process Exclusion
+              </h4>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. C:\SecOps\Tools or process_name.exe"
+                  value={defenderExclusionPath}
+                  onChange={(e) => setDefenderExclusionPath(e.target.value)}
+                  className="flex-1 px-3 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[12px] font-mono text-[var(--sd-text)] focus:border-[var(--sd-pine)] outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={defenderActionLoading || !defenderExclusionPath.trim()}
+                  onClick={async () => {
+                    if (!defenderExclusionPath.trim()) return;
+                    await handleDefenderAction({
+                      action: "add_exclusion",
+                      path: defenderExclusionPath.trim(),
+                      approvalTokenId: defenderTokenId.trim() || undefined,
+                    });
+                    setDefenderExclusionPath("");
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-[var(--sd-pine)] text-[var(--sd-on-accent)] font-semibold text-[11px] font-mono hover:opacity-90 transition cursor-pointer disabled:opacity-50"
+                >
+                  Add Exclusion
+                </button>
+              </div>
+            </div>
+
+            {/* Authority Token Input */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/50 text-[11px] font-mono">
+              <div className="flex items-center gap-2">
+                <Key className="h-3.5 w-3.5 text-amber-400" />
+                <span className="text-[var(--sd-text-dim)]">Tier 2 Approval Token:</span>
+                <input
+                  type="text"
+                  placeholder="Auto-provisioned for SecOps Admin"
+                  value={defenderTokenId}
+                  onChange={(e) => setDefenderTokenId(e.target.value)}
+                  className="px-2 py-1 rounded bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[11px] w-64 focus:border-[var(--sd-pine)] outline-none text-[var(--sd-text)]"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDefenderModal(false)}
+                className="px-4 py-1.5 rounded-xl border border-[var(--sd-border)] hover:bg-[var(--sd-panel)] text-[var(--sd-text)] transition cursor-pointer"
+              >
+                Close Console
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Connect Endpoint Modal */}
+      {showConnectModal && (
+        <ConnectEndpointModal
+          isOpen={showConnectModal}
+          onClose={() => setShowConnectModal(false)}
+          activeUserId={activeUserId}
+          existingAgents={agents}
+          onEndpointConnected={() => {
+            fetchFleet(true);
+            setShowConnectModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

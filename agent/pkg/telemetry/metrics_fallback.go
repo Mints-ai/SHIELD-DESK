@@ -51,3 +51,8 @@ func queryWindowsServices() []ServiceHealthTelemetry {
 		{Name: "iptables / ufw", ServiceKey: "ufw", Status: "ACTIVE", Startup: "Automatic"},
 	}
 }
+
+func queryWindowsUptimeHours() float64 {
+	return 24.0
+}
+

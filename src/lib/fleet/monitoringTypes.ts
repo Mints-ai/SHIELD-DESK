@@ -9,7 +9,8 @@ export type CoreFunctionScope =
   | "process_inventory"
   | "firewall_baseline"
   | "storage_disk"
-  | "service_health";
+  | "service_health"
+  | "defender_authority";
 
 export interface CoreFunctionScopeDefinition {
   id: CoreFunctionScope;
@@ -69,6 +70,14 @@ export const CORE_FUNCTION_SCOPES: Record<CoreFunctionScope, CoreFunctionScopeDe
     requiresApproval: true,
     resourceCost: "negligible",
   },
+  defender_authority: {
+    id: "defender_authority",
+    label: "Microsoft Defender & EDR Authority",
+    description: "Real-time Defender EDR control, signature intelligence, scan execution, and threat remediation.",
+    tier: "Tier 2",
+    requiresApproval: true,
+    resourceCost: "low",
+  },
 };
 
 export interface EndpointMonitoringPolicy {
@@ -81,3 +90,110 @@ export interface EndpointMonitoringPolicy {
   policy_hash: string;
   status: "active" | "pending_approval";
 }
+
+export interface FirewallProfileItem {
+  name: "Domain" | "Private" | "Public" | string;
+  state: "ON" | "OFF";
+}
+
+export interface FirewallRuleItem {
+  name: string;
+  direction: "in" | "out";
+  action: "allow" | "block";
+  protocol: string;
+  localPort?: string;
+  remotePort?: string;
+  remoteIp?: string;
+  program?: string;
+  enabled: boolean;
+  isShieldDeskRule: boolean;
+}
+
+export interface FirewallBaselineData {
+  firewallState: string;
+  defaultInbound: string;
+  defaultOutbound: string;
+  activeShieldDeskRules: number;
+  lastSnapshotAudit: string;
+  profiles?: FirewallProfileItem[];
+  rules?: FirewallRuleItem[];
+}
+
+export interface DefenderThreatItem {
+  threatId: string | number;
+  threatName: string;
+  severity: "Low" | "Medium" | "High" | "Severe" | string;
+  didExecute: boolean;
+  isActive?: boolean;
+  category?: string;
+  rollupStatus?: number;
+  resources?: string[] | null;
+  detectedAt?: string;
+}
+
+export interface DefenderDetectionItem {
+  detectionId: string;
+  threatId: number;
+  threatName?: string;
+  initialDetectionTime: string;
+  remediationTime?: string;
+  actionSuccess?: boolean;
+  cleaningAction?: string;
+  resources: string[];
+  domainUser?: string;
+  processName?: string;
+}
+
+export interface DefenderStatusData {
+  antivirusEnabled: boolean;
+  realTimeProtectionEnabled: boolean;
+  ioavProtectionEnabled: boolean;
+  antispywareEnabled: boolean;
+  behaviorMonitorEnabled: boolean;
+  nisProtectionEnabled?: boolean;
+  onAccessProtectionEnabled: boolean;
+  tamperProtectionSource?: string;
+  isTamperProtected?: boolean;
+  productVersion?: string;
+  serviceVersion?: string;
+  runningMode?: string;
+  serviceEnabled?: boolean;
+  signatureVersion: string;
+  signatureLastUpdated: string;
+  engineVersion: string;
+  nisSignatureVersion?: string;
+  nisEngineVersion?: string;
+  quickScanAgeDays: number | null;
+  quickScanStartTime?: string | null;
+  quickScanEndTime: string | null;
+  quickScanOverdue?: boolean;
+  fullScanAgeDays: number | null;
+  fullScanStartTime?: string | null;
+  fullScanEndTime: string | null;
+  signaturesOutOfDate?: boolean;
+  rebootRequired?: boolean;
+  computerId?: string;
+  activeThreatsCount: number;
+  threats: DefenderThreatItem[];
+  detections?: DefenderDetectionItem[];
+  exclusions?: {
+    paths?: string[];
+    extensions?: string[];
+    processes?: string[];
+  };
+  cloudProtection?: {
+    mapsReporting?: string;
+    submitSamplesConsent?: string;
+  };
+  puaProtection?: string;
+  networkProtection?: string;
+  controlledFolderAccess?: string;
+  scriptScanning?: boolean;
+  smartAppControl?: string;
+  deviceControl?: string;
+  antivirusSignatureAge?: number;
+  productStatus?: number;
+  lastAudit: string;
+}
+
+

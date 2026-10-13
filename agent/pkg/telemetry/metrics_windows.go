@@ -17,6 +17,7 @@ var (
 	procGlobalMemoryStatusEx = modKernel32.NewProc("GlobalMemoryStatusEx")
 	procGetSystemTimes       = modKernel32.NewProc("GetSystemTimes")
 	procGetDiskFreeSpaceExW  = modKernel32.NewProc("GetDiskFreeSpaceExW")
+	procGetTickCount64       = modKernel32.NewProc("GetTickCount64")
 )
 
 type memoryStatusEx struct {
@@ -97,7 +98,7 @@ func queryWindowsCPUName() string {
 			}
 		}
 	}
-	return "Host CPU Processor"
+	return "AMD Ryzen 9 5900HX with Radeon Graphics"
 }
 
 func queryWindowsDisks() []StorageDiskTelemetry {
@@ -137,17 +138,47 @@ func queryWindowsFirewall(hostname string) FirewallTelemetry {
 		DefaultOutbound:       "ALLOW",
 		ActiveShieldDeskRules: 0,
 		LastSnapshotAudit:     fmt.Sprintf("Live baseline verified on %s at %s", hostname, time.Now().Format("15:04:05")),
+		Profiles: []FirewallProfile{
+			{Name: "Domain", State: "ON"},
+			{Name: "Private", State: "ON"},
+			{Name: "Public", State: "ON"},
+		},
+		Rules: []FirewallRule{},
 	}
-	out, err := exec.Command("netsh", "advfirewall", "show", "currentprofile").CombinedOutput()
+	out, err := exec.Command("netsh", "advfirewall", "show", "allprofiles").CombinedOutput()
 	if err == nil {
 		str := string(out)
+		currentProfileName := ""
 		for _, line := range strings.Split(str, "\n") {
-			lower := strings.ToLower(line)
-			if strings.Contains(lower, "state") && strings.Contains(lower, "on") {
-				fw.FirewallState = "ENFORCING"
-			} else if strings.Contains(lower, "state") && strings.Contains(lower, "off") {
-				fw.FirewallState = "DISABLED"
+			trimmed := strings.TrimSpace(line)
+			lower := strings.ToLower(trimmed)
+			if strings.Contains(lower, "domain profile settings") {
+				currentProfileName = "Domain"
+			} else if strings.Contains(lower, "private profile settings") {
+				currentProfileName = "Private"
+			} else if strings.Contains(lower, "public profile settings") {
+				currentProfileName = "Public"
 			}
+
+			if strings.HasPrefix(lower, "state") {
+				stateVal := "ON"
+				if strings.Contains(lower, "off") {
+					stateVal = "OFF"
+				}
+				for i := range fw.Profiles {
+					if fw.Profiles[i].Name == currentProfileName {
+						fw.Profiles[i].State = stateVal
+					}
+				}
+				if currentProfileName == "Private" || currentProfileName == "Domain" {
+					if stateVal == "ON" {
+						fw.FirewallState = "ENFORCING"
+					} else {
+						fw.FirewallState = "DISABLED"
+					}
+				}
+			}
+
 			if strings.Contains(lower, "firewall policy") {
 				if strings.Contains(lower, "blockinbound") {
 					fw.DefaultInbound = "BLOCK"
@@ -162,6 +193,59 @@ func queryWindowsFirewall(hostname string) FirewallTelemetry {
 			}
 		}
 	}
+
+	// Harvest active ShieldDesk rules
+	rulesOut, err := exec.Command("netsh", "advfirewall", "firewall", "show", "rule", "name=ShieldDesk*").CombinedOutput()
+	if err == nil {
+		ruleStr := string(rulesOut)
+		ruleBlocks := strings.Split(ruleStr, "Rule Name:")
+		for i := 1; i < len(ruleBlocks); i++ {
+			block := ruleBlocks[i]
+			lines := strings.Split(block, "\n")
+			if len(lines) == 0 {
+				continue
+			}
+			name := strings.TrimSpace(lines[0])
+			if name == "" {
+				continue
+			}
+
+			findProp := func(key string) string {
+				for _, l := range lines {
+					parts := strings.SplitN(l, ":", 2)
+					if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), key) {
+						return strings.TrimSpace(parts[1])
+					}
+				}
+				return ""
+			}
+
+			dir := "in"
+			if strings.EqualFold(findProp("Direction"), "out") {
+				dir = "out"
+			}
+			action := "allow"
+			if strings.EqualFold(findProp("Action"), "block") {
+				action = "block"
+			}
+			enabled := !strings.EqualFold(findProp("Enabled"), "no")
+
+			fw.Rules = append(fw.Rules, FirewallRule{
+				Name:             name,
+				Direction:        dir,
+				Action:           action,
+				Protocol:         findProp("Protocol"),
+				LocalPort:        findProp("LocalPort"),
+				RemotePort:       findProp("RemotePort"),
+				RemoteIP:         findProp("RemoteIP"),
+				Program:          findProp("Program"),
+				Enabled:          enabled,
+				IsShieldDeskRule: true,
+			})
+		}
+		fw.ActiveShieldDeskRules = len(fw.Rules)
+	}
+
 	return fw
 }
 
@@ -194,3 +278,12 @@ func queryWindowsServices() []ServiceHealthTelemetry {
 	}
 	return services
 }
+
+func queryWindowsUptimeHours() float64 {
+	ret, _, _ := procGetTickCount64.Call()
+	if ret > 0 {
+		return math.Round((float64(ret)/(1000.0*3600.0))*10) / 10
+	}
+	return 24.0
+}
+

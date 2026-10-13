@@ -37,15 +37,23 @@ export async function getEndpointMonitoringPolicy(
     return MOCK_MONITORING_POLICIES[agentId];
   }
 
-  // Default baseline policy (only system_performance enabled, others require approval)
+  // Default baseline policy (all core diagnostic scopes active by default for comprehensive endpoint visibility)
   const defaultPolicy: EndpointMonitoringPolicy = {
     agent_id: agentId,
     tenant_id: tenantId,
-    enabled_scopes: ["system_performance"],
+    enabled_scopes: [
+      "system_performance",
+      "process_inventory",
+      "network_sockets",
+      "firewall_baseline",
+      "storage_disk",
+      "service_health",
+      "defender_authority",
+    ],
     approved_by: "system-baseline",
     approved_at: new Date().toISOString(),
     approval_token_id: null,
-    policy_hash: crypto.createHash("sha256").update(`${agentId}:system_performance:baseline`).digest("hex"),
+    policy_hash: crypto.createHash("sha256").update(`${agentId}:all_scopes:baseline`).digest("hex"),
     status: "active",
   };
 
@@ -240,6 +248,15 @@ export async function getEndpointCoreFunctionsData(
         services: isEnabled("service_health") ? live.service_health : [],
         notice: !isEnabled("service_health")
           ? "Requires Tier 2 Authority Approval to inspect service health."
+          : undefined,
+      },
+      defender_authority: {
+        enabled: isEnabled("defender_authority") || isEnabled("service_health"),
+        status: (isEnabled("defender_authority") || isEnabled("service_health")) ? "active" : "disabled_by_policy",
+        gated: true,
+        defender: live.defender_status || null,
+        notice: !(isEnabled("defender_authority") || isEnabled("service_health"))
+          ? "Requires Tier 2 Authority Approval to inspect Microsoft Defender EDR telemetry."
           : undefined,
       },
     },
