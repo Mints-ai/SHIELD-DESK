@@ -303,13 +303,14 @@ function CustomerDocsContent() {
   const CategoryIcon = activeCategoryMeta.icon;
 
   return (
-    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col selection:bg-[var(--sd-primary)] selection:text-white">
+    <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col selection:bg-[var(--sd-primary)] selection:text-white font-sans">
       {/* Top Application Bar */}
       <TopNavBar />
 
-      {/* Sub-Header Portal Bar */}
-      <header className="sticky top-16 z-30 border-b border-[var(--sd-border)] bg-[var(--sd-bg-alt)]/90 backdrop-blur-md px-4 sm:px-6 lg:px-8 py-2.5 transition-all">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+      {/* Main Documentation Workspace inside standard ShieldDesk dashboard shell */}
+      <main className="sd-dashboard-content min-w-0 flex-1 flex flex-col gap-6 p-4 sm:p-6 lg:p-8">
+        {/* Portal Sub-Header Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-[var(--sd-border)]">
           {/* Mobile Menu & Breadcrumbs */}
           <div className="flex items-center gap-3">
             <button
@@ -320,10 +321,10 @@ function CustomerDocsContent() {
               <Menu className="w-4 h-4" />
             </button>
 
-            <div className="flex items-center gap-2 text-xs font-mono">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
               <Link
                 href="/"
-                className="text-[var(--sd-text-dim)] hover:text-[var(--sd-wheat)] transition flex items-center gap-1"
+                className="text-[var(--sd-text-dim)] hover:text-[var(--sd-wheat)] transition flex items-center gap-1.5"
               >
                 <Shield className="w-3.5 h-3.5 text-[var(--sd-wheat)]" />
                 <span>Console</span>
@@ -332,6 +333,9 @@ function CustomerDocsContent() {
               <span className="text-[var(--sd-wheat)] font-semibold flex items-center gap-1.5">
                 <BookOpen className="w-3.5 h-3.5" />
                 Customer Documentation
+              </span>
+              <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-mono font-medium bg-[var(--sd-panel-raised)] border border-[var(--sd-border-subtle)] text-[var(--sd-text-dim)]">
+                23 Guides · v2.4
               </span>
             </div>
           </div>
@@ -366,29 +370,24 @@ function CustomerDocsContent() {
             </button>
           </div>
         </div>
-      </header>
 
-      {/* Main Documentation Workspace (3 Columns: Left Nav, Center Reading View, Right Table-of-Contents) */}
-      <div className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 flex gap-8 items-start">
-        {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* Column 1: Left Navigation Sidebar */}
-        {/* ─────────────────────────────────────────────────────────────────── */}
-        <aside
-          className={`
-            fixed lg:sticky top-28 z-40 lg:z-10
-            w-72 sm:w-80 lg:w-72 max-h-[calc(100vh-8rem)]
-            bg-[var(--sd-bg-alt)] lg:bg-transparent
-            border lg:border-none border-[var(--sd-border)] rounded-2xl lg:rounded-none
-            p-4 lg:p-0 shadow-2xl lg:shadow-none
-            overflow-y-auto flex flex-col gap-6
-            transition-all duration-300
-            ${
-              mobileSidebarOpen
-                ? "left-4 right-4 sm:right-auto bottom-6"
-                : "hidden lg:flex"
-            }
-          `}
-        >
+        {/* Main Documentation Workspace (3 Columns: Left Nav, Center Reading View, Right Table-of-Contents) */}
+        <div className="flex-1 w-full flex gap-6 lg:gap-8 items-start min-w-0">
+          {/* ─────────────────────────────────────────────────────────────────── */}
+          {/* Column 1: Left Navigation Sidebar */}
+          {/* ─────────────────────────────────────────────────────────────────── */}
+          <aside
+            className={`
+              w-64 xl:w-72 shrink-0
+              flex flex-col gap-5
+              transition-all duration-300
+              ${
+                mobileSidebarOpen
+                  ? "fixed inset-y-4 left-4 right-4 sm:right-auto sm:w-80 z-50 p-5 bg-[var(--sd-bg)] border border-[var(--sd-border-strong)] rounded-2xl shadow-2xl overflow-y-auto"
+                  : "hidden lg:flex sticky top-4 max-h-[calc(100vh-6rem)] overflow-y-auto pr-1"
+              }
+            `}
+          >
           {/* Mobile Sidebar Close */}
           <div className="flex lg:hidden items-center justify-between pb-3 border-b border-[var(--sd-border)]">
             <span className="text-xs font-mono font-semibold text-[var(--sd-wheat)] uppercase tracking-wider">
@@ -551,7 +550,7 @@ function CustomerDocsContent() {
         {/* ─────────────────────────────────────────────────────────────────── */}
         {/* Column 2: Center Reading Workspace */}
         {/* ─────────────────────────────────────────────────────────────────── */}
-        <main className="flex-1 min-w-0 max-w-4xl space-y-8">
+        <div className="flex-1 min-w-0 space-y-8">
           {/* Article Header & Control Bar */}
           <div className="p-6 sm:p-8 rounded-3xl border border-[var(--sd-border)] bg-[var(--sd-surface)] shadow-md space-y-6 relative overflow-hidden">
             {/* Ambient Background Accent */}
@@ -793,12 +792,12 @@ function CustomerDocsContent() {
               </button>
             )}
           </nav>
-        </main>
+        </div>
 
         {/* ─────────────────────────────────────────────────────────────────── */}
         {/* Column 3: Right Sidebar (On This Page / Table of Contents) */}
         {/* ─────────────────────────────────────────────────────────────────── */}
-        <aside className="hidden xl:block w-64 sticky top-28 space-y-6">
+        <aside className="hidden xl:block w-56 2xl:w-64 shrink-0 sticky top-4 max-h-[calc(100vh-6rem)] overflow-y-auto space-y-6">
           {/* Table of Contents */}
           <div className="p-5 rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-surface)] shadow-sm space-y-4">
             <div className="text-xs font-mono font-semibold text-[var(--sd-wheat)] uppercase tracking-wider flex items-center gap-2">
@@ -857,6 +856,7 @@ function CustomerDocsContent() {
           </div>
         </aside>
       </div>
+    </main>
 
       {/* ─────────────────────────────────────────────────────────────────── */}
       {/* Search Modal / Command Palette */}
