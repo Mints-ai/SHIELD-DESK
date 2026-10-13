@@ -32,14 +32,12 @@ import {
   Eye,
   Network,
   Sliders,
+  Key,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-<<<<<<< HEAD
 import { validateIpAddress } from "@/lib/utils/ipValidation";
 import { CORE_FUNCTION_SCOPES, type CoreFunctionScope } from "@/lib/fleet/monitoringTypes";
-=======
 import { ConnectEndpointModal } from "@/components/fleet/ConnectEndpointModal";
->>>>>>> fc688126e4016e1c989c935a6febe63b477eca60
 
 interface CommandLogEntry {
   id: string;
@@ -554,15 +552,6 @@ export default function FleetPage() {
       ? window.location.origin
       : "http://localhost:3000";
 
-<<<<<<< HEAD
-  const goCommand = enrollResult
-    ? `.\\shielddesk-agent.exe -token ${enrollResult.token} -control-url ${serverURL}`
-    : "";
-
-  const nodeCommand = enrollResult
-    ? `node agent/agent-daemon.js --token ${enrollResult.token} --control-url ${serverURL}`
-    : "";
-
   const fetchMonitoring = useCallback(async (agentId: string, isSilent = false) => {
     try {
       if (!isSilent) setMonitoringLoading(true);
@@ -643,9 +632,6 @@ export default function FleetPage() {
       setSavingPolicy(false);
     }
   };
-
-=======
->>>>>>> fc688126e4016e1c989c935a6febe63b477eca60
   const filteredLogs = commandLogs.filter((log) => {
     if (filterAgentId === "all") return true;
     return (
