@@ -75,27 +75,47 @@ export async function getLiveFleetAgents(
  * Manually marks an agent as disconnected.
  */
 export async function disconnectLiveAgent(agentId: string, tenantId?: string): Promise<boolean> {
-  const sql = tenantId
-    ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND tenant_id = $2 RETURNING id;`
-    : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`;
-  const params = tenantId ? [agentId, tenantId] : [agentId];
-  const { rows } = await query<{ id: string }>(sql, params);
-  return rows.length > 0;
+  const { MOCK_ENDPOINT_AGENTS } = await import("./fleet");
+  const mockAgent = MOCK_ENDPOINT_AGENTS.find(
+    (a) => (a.id === agentId || a.hostname === agentId) && (!tenantId || a.tenant_id === tenantId)
+  );
+  if (mockAgent) {
+    mockAgent.status = "disconnected";
+    mockAgent.cpu_usage = 0;
+    mockAgent.memory_usage = 0;
+    mockAgent.eps = 0;
+  }
+
+  try {
+    const sql = tenantId
+      ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND tenant_id = $2 RETURNING id;`
+      : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`;
+    const params = tenantId ? [agentId, tenantId] : [agentId];
+    const { rows } = await query<{ id: string }>(sql, params);
+    return rows.length > 0 || Boolean(mockAgent);
+  } catch {
+    return Boolean(mockAgent);
+  }
 }
 
 /**
  * Removes / unenrolls an agent from the database entirely.
  */
 export async function deleteLiveAgent(agentId: string, tenantId?: string): Promise<boolean> {
+  const { removeMockEndpointAgent } = await import("./fleet");
+  const removedMock = removeMockEndpointAgent(agentId, tenantId);
+
   try {
-    await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]);
-  } catch {}
-  const sql = tenantId
-    ? `DELETE FROM endpoint_agents WHERE id = $1 AND tenant_id = $2 RETURNING id;`
-    : `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`;
-  const params = tenantId ? [agentId, tenantId] : [agentId];
+    await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]).catch(() => {});
+    const sql = tenantId
+      ? `DELETE FROM endpoint_agents WHERE id = $1 AND tenant_id = $2 RETURNING id;`
+      : `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`;
+    const params = tenantId ? [agentId, tenantId] : [agentId];
     const { rows } = await query<{ id: string }>(sql, params);
-    return rows.length > 0;
+    return rows.length > 0 || removedMock;
+  } catch {
+    return removedMock;
+  }
 }
 
 /**
