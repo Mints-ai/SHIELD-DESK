@@ -191,9 +191,41 @@ export class StripeWebhookManager {
     error?: string;
   }> {
     const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
-    const event = this.inMemoryProcessedEvents.get(stripeEventId);
+    let event = this.inMemoryProcessedEvents.get(stripeEventId);
     if (!event) {
-      return { success: false, actionTaken: "none", error: `Event '${stripeEventId}' not found in queue.` };
+      // Rehydrate event directly from durable PostgreSQL table if not in local memory
+      try {
+        const dbRes = await query<any>(
+          `SELECT id, stripe_event_id, event_type, tenant_id, status, payload, created_at, processed_at, retry_count
+           FROM stripe_webhook_events WHERE stripe_event_id = $1 LIMIT 1`,
+          [stripeEventId]
+        );
+        if (dbRes.rows.length > 0) {
+          const row = dbRes.rows[0];
+          event = {
+            id: row.id,
+            stripeEventId: row.stripe_event_id,
+            eventType: row.event_type,
+            tenantId: row.tenant_id,
+            status: row.status,
+            payload: typeof row.payload === "string" ? JSON.parse(row.payload) : (row.payload || {}),
+            createdAt: new Date(row.created_at).toISOString(),
+            processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : undefined,
+            retryCount: Number(row.retry_count || 0),
+          };
+          this.inMemoryProcessedEvents.set(stripeEventId, event);
+        }
+      } catch (dbErr) {
+        if (isProd) {
+          throw new Error(
+            `CRITICAL_DATABASE_UNAVAILABLE: Failed to load Stripe event from database: ${dbErr instanceof Error ? dbErr.message : "DB error"}`
+          );
+        }
+      }
+    }
+
+    if (!event) {
+      return { success: false, actionTaken: "none", error: `Event '${stripeEventId}' not found in queue or database.` };
     }
 
     if (event.status === "processed") {
@@ -254,12 +286,22 @@ export class StripeWebhookManager {
 
       switch (event.eventType) {
         case "checkout.session.completed": {
+          // Reject unpaid/incomplete checkout sessions
+          const paymentStatus = (payload.payment_status as string) || "";
+          if (paymentStatus && paymentStatus !== "paid" && paymentStatus !== "no_payment_required") {
+            actionTaken = `unpaid_checkout_session_status_${paymentStatus}`;
+            break;
+          }
+
           const tierStr =
             (payload.metadata as any)?.tier ||
             (payload.metadata as any)?.plan_id ||
-            (payload.tier as string) ||
-            "professional";
-          const tier: BillingTier = tierStr === "enterprise" ? "enterprise" : "professional";
+            (payload.tier as string);
+
+          if (!tierStr || (tierStr !== "enterprise" && tierStr !== "professional" && tierStr !== "community")) {
+            throw new Error(`Invalid or missing plan tier '${tierStr}' in Stripe checkout metadata. Entitlement upgrade denied.`);
+          }
+          const tier: BillingTier = tierStr;
           const interval: BillingInterval =
             (payload.metadata as any)?.billing_interval === "year" ? "year" : "month";
           const subscriptionId = String(payload.subscription || payload.id || `sub_${tenantId}`);
@@ -275,7 +317,9 @@ export class StripeWebhookManager {
                 `UPDATE checkout_attempts SET status = 'completed', completed_at = NOW() WHERE id = $1`,
                 [attemptId]
               );
-            } catch { /* fallback */ }
+            } catch (err) {
+              if (isProd) throw err;
+            }
           }
 
           // 3. Bind billing customer
@@ -287,12 +331,15 @@ export class StripeWebhookManager {
                  ON CONFLICT (tenant_id) DO UPDATE SET stripe_customer_id = $3, updated_at = NOW()`,
                 [`bc-${Date.now()}`, tenantId, stripeCustomerId]
               );
-            } catch { /* fallback */ }
+            } catch (err) {
+              if (isProd) throw err;
+            }
           }
 
-          // 4. Issue commercial product license
+          // 4. Issue commercial product license aligned to interval
           const planDef = CANONICAL_CATALOG[tier];
-          const expiryDate = new Date(Date.now() + 365 * 86400 * 1000).toISOString();
+          const durationDays = interval === "year" ? 365 : 30;
+          const expiryDate = new Date(Date.now() + durationDays * 86400 * 1000).toISOString();
           const licenseArtifact = generateHighEntropyLicense({
             tenantId,
             tier,
@@ -323,7 +370,9 @@ export class StripeWebhookManager {
                 expiryDate,
               ]
             );
-          } catch { /* fallback */ }
+          } catch (err) {
+            if (isProd) throw err;
+          }
 
           // 5. Activate entitlements & sync agent states
           await EntitlementService.setLicenseStatus(tenantId, "active");
@@ -334,20 +383,32 @@ export class StripeWebhookManager {
             await query(
               `INSERT INTO notification_outbox (id, tenant_id, topic, payload, status, created_at)
                VALUES ($1, $2, 'billing.provisioned', $3, 'pending', NOW())`,
-              [`out-${Date.now()}`, tenantId, { tier, subscriptionId, eventType: event.eventType }]
+              [`out-${Date.now()}`, tenantId, { tier, subscriptionId, eventType: event.eventType, displayPrefix: licenseArtifact.displayPrefix, displaySuffix: licenseArtifact.displaySuffix }]
             );
-          } catch { /* fallback */ }
+          } catch (err) {
+            if (isProd) console.warn("[Outbox] Non-fatal notification outbox write failure:", err);
+          }
 
           actionTaken = `activated_tier_${tier}`;
           break;
         }
 
         case "customer.subscription.created": {
-          const tierStr = (payload.metadata as any)?.tier || (payload.tier as string) || "professional";
-          const tier: BillingTier = tierStr === "enterprise" ? "enterprise" : "professional";
+          const subStatus = String(payload.status || "");
+          if (subStatus === "incomplete" || subStatus === "incomplete_expired" || subStatus === "unpaid") {
+            actionTaken = `subscription_created_unpaid_status_${subStatus}`;
+            break;
+          }
+
+          const tierStr = (payload.metadata as any)?.tier || (payload.tier as string);
+          if (!tierStr || (tierStr !== "enterprise" && tierStr !== "professional" && tierStr !== "community")) {
+            throw new Error(`Invalid or missing plan tier '${tierStr}' in Stripe subscription metadata.`);
+          }
+          const tier: BillingTier = tierStr;
           await updateTenantSubscription(tenantId, tier, "stripe", String(payload.id || `sub_${tenantId}`));
+          const licState = subStatus === "trialing" ? "TRIAL" : "ACTIVE";
           await EntitlementService.setLicenseStatus(tenantId, "active");
-          await LicenseActivationService.syncTenantState(tenantId, "ACTIVE");
+          await LicenseActivationService.syncTenantState(tenantId, licState);
           actionTaken = `activated_tier_${tier}`;
           break;
         }
@@ -380,7 +441,9 @@ export class StripeWebhookManager {
                 payload.invoice_pdf_url || null,
               ]
             );
-          } catch { /* fallback */ }
+          } catch (err) {
+            if (isProd) throw err;
+          }
 
           actionTaken = `renewed_subscription_until_${sub.currentPeriodEnd}`;
           break;

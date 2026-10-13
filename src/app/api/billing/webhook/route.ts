@@ -86,11 +86,32 @@ export async function POST(req: NextRequest) {
       });
 
       if (queueResult.isDuplicate) {
+        if (queueResult.eventRecord.status === "processed") {
+          return NextResponse.json(
+            {
+              success: true,
+              message: `Stripe event ${stripeEventId} already recorded and processed (idempotent response).`,
+              isDuplicate: true,
+            },
+            { status: 200 }
+          );
+        }
+
+        // Event was previously recorded but not completed (pending or failed). Attempt recovery retry.
+        const retryResult = await StripeWebhookManager.processQueuedStripeEvent(stripeEventId);
+        if (!retryResult.success) {
+          return NextResponse.json(
+            { error: `Retry processing failed: ${retryResult.error}`, stripeEventId },
+            { status: 500 }
+          );
+        }
+
         return NextResponse.json(
           {
             success: true,
-            message: `Stripe event ${stripeEventId} already recorded (idempotent response).`,
+            message: `Stripe event ${stripeEventId} reprocessed: ${retryResult.actionTaken}`,
             isDuplicate: true,
+            stripeEventId,
           },
           { status: 200 }
         );

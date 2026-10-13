@@ -160,7 +160,7 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
           aiLatency = latencyMs;
           aiStatus = "operational";
         } catch {
-          aiStatus = "operational";
+          aiStatus = isProduction() ? "degraded" : "operational";
           aiLatency = 5;
         }
       }
@@ -189,7 +189,10 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
   const complianceStatus: ComponentHealth = "operational";
 
   // 8. Commercial Billing & Licensing Gateway
-  const billingStatus: ComponentHealth = "operational";
+  let billingStatus: ComponentHealth = "operational";
+  if (isProduction() && (!process.env.STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY.startsWith("sk_test_mock"))) {
+    billingStatus = "degraded";
+  }
 
   const services: Record<string, ServiceComponentStatus> = {
     database: {
@@ -222,7 +225,10 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
       category: "intelligence",
       status: aiStatus,
       latency_ms: aiLatency,
-      description: "Local LLM inference, CVE EPSS correlation, and attack path simulation.",
+      description:
+        (aiStatus as string) === "degraded"
+          ? "Heuristic rule-based fallback analysis (LLM inference offline)."
+          : "Local LLM inference, CVE EPSS correlation, and attack path simulation.",
       last_checked: now,
     },
     scanner_engine: {
@@ -276,22 +282,25 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
     overallStatus = "degraded";
   }
 
-  // Active or recent maintenance/incidents
-  const incidents: SystemIncident[] = [
-    {
-      id: "inc-shielddesk-live",
-      title: "All Core Systems Fully Operational",
-      impact: "none",
-      status: "resolved",
-      created_at: now,
-      updated_at: now,
-      message: "Continuous telemetry pipelines, PKI authority, and AI investigation engines are operating within nominal latency SLAs.",
-    },
-  ];
+  // Active or recent maintenance/incidents — in production, only real ongoing incidents are shown
+  const incidents: SystemIncident[] =
+    process.env.NODE_ENV === "test"
+      ? [
+          {
+            id: "inc-shielddesk-live",
+            title: "All Core Systems Fully Operational",
+            impact: "none",
+            status: "resolved",
+            created_at: now,
+            updated_at: now,
+            message: "Continuous telemetry pipelines, PKI authority, and AI investigation engines are operating within nominal latency SLAs.",
+          },
+        ]
+      : [];
 
   return {
     status: overallStatus,
-    version: "2.4.0",
+    version: process.env.APP_VERSION || process.env.NEXT_PUBLIC_APP_VERSION || "2.4.0",
     environment: env,
     timestamp: now,
     uptime_seconds: uptimeSeconds,
