@@ -303,6 +303,11 @@ async function start() {
 
       if (hbRes.status === 423) {
         console.log(`\x1b[31m[!] KILL SWITCH ACTIVE\x1b[0m — Telemetry dropped by control plane.`);
+      } else if (hbRes.status === 404) {
+        console.log(`\n\x1b[31m[!] ENDPOINT REMOVED\x1b[0m — This endpoint was unenrolled from the ShieldDesk fleet. Stopping daemon.`);
+        running = false;
+        clearInterval(interval);
+        process.exit(0);
       } else if (hbRes.status === 200) {
         const timeStr = new Date().toLocaleTimeString();
         if (hbRes.data && hbRes.data.status === 'disconnected') {

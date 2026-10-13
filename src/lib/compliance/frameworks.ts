@@ -71,20 +71,19 @@ export async function collectTenantTelemetry(caller: SessionUser): Promise<LiveT
   let cvesOverSla = 0;
   let commandLogsCount = 0;
 
+  let dbAgentsLoaded = false;
+
   // 1. Database Attempt
   try {
     const { query } = await import("@/lib/db");
+    const { getLiveFleetAgents } = await import("@/lib/fleet/liveTelemetry");
 
-    // Endpoint Agents
-    const agentsRes = await query<Record<string, unknown>>(
-      `SELECT status FROM endpoint_agents WHERE tenant_id = $1`,
-      [tenantId]
-    );
-    if (agentsRes.rows && agentsRes.rows.length > 0) {
-      totalAgents = agentsRes.rows.length;
-      connectedAgents = agentsRes.rows.filter((r) => r.status === "connected").length;
-      isolatedAgents = agentsRes.rows.filter((r) => r.status === "isolated").length;
-    }
+    // Endpoint Agents (with live 15s heartbeat timeout and kill-switch enforcement)
+    const liveAgents = await getLiveFleetAgents(caller);
+    dbAgentsLoaded = true;
+    totalAgents = liveAgents.length;
+    connectedAgents = liveAgents.filter((a) => a.status === "connected" && !a.kill_switch_active).length;
+    isolatedAgents = liveAgents.filter((a) => a.status === "isolated" && !a.kill_switch_active).length;
 
     // YARA matches
     const yaraRes = await query<Record<string, unknown>>(
@@ -159,12 +158,12 @@ export async function collectTenantTelemetry(caller: SessionUser): Promise<LiveT
     // Database offline / in-memory fallback
   }
 
-  // 2. Fallback to stateful tenant store if DB is empty or offline
+  // 2. Fallback to stateful tenant store if DB is offline
   const stateStore = getOrCreateTenantStore(tenantId);
-  if (totalAgents === 0) {
+  if (!dbAgentsLoaded && totalAgents === 0) {
     totalAgents = stateStore.endpointAgents.length;
-    connectedAgents = stateStore.endpointAgents.filter((a) => a.status === "connected").length;
-    isolatedAgents = stateStore.endpointAgents.filter((a) => a.status === "isolated").length;
+    connectedAgents = stateStore.endpointAgents.filter((a) => a.status === "connected" && !a.kill_switch_active).length;
+    isolatedAgents = stateStore.endpointAgents.filter((a) => a.status === "isolated" && !a.kill_switch_active).length;
   }
   if (yaraMatchesCount === 0) {
     yaraMatchesCount = stateStore.yaraMatches.length;
