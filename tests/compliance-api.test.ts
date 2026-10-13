@@ -23,7 +23,7 @@ test("SD-028 Compliance Platform: API Endpoints & Live Handlers", async (t) => {
 
     const json = await res.json();
     assert.equal(json.frameworkId, "iso27001");
-    assert.equal(json.tenantId, "acme-tenant");
+    assert.equal(json.tenantId, "mints-global");
     assert.ok(typeof json.overallScore === "number");
     assert.ok(json.controls.length >= 8);
     assert.ok(json.auditEvidenceCount > 0);
@@ -50,7 +50,7 @@ test("SD-028 Compliance Platform: API Endpoints & Live Handlers", async (t) => {
 
     const json = await res.json();
     assert.ok(json.manifest, "Must contain manifest");
-    assert.equal(json.manifest.tenantId, "acme-tenant");
+    assert.equal(json.manifest.tenantId, "mints-global");
     assert.ok(json.manifest.merkleRoot, "Must include Merkle root");
     assert.ok(Array.isArray(json.events), "Must contain chronological events array");
     assert.ok(
@@ -129,7 +129,7 @@ test("SD-028 Compliance Platform: API Endpoints & Live Handlers", async (t) => {
 
     const json = await res.json();
     assert.equal(json.success, true);
-    assert.equal(json.report.tenantId, "acme-tenant");
+    assert.equal(json.report.tenantId, "mints-global");
     assert.ok(json.report.digitalSignature.merkleRoot);
     assert.ok(json.report.controlMatrix.length >= 8);
     assert.ok(json.report.attestation.auditorStatement.length > 0);

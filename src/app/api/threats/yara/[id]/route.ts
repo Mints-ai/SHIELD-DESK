@@ -16,8 +16,8 @@ async function resolveSession(req: NextRequest) {
     session = {
       uid: userHdr,
       role: userHdr.includes("admin") ? "system_admin" : "analyst",
-      tenantId: "acme-tenant",
-      email: `${userHdr}@acme.corp`,
+      tenantId: "mints-global",
+      email: `${userHdr}@mintsglobal.ae`,
     };
   }
   return session;
@@ -40,7 +40,7 @@ export async function PATCH(
   const body = await req.json().catch(() => ({}));
 
   try {
-    const tenantId = session.tenantId || "acme-tenant";
+    const tenantId = session.tenantId || "mints-global";
     const existing = await getYaraRuleById(id, tenantId);
     if (!existing) {
       return NextResponse.json({ error: "Rule not found" }, { status: 404 });
@@ -68,7 +68,7 @@ export async function DELETE(
   }
 
   const { id } = await context.params;
-  const tenantId = session.tenantId || "acme-tenant";
+  const tenantId = session.tenantId || "mints-global";
 
   try {
     const existing = await getYaraRuleById(id, tenantId);

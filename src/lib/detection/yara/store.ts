@@ -170,44 +170,7 @@ export const IN_MEMORY_YARA_RULES: YaraRuleRecord[] = [
   ...SEED_SYSTEM_YARA_RULES.map((r) => ({ ...r })),
 ];
 
-export const IN_MEMORY_YARA_MATCHES: YaraMatchRecord[] = [
-  {
-    id: "m0000001-0000-0000-0000-000000000001",
-    tenant_id: "acme-tenant",
-    rule_id: "YARA-MAL-001",
-    agent_id: "ws-fin-01",
-    file_path: "/var/www/html/uploads/c99.php",
-    matched_strings: [
-      {
-        id: "$s1",
-        offset: 142,
-        length: 8,
-        snippet: "...eval(base64_decode('c99shell'))...",
-        matchedValue: "c99shell",
-      },
-    ],
-    incident_id: "inc-demo-001",
-    created_at: new Date(Date.now() - 3600000).toISOString(),
-  },
-  {
-    id: "m0000001-0000-0000-0000-000000000002",
-    tenant_id: "acme-tenant",
-    rule_id: "YARA-MAL-003",
-    agent_id: "srv-bastion-01",
-    file_path: "PID: 3412 (lsass.exe memory)",
-    matched_strings: [
-      {
-        id: "$cs3",
-        offset: 4096,
-        length: 16,
-        snippet: "...ReflectiveLoader binary offset...",
-        matchedValue: "ReflectiveLoader",
-      },
-    ],
-    incident_id: "inc-demo-002",
-    created_at: new Date(Date.now() - 7200000).toISOString(),
-  },
-];
+export const IN_MEMORY_YARA_MATCHES: YaraMatchRecord[] = [];
 
 /**
  * Reset memory store for testing.

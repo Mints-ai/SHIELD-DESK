@@ -62,7 +62,7 @@ export function authenticateIngestKey(apiKeyHeader: string | null): IngestAuthRe
       crypto.timingSafeEqual(rawKeyBuf, configuredKeyBuf)
     ) {
       // Single key bound to default tenant or configured tenant
-      const defaultTenant = process.env.SHIELDDESK_INGEST_TENANT || "acme-tenant";
+      const defaultTenant = process.env.SHIELDDESK_INGEST_TENANT || "mints-global";
       return { authenticated: true, tenantId: defaultTenant };
     }
   }

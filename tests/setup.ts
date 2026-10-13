@@ -29,9 +29,12 @@ process.env.SHIELDDESK_SESSION_SECRET =
   process.env.SHIELDDESK_SESSION_SECRET || "test-session-secret-for-unit-testing-minimum-32-chars!";
 process.env.SHIELDDESK_INGEST_API_KEY =
   process.env.SHIELDDESK_INGEST_API_KEY || "test-ingest-api-key-12345";
+process.env.SHIELDDESK_INGEST_TENANT =
+  process.env.SHIELDDESK_INGEST_TENANT || "acme-tenant";
 process.env.SHIELDDESK_INGEST_API_KEYS = JSON.stringify({
   "test-acme-ingest-key": "acme-tenant",
   "test-globex-ingest-key": "globex-tenant",
+  "test-mints-ingest-key": "mints-global",
 });
 process.env.SCAN_SERVICE_URL = "http://127.0.0.1:59999";
 process.env.PYTHON_AI_SERVICE_URL = "http://127.0.0.1:59999";

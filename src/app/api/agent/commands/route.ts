@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     if (!agentFound) {
       const mockAgent = await getEndpointAgent(agentId, {
         id: "system",
-        tenant_id: "acme-tenant",
+        tenant_id: "mints-global",
         role: "system_admin",
       });
       if (!mockAgent) {

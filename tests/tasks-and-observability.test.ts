@@ -16,7 +16,7 @@ test("Tasks & Observability Integration Suite", async (t) => {
     assert.equal(body.error, "Unauthorized");
   });
 
-  await t.test("GET /api/tasks: Returns Acme tenant tasks for authenticated analyst", async () => {
+  await t.test("GET /api/tasks: Returns Mints Global tenant tasks for authenticated analyst", async () => {
     const req = new NextRequest("http://localhost:3000/api/tasks", {
       headers: { "X-ShieldDesk-User": "dev-analyst" },
     });
@@ -24,7 +24,7 @@ test("Tasks & Observability Integration Suite", async (t) => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(Array.isArray(body.tasks));
-    assert.equal(body.tenantId, "acme-tenant");
+    assert.equal(body.tenantId, "mints-global");
   });
 
   await t.test("GET /api/tasks: Analyst sees only their own tenant tasks", async () => {
@@ -34,7 +34,7 @@ test("Tasks & Observability Integration Suite", async (t) => {
     const res = await getTasks(req);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.tenantId, "acme-tenant");
+    assert.equal(body.tenantId, "mints-global");
   });
 
   await t.test("POST /api/tasks: Blocks viewer role with 403 Forbidden", async () => {
@@ -96,7 +96,7 @@ test("Tasks & Observability Integration Suite", async (t) => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(Array.isArray(body.plans));
-    assert.equal(body.tenantId, "acme-tenant");
+    assert.equal(body.tenantId, "mints-global");
   });
 
   await t.test("trackError: Emits error ID and captures exception without throwing", () => {
