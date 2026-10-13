@@ -614,7 +614,19 @@
   margin-top: 4px;
   font-family: var(--font-space-grotesk), 'Space Grotesk', sans-serif;
 }
-.sd-sidebar nav { padding: 0 10px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
+.sd-sidebar nav {
+  padding: 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(216, 196, 154, 0.25) transparent;
+}
+.sd-sidebar nav::-webkit-scrollbar { width: 4px; }
+.sd-sidebar nav::-webkit-scrollbar-track { background: transparent; }
+.sd-sidebar nav::-webkit-scrollbar-thumb { background: rgba(216, 196, 154, 0.25); border-radius: 4px; }
+.sd-sidebar nav::-webkit-scrollbar-thumb:hover { background: rgba(216, 196, 154, 0.45); }
 .sd-nav-label {
   font-family: var(--font-space-grotesk), 'Space Grotesk', sans-serif;
   font-size: 10px;
@@ -622,18 +634,19 @@
   color: var(--sd-text-dim);
   letter-spacing: .12em;
   text-transform: uppercase;
-  margin: 4px 12px 9px;
+  margin: 4px 12px 6px;
 }
 .sd-nav-link {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 48px;
-  padding: 12px;
-  font-size: 14px;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 13.5px;
   color: var(--sd-text-muted);
   border: 1px solid transparent;
-  border-radius: 14px;
+  border-radius: 12px;
+  transition: all 0.15s ease;
 }
 .sd-nav-link svg { flex-shrink: 0; }
 .sd-nav-link:hover { background: rgba(216, 196, 154, 0.05); color: var(--sd-sand); }
@@ -645,10 +658,10 @@
   box-shadow: var(--sd-nav-selected-shadow);
 }
 .sd-nav-link[aria-current="page"] svg { color: var(--sd-wheat); }
-.sd-sidebar-bottom { margin-top: auto; padding: 24px 20px; }
-.sd-sidebar-bottom p { font-size: 13px; line-height: 1.6; font-weight: 300; color: var(--sd-text-muted); }
-.sd-sidebar-bottom .sd-sidebar-rule { margin: 18px 0; width: 28px; height: 2px; background: var(--sd-accent); }
-.sd-sidebar-footnote { margin-top: 12px; font-size: 10px; color: var(--sd-text-dim); line-height: 1.8; }
+.sd-sidebar-bottom { margin-top: auto; padding: 14px 18px 18px; }
+.sd-sidebar-bottom p { font-size: 12px; line-height: 1.5; font-weight: 300; color: var(--sd-text-muted); }
+.sd-sidebar-bottom .sd-sidebar-rule { margin: 12px 0; width: 28px; height: 2px; background: var(--sd-accent); }
+.sd-sidebar-footnote { margin-top: 10px; font-size: 10px; color: var(--sd-text-dim); line-height: 1.7; }
 .sd-mobile-nav-toggle, .sd-mobile-brand { display: none; }
 .sd-mobile-brand svg { display: none; color: var(--sd-wheat); }
 
