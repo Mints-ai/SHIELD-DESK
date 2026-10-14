@@ -12,8 +12,8 @@ async function resolveSession(req: NextRequest) {
     session = {
       uid: userHdr,
       role: userHdr.includes("admin") ? "system_admin" : "analyst",
-      tenantId: "acme-tenant",
-      email: `${userHdr}@acme.corp`,
+      tenantId: "mints-global",
+      email: `${userHdr}@mintsglobal.ae`,
     };
   }
   return session;
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const tenantId = searchParams.get("tenant_id") || session.tenantId || "acme-tenant";
+  const tenantId = searchParams.get("tenant_id") || session.tenantId || "mints-global";
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)));
 
   try {

@@ -59,7 +59,9 @@ Validated in:
 
 ## 4. Verification Evidence & Automated Test Matrix
 
+- [docs/SSH_PATCH_ROLLBACK_TEST_REPORT.md](file:///D:/mario/mINTS/ShieldDesk/UpdatedMainBranch/NEWCLONE/SHIELD-DESK/docs/SSH_PATCH_ROLLBACK_TEST_REPORT.md): Authoritative test report for SSH patching error taxonomy, LVM snapshot reversion, and Go/TS failure injection evidence.
 - `tests/verification-and-rollback-engine.test.ts`: Governed reversion and state verification.
 - `tests/closed-loop-orchestration-pipeline.test.ts`: Verification failure automatically triggers governed rollback.
 - `tests/safety-boundary.test.ts`: Production safety boundaries and kill-switch enforcement on rollback.
 - `agent/pkg/handlers/actions_test.go`: Native Go agent snapshot capture and rollback handlers.
+- `ssh-patch-orchestrator/internal/rollback/manager_test.go`: Immediate and deferred LVM snapshot merge tests.

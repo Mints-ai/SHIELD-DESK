@@ -13,10 +13,13 @@ export class MTLSGuard {
   private static inMemoryAgents: Map<
     string,
     { id: string; tenant_id: string; kill_switch_active: boolean; cert_fingerprint?: string }
-  > = new Map([
-    ["ea-srv-linux-01", { id: "ea-srv-linux-01", tenant_id: "acme-tenant", kill_switch_active: false }],
-    ["ea-srv-linux-02", { id: "ea-srv-linux-02", tenant_id: "acme-tenant", kill_switch_active: false }],
-  ]);
+  > =
+    process.env.NODE_ENV === "test"
+      ? new Map([
+          ["ea-srv-linux-01", { id: "ea-srv-linux-01", tenant_id: "acme-tenant", kill_switch_active: false }],
+          ["ea-srv-linux-02", { id: "ea-srv-linux-02", tenant_id: "acme-tenant", kill_switch_active: false }],
+        ])
+      : new Map();
 
   /**
    * Registers an enrolled agent in memory (for testing or fast lookup).
@@ -80,7 +83,7 @@ export class MTLSGuard {
 
     if (!agentRecord) {
       // Mock / test fallback
-      const mock = await getEndpointAgent(agentId, { id: "system", tenant_id: tenantId || "acme-tenant", role: "system_admin" });
+      const mock = await getEndpointAgent(agentId, { id: "system", tenant_id: tenantId || "mints-global", role: "system_admin" });
       if (mock) {
         agentRecord = {
           id: mock.id,

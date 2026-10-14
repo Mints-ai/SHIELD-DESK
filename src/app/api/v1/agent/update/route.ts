@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
 
     const event = await AgentUpdater.processCanaryEvaluation({
       agentId,
-      tenantId: tenantId || "acme-tenant",
+      tenantId: tenantId || "mints-global",
       fromVersion: fromVersion || "1.3.0",
       targetVersion,
       canarySuccessful,

@@ -17,8 +17,8 @@ async function resolveSession(req: NextRequest) {
     session = {
       uid: userHdr,
       role: userHdr.includes("admin") ? "system_admin" : "analyst",
-      tenantId: "acme-tenant",
-      email: `${userHdr}@acme.corp`,
+      tenantId: "mints-global",
+      email: `${userHdr}@mintsglobal.ae`,
     };
   }
   return session;
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const tenantId = searchParams.get("tenant_id") || session.tenantId || "acme-tenant";
+  const tenantId = searchParams.get("tenant_id") || session.tenantId || "mints-global";
 
   try {
     const rules = await getYaraRules(tenantId);
@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
     }
 
     const ast = parseResult.ast;
-    const tenantId = session.tenantId || "acme-tenant";
+    const tenantId = session.tenantId || "mints-global";
 
     // 2. Persist in Multi-Tenant Store
     const createdRule = await createYaraRule(

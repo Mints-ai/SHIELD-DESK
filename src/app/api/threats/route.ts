@@ -137,8 +137,8 @@ export async function GET(req: NextRequest) {
     session = {
       uid: "dev-analyst",
       role: "analyst",
-      tenantId: "acme-tenant",
-      email: "analyst@acme.corp",
+      tenantId: "mints-global",
+      email: "analyst@mintsglobal.ae",
     };
   }
   if (!session) {
@@ -459,8 +459,8 @@ export async function POST(req: NextRequest) {
       session = {
         uid: "dev-admin",
         role: "system_admin",
-        tenantId: "acme-tenant",
-        email: "admin@acme.corp",
+        tenantId: "mints-global",
+        email: "admin@mintsglobal.ae",
       };
     }
     if (!session) {
@@ -548,8 +548,7 @@ export async function POST(req: NextRequest) {
 
       // Record simulated anomaly alert in the active store
       const simulatedAlert = recordThreatAlert({
-        targetUser: session.uid || "admin@acme.corp",
-
+        targetUser: session.uid || "admin@mintsglobal.ae",
         clientIp: "192.168.1.105",
         failureReason: "Synthetic Anomaly Burst (+4.8σ baseline spike)",
         severity: "critical",
@@ -587,7 +586,7 @@ export async function POST(req: NextRequest) {
         threshold: 10.5,
         sigma_deviation: "+4.8σ above baseline",
         alert_dispatched: true,
-        alert_subject: "alerts.tenant_acme.auth_anomaly_burst",
+        alert_subject: "alerts.tenant_mints_global.auth_anomaly_burst",
         alert: simulatedAlert,
       });
     }

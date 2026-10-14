@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
     const { email, password, userId, mfaCode } = body || {};
 
     let authenticatedUid: string | null = null;
-    let tenantId = "acme-tenant";
+    let tenantId = "mints-global";
     let role: ShieldDeskRole = "analyst";
 
 

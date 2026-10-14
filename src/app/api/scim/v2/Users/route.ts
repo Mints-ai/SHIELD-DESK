@@ -19,7 +19,7 @@ function verifyScimBearer(req: NextRequest): { valid: boolean; tenantId: string 
     return { valid: false, tenantId: "" };
   }
 
-  const tenantId = req.headers.get("x-shielddesk-tenant-id") || "acme-tenant";
+  const tenantId = req.headers.get("x-shielddesk-tenant-id") || "mints-global";
   return { valid: true, tenantId };
 }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
-import { canAccess, canAssignTask } from "@/lib/permissions";
+import { canAccess, canAssignTask, getRoleTier } from "@/lib/permissions";
+import { getUserRole } from "@/lib/constants/devUsers";
 import { query } from "@/lib/db";
 import { trackError } from "@/lib/observability/errorTracker";
 import { isDemoModeActive } from "@/lib/config/environment";
@@ -142,6 +143,37 @@ export async function POST(req: NextRequest) {
 
     if (!title) {
       return NextResponse.json({ error: "Task title is required" }, { status: 400 });
+    }
+
+    // Role Hierarchy Constraint: Lower tier employee cannot assign a task to a higher tier employee
+    if (assignedTo) {
+      let assigneeRole: string | null = getUserRole(assignedTo);
+      if (!assigneeRole) {
+        try {
+          const userRes = await query<{ role: string }>(
+            "SELECT role FROM users WHERE id = $1 OR email = $1 LIMIT 1",
+            [assignedTo]
+          );
+          if (userRes.rows.length > 0) {
+            assigneeRole = userRes.rows[0].role;
+          }
+        } catch {
+          // DB error fallback
+        }
+      }
+
+      if (assigneeRole) {
+        const assignerTier = getRoleTier(session.role);
+        const assigneeTier = getRoleTier(assigneeRole);
+        if (assignerTier < assigneeTier) {
+          return NextResponse.json(
+            {
+              error: `HIERARCHY_VIOLATION: Lower tier employee (${session.role}) cannot assign a task to higher tier employee (${assigneeRole}).`,
+            },
+            { status: 403 }
+          );
+        }
+      }
     }
 
     const taskId = crypto.randomUUID();
