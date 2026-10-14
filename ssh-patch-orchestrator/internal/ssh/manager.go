@@ -73,13 +73,54 @@ func (m *Manager) Connect(ctx context.Context) error {
 		var err error
 		keyBytes, err = os.ReadFile(m.config.PrivateKeyPath)
 		if err != nil {
-			return NewSSHError(ErrClassAuthFailed, "failed to read private key file", err)
+			return NewSSHError(ErrClassAuthFailed, "failed to read private key file", err).WithRemediation(
+				"The specified private key file could not be read from disk.",
+				fmt.Sprintf("Verify that file %q exists and has read permissions", m.config.PrivateKeyPath),
+			)
 		}
 	}
 
+	keyStr := string(keyBytes)
+
+	// 1. Detect PuTTY .ppk format
+	if strings.Contains(keyStr, "PuTTY-User-Key-File") {
+		return NewSSHError(
+			ErrClassInvalidKeyFormat,
+			"PuTTY key format (.ppk) detected; OpenSSH PEM format is required",
+			nil,
+		).WithRemediation(
+			"PuTTY (.ppk) private keys cannot be parsed directly by OpenSSH. Convert it to OpenSSH format using puttygen.",
+			"Run: puttygen key.ppk -O private-openssh -o id_rsa",
+			"Or generate a modern standard key: ssh-keygen -t ed25519 -N '' -f ./id_ed25519",
+			"Paste the converted OpenSSH PEM key into ShieldDesk.",
+		)
+	}
+
+	// 2. Parse private key, catching passphrase-protection
 	signer, err := ssh.ParsePrivateKey(keyBytes)
 	if err != nil {
-		return NewSSHError(ErrClassAuthFailed, "failed to parse private key", err)
+		errStr := err.Error()
+		if strings.Contains(errStr, "passphrase") || strings.Contains(errStr, "protected") || strings.Contains(keyStr, "Proc-Type: 4,ENCRYPTED") {
+			return NewSSHError(
+				ErrClassPassphraseRequired,
+				"private key is passphrase-protected",
+				err,
+			).WithRemediation(
+				"The unattended SSH orchestrator requires an unencrypted private key.",
+				"Export an unencrypted copy: openssl rsa -in id_rsa -out id_rsa_decrypted",
+				"Or generate a dedicated deployment key: ssh-keygen -t ed25519 -N '' -f ./shielddesk_key",
+				"Ensure the public key is added to ~/.ssh/authorized_keys on the target host.",
+			)
+		}
+		return NewSSHError(
+			ErrClassInvalidKeyFormat,
+			"failed to parse private key (invalid PEM block or corrupted key)",
+			err,
+		).WithRemediation(
+			"The provided private key could not be parsed as a valid OpenSSH PEM certificate.",
+			"Ensure the key starts with '-----BEGIN OPENSSH PRIVATE KEY-----' or '-----BEGIN RSA PRIVATE KEY-----'",
+			"Check that the key has not been truncated or corrupted during copy-paste.",
+		)
 	}
 
 	clientConfig := &ssh.ClientConfig{
@@ -127,6 +168,10 @@ func (m *Manager) strictHostKeyCallback() ssh.HostKeyCallback {
 				ErrClassHostKeyMismatch,
 				fmt.Sprintf("host key fingerprint mismatch (expected: %s, received: %s)", expected, fp),
 				nil,
+			).WithRemediation(
+				"The target server's host key does not match the pinned fingerprint (possible Man-in-the-Middle attack or server re-provisioned).",
+				fmt.Sprintf("To obtain the actual fingerprint from the host, run: ssh-keyscan -p %d %s 2>/dev/null | ssh-keygen -lf -", m.config.Port, m.config.Host),
+				"If the host was intentionally re-provisioned, update the pinned HostKeyFingerprint in the job configuration.",
 			)
 		}
 		return nil
@@ -275,17 +320,33 @@ func (l *limitedWriter) Write(p []byte) (n int, err error) {
 func classifyDialError(err error) error {
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
-		return NewSSHError(ErrClassTimeout, "connection timed out during dial", err)
+		return NewSSHError(ErrClassTimeout, "connection timed out during dial", err).WithRemediation(
+			"TCP SYN packet timed out. Connection dropped by network firewall or security group.",
+			"Check cloud provider Security Group (AWS/GCP/Azure) allows inbound TCP/22 from the orchestrator IP.",
+			"On the target host, check local firewall: 'sudo ufw status' or 'sudo iptables -L -n | grep 22'",
+		)
 	}
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
-		return NewSSHError(ErrClassDNS, "DNS resolution failed", err)
+		return NewSSHError(ErrClassDNS, "DNS resolution failed", err).WithRemediation(
+			"The target hostname could not be resolved to an IP address.",
+			"Verify the hostname spelling or supply a static IPv4 address.",
+			"Verify DNS server connectivity in /etc/resolv.conf.",
+		)
 	}
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
-		return NewSSHError(ErrClassRefused, "connection refused or unreachable", err)
+		return NewSSHError(ErrClassRefused, "connection refused or unreachable", err).WithRemediation(
+			"TCP connection refused on target port (port 22 closed or sshd daemon dead).",
+			"Verify SSH service is running: 'sudo systemctl status ssh' or 'sudo systemctl status sshd'",
+			"Start SSH if stopped: 'sudo systemctl start ssh'",
+			"Verify listening port: 'sudo ss -tulpn | grep ssh' or check 'Port' in /etc/ssh/sshd_config",
+		)
 	}
-	return NewSSHError(ErrClassUnknown, "dial failed", err)
+	return NewSSHError(ErrClassUnknown, "dial failed", err).WithRemediation(
+		"Unable to establish TCP connection to target host.",
+		"Check network connectivity and ping reachability.",
+	)
 }
 
 func classifyConnError(err error) error {
@@ -295,10 +356,23 @@ func classifyConnError(err error) error {
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "unable to authenticate") {
-		return NewSSHError(ErrClassAuthFailed, "SSH authentication rejected", err)
+		return NewSSHError(ErrClassAuthFailed, "public key rejected by remote sshd", err).WithRemediation(
+			"Public key authentication was rejected by the target server. Common causes: missing key in authorized_keys, incorrect permissions violating OpenSSH StrictModes, or wrong username.",
+			"1. Enforce strict permissions on target host: chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys",
+			"2. Verify directory ownership: chown -R $USER:$USER ~/.ssh",
+			"3. Confirm public key is present in ~/.ssh/authorized_keys on the target host",
+			"4. Verify username matches the target Linux account (e.g. 'ubuntu', 'ec2-user', 'debian', or 'root')",
+			"5. Verify /etc/ssh/sshd_config has 'PubkeyAuthentication yes'",
+		)
 	}
 	if strings.Contains(msg, "host key") {
-		return NewSSHError(ErrClassHostKeyMismatch, "host key verification failed", err)
+		return NewSSHError(ErrClassHostKeyMismatch, "host key verification failed", err).WithRemediation(
+			"The target host key does not match the configured fingerprint.",
+			"Run 'ssh-keyscan -p <port> <host> 2>/dev/null | ssh-keygen -lf -' to verify the current host key fingerprint.",
+		)
 	}
-	return NewSSHError(ErrClassUnknown, "SSH connection setup failed", err)
+	return NewSSHError(ErrClassUnknown, "SSH connection setup failed", err).WithRemediation(
+		"SSH handshake failed.",
+		"Inspect /var/log/auth.log or journalctl -u ssh on the target host for detailed sshd rejection logs.",
+	)
 }

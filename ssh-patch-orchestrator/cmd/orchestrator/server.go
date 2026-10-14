@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -127,6 +128,7 @@ func (s *PatchServer) Handler() http.Handler {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/jobs", s.handleJobs)
 	mux.HandleFunc("/api/v1/jobs/", s.handleJob)
+	mux.HandleFunc("/api/v1/ssh/test", s.handleSSHTest)
 	return mux
 }
 
@@ -418,6 +420,17 @@ func (s *PatchServer) createJob(w http.ResponseWriter, r *http.Request) {
 			rec.Error = err.Error()
 			rec.mu.Unlock()
 			rec.appendLog("[ERROR] Pipeline terminated: " + err.Error())
+
+			var sshErr *ssh.SSHError
+			if errors.As(err, &sshErr) {
+				if sshErr.DiagnosticHint != "" {
+					rec.appendLog("[DIAGNOSTIC] " + sshErr.DiagnosticHint)
+				}
+				for _, step := range sshErr.RemediationSteps {
+					rec.appendLog("  ↳ " + step)
+				}
+			}
+
 			log.Printf("[job:%s] error: %v", jobID, err)
 		} else {
 			finalJob := orch.Job()
@@ -467,6 +480,111 @@ func (s *PatchServer) triggerRollback(w http.ResponseWriter, r *http.Request, jo
 		"job_id":  jobID,
 		"message": "Manual rollback is only available when the orchestrator is in a rollback-eligible state. The pipeline handles rollback automatically on failure.",
 		"state":   currentState,
+	})
+}
+
+// TestSSHRequest represents an incoming request to probe SSH connectivity and authentication.
+type TestSSHRequest struct {
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	User               string `json:"user"`
+	PrivateKeyPEM      string `json:"private_key_pem"`
+	HostKeyFingerprint string `json:"host_key_fingerprint"`
+}
+
+// TestSSHResponse represents the diagnostic outcome of an SSH test probe.
+type TestSSHResponse struct {
+	Connected        bool     `json:"connected"`
+	Message          string   `json:"message"`
+	ErrorClass       string   `json:"error_class,omitempty"`
+	DiagnosticHint   string   `json:"diagnostic_hint,omitempty"`
+	RemediationSteps []string `json:"remediation_steps,omitempty"`
+}
+
+func (s *PatchServer) handleSSHTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		jsonResponse(w, http.StatusOK, nil)
+		return
+	}
+	if r.Method != http.MethodPost {
+		jsonResponse(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req TestSSHRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body: " + err.Error()})
+		return
+	}
+
+	if req.Host == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "host is required"})
+		return
+	}
+	if req.User == "" {
+		req.User = "ubuntu"
+	}
+	if req.Port <= 0 {
+		req.Port = 22
+	}
+	if req.HostKeyFingerprint == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "host_key_fingerprint is required for secure host key verification"})
+		return
+	}
+	if req.PrivateKeyPEM == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "private_key_pem is required"})
+		return
+	}
+
+	sshCfg := ssh.Config{
+		Host:               req.Host,
+		Port:               req.Port,
+		User:               req.User,
+		PrivateKeyPEM:      []byte(req.PrivateKeyPEM),
+		HostKeyFingerprint: req.HostKeyFingerprint,
+		ConnectTimeout:     10 * time.Second,
+		CommandTimeout:     15 * time.Second,
+		MaxOutputBytes:     64 * 1024,
+	}
+
+	mgr, err := ssh.NewManager(sshCfg)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, TestSSHResponse{
+			Connected:      false,
+			Message:        err.Error(),
+			ErrorClass:     "CONFIG_ERROR",
+			DiagnosticHint: "SSH manager configuration validation failed.",
+		})
+		return
+	}
+	defer mgr.Close()
+
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+
+	if connErr := mgr.Connect(ctx); connErr != nil {
+		var sshErr *ssh.SSHError
+		if errors.As(connErr, &sshErr) {
+			jsonResponse(w, http.StatusOK, TestSSHResponse{
+				Connected:        false,
+				Message:          sshErr.Error(),
+				ErrorClass:       string(sshErr.Class),
+				DiagnosticHint:   sshErr.DiagnosticHint,
+				RemediationSteps: sshErr.RemediationSteps,
+			})
+			return
+		}
+		jsonResponse(w, http.StatusOK, TestSSHResponse{
+			Connected:  false,
+			Message:    connErr.Error(),
+			ErrorClass: "UNKNOWN",
+		})
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, TestSSHResponse{
+		Connected: true,
+		Message:   fmt.Sprintf("SSH connection and public key authentication successfully verified for %s@%s:%d", req.User, req.Host, req.Port),
 	})
 }
 
