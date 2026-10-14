@@ -181,6 +181,34 @@ export default function ScannerDashboardPage() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [activeJobState, setActiveJobState] = useState<string | null>(null);
   const [showAdvancedSSH, setShowAdvancedSSH] = useState<boolean>(false);
+  const [testingSSH, setTestingSSH] = useState<boolean>(false);
+  const [sshTestResult, setSshTestResult] = useState<{
+    tested: boolean;
+    connected: boolean;
+    message: string;
+    error_class?: string;
+    diagnostic_hint?: string;
+    remediation_steps?: string[];
+  } | null>(null);
+
+  const keyValidation = useMemo(() => {
+    if (!patchPrivateKey) return null;
+    if (patchPrivateKey.includes("PuTTY-User-Key-File")) {
+      return {
+        type: "putty",
+        message: "PuTTY .ppk key format detected. ShieldDesk requires OpenSSH PEM format.",
+        command: "puttygen key.ppk -O private-openssh -o id_rsa",
+      };
+    }
+    if (patchPrivateKey.includes("Proc-Type: 4,ENCRYPTED") || patchPrivateKey.includes("ENCRYPTED")) {
+      return {
+        type: "encrypted",
+        message: "Passphrase-protected private key detected. Unattended orchestration requires an unencrypted private key.",
+        command: "openssl rsa -in id_rsa -out id_rsa_decrypted",
+      };
+    }
+    return null;
+  }, [patchPrivateKey]);
 
   // Advisor Modal / Drawer state
   const [advisorContent, setAdvisorContent] = useState<string | null>(null);
@@ -605,6 +633,79 @@ export default function ScannerDashboardPage() {
       ]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const testSSHConnection = async () => {
+    setTestingSSH(true);
+    setSshTestResult(null);
+    const targetHostClean = patchHost.split(" ")[0].trim();
+    const testLog = `[${new Date().toLocaleTimeString()}] Probing SSH connectivity & public key auth for ${targetHostClean}:${patchPort}...`;
+    setPatchLogs((prev) => [...prev, testLog]);
+
+    try {
+      const payload = {
+        host: targetHostClean,
+        port: Number(patchPort) || 22,
+        user: patchUser.trim() || "ubuntu",
+        private_key_pem: patchPrivateKey,
+        host_key_fingerprint: patchHostKeyFingerprint,
+      };
+
+      const res = await fetch("/api/patch/test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (data.connected) {
+        setSshTestResult({
+          tested: true,
+          connected: true,
+          message: data.message || "Connection verified successfully.",
+        });
+        setPatchLogs((prev) => [
+          ...prev,
+          `[PROBE SUCCESS] ${data.message || "SSH handshake and public key accepted."}`,
+        ]);
+      } else {
+        setSshTestResult({
+          tested: true,
+          connected: false,
+          message: data.message || data.error || "Connection test failed.",
+          error_class: data.error_class,
+          diagnostic_hint: data.diagnostic_hint,
+          remediation_steps: data.remediation_steps,
+        });
+        const errLogs = [
+          `[PROBE FAILED] Class: ${data.error_class || "UNKNOWN"} | ${data.message || data.error}`,
+        ];
+        if (data.diagnostic_hint) {
+          errLogs.push(`[DIAGNOSTIC] ${data.diagnostic_hint}`);
+        }
+        if (data.remediation_steps && Array.isArray(data.remediation_steps)) {
+          data.remediation_steps.forEach((step: string) => {
+            errLogs.push(`  ↳ ${step}`);
+          });
+        }
+        setPatchLogs((prev) => [...prev, ...errLogs]);
+      }
+    } catch (err: any) {
+      setSshTestResult({
+        tested: true,
+        connected: false,
+        message: err.message,
+      });
+      setPatchLogs((prev) => [
+        ...prev,
+        `[PROBE FAILED] Network error testing SSH endpoint: ${err.message}`,
+      ]);
+    } finally {
+      setTestingSSH(false);
     }
   };
 
@@ -1382,6 +1483,18 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                           placeholder="-----BEGIN OPENSSH PRIVATE KEY-----..."
                           className="sd-input w-full p-1.5 rounded border border-[var(--sd-border)] bg-[var(--sd-surface)] text-[11px] font-mono text-[var(--sd-text)] resize-none"
                         />
+                        {keyValidation && (
+                          <div className="mt-2 p-2 rounded-lg border border-amber-500/40 bg-amber-950/20 text-amber-300 text-[11px] space-y-1">
+                            <div className="font-semibold flex items-center gap-1.5 text-amber-200">
+                              <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                              <span>Key Format Warning: {keyValidation.type === "putty" ? "PuTTY PPK Detected" : "Passphrase Detected"}</span>
+                            </div>
+                            <p>{keyValidation.message}</p>
+                            <div className="flex items-center gap-1 font-mono text-[10px] bg-black/40 p-1 rounded text-amber-100">
+                              <code>{keyValidation.command}</code>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1410,26 +1523,73 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                   </label>
                 </div>
 
-                <div className="flex items-center gap-2 pt-2">
+                <div className="space-y-2 pt-2">
+                  {/* Primary Action Button */}
                   <button
                     onClick={() => executePatch(isDryRun)}
-                    disabled={loading}
-                    className="sd-button sd-button-primary flex-1 px-3 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                    disabled={loading || testingSSH}
+                    className="sd-button sd-button-primary w-full h-10 px-4 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center justify-center gap-2 shadow-xs whitespace-nowrap disabled:opacity-50"
                   >
-                    <Play className="h-3.5 w-3.5" />
-                    <span>{isDryRun ? "Execute Dry Run" : "Apply Security Patch"}</span>
+                    <Play className="h-4 w-4 fill-current shrink-0" />
+                    <span>{isDryRun ? "Execute Dry Run Simulation" : "Apply Security Patch"}</span>
                   </button>
 
-                  <button
-                    onClick={rollbackSnapshot}
-                    disabled={loading}
-                    className="sd-button px-3 py-2 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] hover:bg-[var(--sd-warning-dim)]/80 text-[var(--sd-warning)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
-                    title="Rollback target host to pre-patch snapshot"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    <span>Rollback</span>
-                  </button>
+                  {/* Secondary Action Row: Test Connection & Rollback */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={testSSHConnection}
+                      disabled={testingSSH || loading || !patchHost}
+                      className="sd-button h-9 px-3 rounded-full border border-[var(--sd-border)] bg-[var(--sd-surface)] hover:bg-[var(--sd-surface-hover)] text-[var(--sd-text)] text-[12px] font-medium transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xs whitespace-nowrap disabled:opacity-50"
+                      title="Pre-flight test SSH reachability and public key authentication"
+                    >
+                      <Activity className={cn("h-3.5 w-3.5 text-cyan-400 shrink-0", testingSSH && "animate-spin")} />
+                      <span>{testingSSH ? "Testing..." : "Test Connection"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={rollbackSnapshot}
+                      disabled={loading}
+                      className="sd-button h-9 px-3 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] hover:bg-[var(--sd-warning-dim)]/80 text-[var(--sd-warning)] text-[12px] font-medium transition cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                      title="Rollback target host to pre-patch snapshot"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+                      <span>Rollback</span>
+                    </button>
+                  </div>
                 </div>
+
+                {sshTestResult && (
+                  <div className={cn(
+                    "p-3 rounded-xl border text-[12px] space-y-2 mt-2",
+                    sshTestResult.connected
+                      ? "border-emerald-500/40 bg-emerald-950/20 text-emerald-300"
+                      : "border-rose-500/40 bg-rose-950/20 text-rose-300"
+                  )}>
+                    <div className="font-semibold flex items-center gap-1.5 text-[12px]">
+                      {sshTestResult.connected ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
+                      )}
+                      <span>{sshTestResult.connected ? "Connection Verified" : `Connection Failed (${sshTestResult.error_class || "AUTH_FAILED"})`}</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed opacity-95">{sshTestResult.message}</p>
+                    {sshTestResult.diagnostic_hint && (
+                      <p className="text-[11px] font-medium text-rose-200 bg-rose-950/40 p-2 rounded-lg border border-rose-900/40">
+                        {sshTestResult.diagnostic_hint}
+                      </p>
+                    )}
+                    {sshTestResult.remediation_steps && sshTestResult.remediation_steps.length > 0 && (
+                      <div className="bg-black/40 p-2 rounded-lg space-y-1 font-mono text-[10px] border border-white/5">
+                        {sshTestResult.remediation_steps.map((step, idx) => (
+                          <div key={idx} className="text-rose-200 break-all">↳ {step}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Terminal Logs */}
