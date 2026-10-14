@@ -259,7 +259,8 @@ func main() {
 			if eps < 10 {
 				eps = 12 + (tickCount % 15)
 			}
-			sendHeartbeat(httpClient, *controlURL, *agentID, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			coreTelem := collector.HarvestCoreTelemetry(*hostname, metrics.CPUPercent, metrics.MemPercent)
+			sendHeartbeat(httpClient, *controlURL, *agentID, *hostname, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
 			log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
 				tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
 		}
@@ -554,6 +555,144 @@ func dispatch(command, hostname string, handler *handlers.ActionHandler) (string
 		}
 		return "rolled_back", out, targetSnap
 
+	case "firewall_add_rule":
+		if len(parts) < 4 {
+			return "failed", "usage: firewall_add_rule <name> <dir> <action> [proto] [port] [remoteIp]", ""
+		}
+		ruleName := parts[1]
+		dir := parts[2]
+		actionType := parts[3]
+		proto := "TCP"
+		if len(parts) > 4 {
+			proto = parts[4]
+		}
+		port := ""
+		remoteIP := ""
+		if len(parts) > 5 {
+			if strings.Contains(parts[5], ".") || strings.Contains(parts[5], ":") {
+				remoteIP = parts[5]
+			} else {
+				port = parts[5]
+			}
+		}
+		if len(parts) > 6 {
+			if remoteIP == "" {
+				remoteIP = parts[6]
+			} else if port == "" {
+				port = parts[6]
+			}
+		}
+		spec := handlers.FirewallRuleSpec{
+			Name:      ruleName,
+			Direction: dir,
+			Action:    actionType,
+			Protocol:  proto,
+			LocalPort: port,
+			RemoteIP:  remoteIP,
+		}
+		out, err := handler.AddFirewallRule(hostname, spec)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "firewall_delete_rule":
+		if len(parts) < 2 {
+			return "failed", "missing rule name to delete", ""
+		}
+		ruleName := parts[1]
+		out, err := handler.DeleteFirewallRule(hostname, ruleName)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "firewall_set_profile":
+		if len(parts) < 3 {
+			return "failed", "usage: firewall_set_profile <all|domain|private|public> <on|off>", ""
+		}
+		profile := parts[1]
+		state := parts[2]
+		out, err := handler.SetFirewallProfile(hostname, profile, state)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "firewall_set_default":
+		if len(parts) < 3 {
+			return "failed", "usage: firewall_set_default <block|allow> <allow|block>", ""
+		}
+		inbound := parts[1]
+		outbound := parts[2]
+		out, err := handler.SetFirewallDefaultPolicy(hostname, inbound, outbound)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "defender_scan":
+		scanType := "quick"
+		if len(parts) > 1 {
+			scanType = parts[1]
+		}
+		out, err := handler.DefenderScan(hostname, scanType)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "defender_update_signatures":
+		out, err := handler.DefenderUpdateSignatures(hostname)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "defender_set_realtime":
+		state := "on"
+		if len(parts) > 1 {
+			state = parts[1]
+		}
+		out, err := handler.DefenderSetRealtime(hostname, state)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "defender_remediate_threat":
+		threatID := "all"
+		if len(parts) > 1 {
+			threatID = parts[1]
+		}
+		out, err := handler.DefenderRemediateThreat(hostname, threatID)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "defender_add_exclusion":
+		if len(parts) < 2 {
+			return "failed", "usage: defender_add_exclusion <path>", ""
+		}
+		exclusionPath := strings.Join(parts[1:], " ")
+		out, err := handler.DefenderAddExclusion(hostname, exclusionPath)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "defender_remove_exclusion":
+		if len(parts) < 2 {
+			return "failed", "usage: defender_remove_exclusion <path>", ""
+		}
+		exclusionPath := strings.Join(parts[1:], " ")
+		out, err := handler.DefenderRemoveExclusion(hostname, exclusionPath)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
 	default:
 		return "failed", fmt.Sprintf("unrecognized command action: %s", action), ""
 	}
@@ -650,14 +789,15 @@ func enrollWithControlPlane(client *http.Client, controlURL, token, hostname str
 	return enrollResp.AgentID, enrollResp.TenantID, nil
 }
 
-func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cpu, mem float64, eps int) {
+func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cpu, mem float64, eps int, coreTelem telemetry.CoreTelemetry) {
 	payload := map[string]interface{}{
-		"agentId":     agentID,
-		"cpuUsage":    cpu,
-		"memoryUsage": mem,
-		"eps":         eps,
-		"status":      "connected",
-		"ipAddress":   getEndpointIP(client, controlURL),
+		"agentId":       agentID,
+		"cpuUsage":      cpu,
+		"memoryUsage":   mem,
+		"eps":           eps,
+		"status":        "connected",
+		"ipAddress":     getEndpointIP(client, controlURL),
+		"coreTelemetry": coreTelem,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

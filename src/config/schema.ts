@@ -197,7 +197,7 @@ export function validateEnvironment(env: Record<string, string | undefined> = pr
   }
 
   // Dev Personas: strictly blocked in production and staging
-  const devPersonasAllowed = !isProduction && !isStaging && demoMode;
+  const devPersonasAllowed = !isProduction && !isStaging;
 
   // Production Rule: DATABASE_URL is strictly required in production and staging
   if ((isProduction || isStaging) && (!raw.DATABASE_URL || raw.DATABASE_URL.trim() === "")) {

@@ -23,6 +23,7 @@ import {
   Server,
   ShieldAlert,
   UserCheck,
+  Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
@@ -586,9 +587,18 @@ export default function SOCTaskBoardPage() {
                 Tenant: {activeUser.tenantName}
               </span>
             </div>
-            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
-              Multi-Tenant Remediation Task Board with Closed-Loop Agent Dispatch
-            </p>
+            <div className="flex flex-wrap items-center gap-3 mt-1.5">
+              <p className="text-[13px] text-[var(--sd-text-muted)]">
+                Multi-Tenant Remediation Task Board with Closed-Loop Agent Dispatch
+              </p>
+              <Link
+                href="/dashboard/fleet"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono hover:bg-emerald-500/20 transition shadow-xs"
+              >
+                <Cpu className="h-3.5 w-3.5" />
+                <span>Open Endpoint Task Manager &amp; Telemetry &rarr;</span>
+              </Link>
+            </div>
           </div>
 
           <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">

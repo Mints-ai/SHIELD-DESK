@@ -6,7 +6,9 @@ import { checkThrottle, recordMockThrottleCommand } from "@/lib/governance/blast
 import { signCommand } from "@/lib/fleet/commandSigning";
 import { isDemoMode, isProduction, isSimulationAllowed } from "@/lib/config/environment";
 import { validateCapabilitySupport, getCapability } from "./capabilities";
+import { validateIpAddress } from "@/lib/utils/ipValidation";
 import crypto from "crypto";
+import os from "os";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
 export type OsType = "linux" | "windows" | "darwin";
@@ -90,10 +92,26 @@ export interface HashChainAuditRecord {
 }
 
 // In-memory store for dynamically enrolled agents in development / production runtime.
-// Test fixtures are isolated strictly to test runner executions (NODE_ENV === "test").
+// Test fixtures and dev baseline agents are isolated strictly to non-production environments.
 export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] =
-  process.env.NODE_ENV === "test"
+  process.env.NODE_ENV !== "production"
     ? [
+        {
+          id: "5a6ae808-7424-4b25-bf03-d337b052a016",
+          tenant_id: "acme-tenant",
+          hostname: "DELL",
+          ip_address: "106.76.189.217",
+          os_type: "windows",
+          agent_version: "0.4.2",
+          status: "connected",
+          cpu_usage: 8.0,
+          memory_usage: 65.9,
+          eps: 28,
+          kill_switch_active: false,
+          safety_snapshot_id: null,
+          last_heartbeat: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+        },
         {
           id: "ea111111-1111-1111-1111-111111111111",
           tenant_id: "acme-tenant",
@@ -498,7 +516,29 @@ export class RealAgentExecutor {
       },
     });
 
-    const output = `Command '${command}' cryptographically signed (Tier: ${tier}, Nonce: ${nonce.substring(0, 8)}...) and enqueued for agent delivery. Awaiting signed host execution report.`;
+    let output = `Command '${command}' cryptographically signed (Tier: ${tier}, Nonce: ${nonce.substring(0, 8)}...) and enqueued for agent delivery. Awaiting signed host execution report.`;
+
+    // Direct execution when target is the local host Windows machine
+    if (process.platform === "win32" && (agent.hostname.toUpperCase() === os.hostname().toUpperCase() || agent.id === "localhost" || agent.id === "local-host-agent")) {
+      try {
+        const { execSync } = require("child_process");
+        if (command.startsWith("defender_scan")) {
+          const scanType = command.includes("full") ? "FullScan" : "QuickScan";
+          execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-MpScan -ScanType ${scanType}"`, { timeout: 20000, stdio: "ignore" });
+          output = `Microsoft Defender ${scanType} Scan initiated and executing on host ${agent.hostname}.`;
+        } else if (command.startsWith("defender_update")) {
+          execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Update-MpSignature"`, { timeout: 20000, stdio: "ignore" });
+          output = `Microsoft Defender security intelligence definitions updated successfully on host ${agent.hostname}.`;
+        } else if (command.startsWith("defender_set_realtime")) {
+          const disable = command.includes("off") ? "$true" : "$false";
+          execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-MpPreference -DisableRealtimeMonitoring ${disable}"`, { timeout: 10000, stdio: "ignore" });
+          output = `Microsoft Defender Real-Time Protection toggled to ${command.includes("off") ? "DISABLED" : "ENABLED"} on host ${agent.hostname}.`;
+        } else if (command.startsWith("defender_remediate")) {
+          execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-MpThreat"`, { timeout: 10000, stdio: "ignore" });
+          output = `Microsoft Defender active threat remediation executed on host ${agent.hostname}.`;
+        }
+      } catch {}
+    }
 
     const logRecord: AgentCommandLogRecord = {
       id: commandLogId,
@@ -609,8 +649,7 @@ export class SimulationExecutor {
       output = `Network interface restored on ${agent.hostname}. Restored baseline routing table.`;
       agent.status = "connected";
     } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
-      const parts = command.trim().split(/\s+/);
-      const ip = (command.startsWith("block ip") ? parts[2] : parts[1]) || "";
+      const ip = (command.startsWith("block ip") ? command.replace(/^block ip\s+/i, "") : command.replace(/^block_ip\s+/i, "")).trim();
       output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Safety snapshot ${snapshotId} registered.`;
     } else if (command.startsWith("kill_process")) {
       const pid = command.trim().split(/\s+/)[1] || "";
@@ -621,6 +660,20 @@ export class SimulationExecutor {
     } else if (command.startsWith("rollback_snapshot")) {
       output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} on ${agent.hostname}.`;
       agent.status = "connected";
+    } else if (command.startsWith("defender_scan")) {
+      const type = command.includes("full") ? "Full" : "Quick";
+      output = `Microsoft Defender ${type} Scan initiated successfully on ${agent.hostname}. Scan task ID: mpscan-${Date.now().toString(36)}.`;
+    } else if (command.startsWith("defender_update")) {
+      output = `Microsoft Defender antivirus definition signatures updated successfully on ${agent.hostname}. Latest security intelligence applied.`;
+    } else if (command.startsWith("defender_set_realtime")) {
+      const state = command.includes("off") ? "DISABLED" : "ENABLED";
+      output = `Microsoft Defender Real-Time Protection set to ${state} on ${agent.hostname}.`;
+    } else if (command.startsWith("defender_remediate")) {
+      output = `Active threat purged and neutralized via Microsoft Defender engine on ${agent.hostname}.`;
+    } else if (command.startsWith("defender_add_exclusion")) {
+      output = `Exclusion rule appended to Microsoft Defender inspection engine on ${agent.hostname}.`;
+    } else if (command.startsWith("defender_remove_exclusion")) {
+      output = `Exclusion rule removed from Microsoft Defender inspection engine on ${agent.hostname}.`;
     } else {
       output = `Command '${command}' queued for agent delivery on ${agent.hostname}.`;
     }
@@ -694,6 +747,21 @@ export async function executeAgentCommand({
 
   if (agent.kill_switch_active) {
     throw new Error("KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch.");
+  }
+
+  // Parameter validation for targeted actions
+  if (command.startsWith("block_ip") || command.startsWith("block ip")) {
+    const rawIp = (command.startsWith("block ip") ? command.replace(/^block ip\s+/i, "") : command.replace(/^block_ip\s+/i, "")).trim();
+    const val = validateIpAddress(rawIp);
+    if (!val.valid) {
+      throw new Error(`INVALID_IP_ADDRESS: ${val.error}`);
+    }
+  } else if (command.startsWith("kill_process")) {
+    const rawPid = command.replace(/^kill_process\s+/i, "").trim();
+    const numPid = parseInt(rawPid, 10);
+    if (!rawPid || isNaN(numPid) || numPid <= 1) {
+      throw new Error("INVALID_PID: Process ID must be a positive integer greater than 1.");
+    }
   }
 
   if (isProduction()) {
@@ -777,7 +845,13 @@ export async function executeAgentCommand({
 
   // Tier 1 safety snapshot verification
   let snapshotId: string | undefined = undefined;
-  if (command.startsWith("isolate_host") || command.startsWith("block_ip") || command.startsWith("kill_process") || command.startsWith("take_safety_snapshot")) {
+  if (
+    command.startsWith("isolate_host") ||
+    command.startsWith("block_ip") ||
+    command.startsWith("kill_process") ||
+    command.startsWith("take_safety_snapshot") ||
+    command.startsWith("firewall_")
+  ) {
     const cleanHost = agent.hostname.toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 16);
     snapshotId = `snap-${cleanHost}-${Date.now().toString(36)}`;
   }
