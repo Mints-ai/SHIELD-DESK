@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  * - When requested from a web browser (Accept: text/html), seamlessly redirects to the /status UI.
  * - When requested via curl, monitoring agents, or with ?format=json, returns indented JSON telemetry.
  */
-export async function GET(req?: NextRequest) {
+export async function GET(req: NextRequest) {
   const acceptHeader = req?.headers?.get("accept") || "";
   const format = req?.nextUrl?.searchParams?.get("format");
 
