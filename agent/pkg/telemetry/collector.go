@@ -143,14 +143,15 @@ func (c *Collector) HarvestMetrics() HostMetrics {
 	var cpuPct, memPct float64
 	var uptime int64
 
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		cpuPct = c.readLinuxCPU()
 		memPct = c.readLinuxMem()
 		uptime = c.readLinuxUptime()
-	} else if runtime.GOOS == "windows" {
+	case "windows":
 		cpuPct, memPct = c.readWindowsMetrics()
 		uptime = time.Now().Unix()
-	} else {
+	default:
 		// Fallback for darwin or unsupported OS
 		var m runtime.MemStats
 		runtime.ReadMemStats(&m)
@@ -185,22 +186,26 @@ func (c *Collector) HarvestMetrics() HostMetrics {
 
 // HarvestProcesses lists active running processes from the OS.
 func (c *Collector) HarvestProcesses() []ProcessInfo {
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		return c.readLinuxProcesses()
-	} else if runtime.GOOS == "windows" {
+	case "windows":
 		return c.readWindowsProcesses()
+	default:
+		return nil
 	}
-	return nil
 }
 
 // HarvestConnections enumerates active socket connections from the OS.
 func (c *Collector) HarvestConnections() []NetworkConn {
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "linux":
 		return c.readLinuxConnections()
-	} else if runtime.GOOS == "windows" {
+	case "windows":
 		return c.readWindowsConnections()
+	default:
+		return nil
 	}
-	return nil
 }
 
 // DetectProcessAnomalies inspects running processes against previously observed state.
@@ -290,6 +295,9 @@ func (c *Collector) readLinuxMem() float64 {
 				avail, _ = strconv.ParseUint(fields[1], 10, 64)
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 35.0
 	}
 
 	if total > 0 {

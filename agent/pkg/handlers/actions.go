@@ -60,7 +60,8 @@ func (h *ActionHandler) TakeSafetySnapshot(hostname string) (string, error) {
 
 	if runtime.GOOS == "windows" {
 		out, _ := exec.Command("netstat", "-rn").CombinedOutput()
-		stateData.WriteString("Routing Table:\n" + string(out))
+		stateData.WriteString("Routing Table:\n")
+		stateData.Write(out)
 
 		// Export Windows firewall policy to a temporary binary snapshot file
 		wfwPath = filepath.Join(os.TempDir(), fmt.Sprintf("%s.wfw", snapID))
@@ -68,11 +69,13 @@ func (h *ActionHandler) TakeSafetySnapshot(hostname string) (string, error) {
 		stateData.WriteString(fmt.Sprintf("WFW Export: %s\n", wfwPath))
 	} else {
 		routeOut, _ := exec.Command("ip", "route").CombinedOutput()
-		stateData.WriteString("Routing Table:\n" + string(routeOut))
+		stateData.WriteString("Routing Table:\n")
+		stateData.Write(routeOut)
 
 		// Save iptables rules
 		iptablesOut, _ := exec.Command("iptables-save").CombinedOutput()
-		stateData.WriteString("Firewall:\n" + string(iptablesOut))
+		stateData.WriteString("Firewall:\n")
+		stateData.Write(iptablesOut)
 	}
 
 	h.snapshots[snapID] = Snapshot{
