@@ -25,6 +25,8 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/shield-emblem.png",
   "/robots.txt",
   "/sitemap.xml",
+  // Payment providers authenticate here through the handler's signature checks.
+  "/api/billing/webhook",
 ]);
 
 const PUBLIC_PATH_PREFIXES = [
