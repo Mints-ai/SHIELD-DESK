@@ -82,6 +82,103 @@ test("Tasks & Observability Integration Suite", async (t) => {
     assert.equal(body.task.tier, "Tier 2");
   });
 
+  await t.test("POST /api/tasks: Lower tier employee (responder) CANNOT assign task to higher tier employee (dev-admin)", async () => {
+    const req = new NextRequest("http://localhost:3000/api/tasks", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ShieldDesk-User": "dev-responder",
+      },
+      body: JSON.stringify({
+        title: "Unauthorized assignment to administrator",
+        tier: "Tier 2",
+        assignedTo: "dev-admin",
+      }),
+    });
+    const res = await postTasks(req);
+    assert.equal(res.status, 403);
+    const body = await res.json();
+    assert.ok(body.error.includes("HIERARCHY_VIOLATION"));
+    assert.ok(body.error.includes("Lower tier employee"));
+  });
+
+  await t.test("POST /api/tasks: Lower tier employee (responder) CANNOT assign task to higher tier employee (dev-super)", async () => {
+    const req = new NextRequest("http://localhost:3000/api/tasks", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ShieldDesk-User": "dev-responder",
+      },
+      body: JSON.stringify({
+        title: "Unauthorized assignment to super admin",
+        tier: "Tier 2",
+        assignedTo: "dev-super",
+      }),
+    });
+    const res = await postTasks(req);
+    assert.equal(res.status, 403);
+    const body = await res.json();
+    assert.ok(body.error.includes("HIERARCHY_VIOLATION"));
+  });
+
+  await t.test("POST /api/tasks: Employee (responder) CAN assign task to equal or lower tier employee", async () => {
+    // 1. Assign to peer responder (same tier)
+    const reqPeer = new NextRequest("http://localhost:3000/api/tasks", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ShieldDesk-User": "dev-responder",
+      },
+      body: JSON.stringify({
+        title: "Peer task assignment",
+        tier: "Tier 1",
+        assignedTo: "dev-responder",
+      }),
+    });
+    const resPeer = await postTasks(reqPeer);
+    assert.equal(resPeer.status, 200);
+    const bodyPeer = await resPeer.json();
+    assert.equal(bodyPeer.task.assigned_to, "dev-responder");
+
+    // 2. Assign to analyst (lower tier)
+    const reqAnalyst = new NextRequest("http://localhost:3000/api/tasks", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ShieldDesk-User": "dev-responder",
+      },
+      body: JSON.stringify({
+        title: "Delegated triage task",
+        tier: "Tier 1",
+        assignedTo: "dev-analyst",
+      }),
+    });
+    const resAnalyst = await postTasks(reqAnalyst);
+    assert.equal(resAnalyst.status, 200);
+    const bodyAnalyst = await resAnalyst.json();
+    assert.equal(bodyAnalyst.task.assigned_to, "dev-analyst");
+  });
+
+  await t.test("POST /api/tasks: System Admin (highest tier) can assign task to any employee", async () => {
+    const req = new NextRequest("http://localhost:3000/api/tasks", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ShieldDesk-User": "dev-admin",
+      },
+      body: JSON.stringify({
+        title: "Admin dispatched remediation",
+        tier: "Tier 3",
+        assignedTo: "dev-admin",
+      }),
+    });
+    const res = await postTasks(req);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.task.assigned_to, "dev-admin");
+  });
+
+
   await t.test("GET /api/plans: Returns 401 when unauthenticated", async () => {
     const req = new NextRequest("http://localhost:3000/api/plans");
     const res = await getPlans(req);
