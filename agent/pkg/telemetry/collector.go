@@ -567,11 +567,12 @@ func (c *Collector) HarvestCoreTelemetry(hostname string, cpu, mem float64) Core
 						pid, _ := strconv.Atoi(fields[4])
 						procName := pidMap[pid]
 						if procName == "" {
-							if pid == 0 {
+							switch pid {
+							case 0:
 								procName = "System Idle"
-							} else if pid == 4 {
+							case 4:
 								procName = "System"
-							} else {
+							default:
 								procName = fmt.Sprintf("PID %d", pid)
 							}
 						}
