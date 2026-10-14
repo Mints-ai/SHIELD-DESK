@@ -38,28 +38,32 @@ export interface ApprovalTokenRecord {
   used_at?: string | null;
 }
 
-// In-memory mock store for offline / dev fallback
-const MOCK_APPROVAL_TOKENS: Record<string, ApprovalTokenRecord> = {
-  "tok11111-1111-1111-1111-111111111111": {
-    id: "tok11111-1111-1111-1111-111111111111",
-    tenant_id: "acme-tenant",
-    task_id: "t1111111-1111-1111-1111-111111111111",
-    action_type: "isolate_host",
-    tier: "Tier 2",
-    status: "pending",
-    requested_by: "dev-analyst",
-    approved_by: null,
-    blast_radius: "Workstation FIN-WS-042 (Finance Subnet)",
-    model_confidence: 0.96,
-    expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-    created_at: new Date(Date.now() - 3600 * 1000).toISOString(),
-    updated_at: new Date(Date.now() - 3600 * 1000).toISOString(),
-    task_title: "Isolate affected host FIN-WS-042",
-    task_description: "Quarantine endpoint network interface to halt lateral movement toward database server",
-    target_endpoint_ids: ["ea111111-1111-1111-1111-111111111111", "FIN-WS-042"],
-    command_hash: null,
-  },
-};
+// In-memory token store for offline mode.
+// Pre-seeded test fixtures are isolated strictly to test runner executions (NODE_ENV === "test").
+const MOCK_APPROVAL_TOKENS: Record<string, ApprovalTokenRecord> =
+  process.env.NODE_ENV === "test"
+    ? {
+        "tok11111-1111-1111-1111-111111111111": {
+          id: "tok11111-1111-1111-1111-111111111111",
+          tenant_id: "acme-tenant",
+          task_id: "t1111111-1111-1111-1111-111111111111",
+          action_type: "isolate_host",
+          tier: "Tier 2",
+          status: "pending",
+          requested_by: "dev-analyst",
+          approved_by: null,
+          blast_radius: "Workstation FIN-WS-042 (Finance Subnet)",
+          model_confidence: 0.96,
+          expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+          created_at: new Date(Date.now() - 3600 * 1000).toISOString(),
+          updated_at: new Date(Date.now() - 3600 * 1000).toISOString(),
+          task_title: "Isolate affected host FIN-WS-042",
+          task_description: "Quarantine endpoint network interface to halt lateral movement toward database server",
+          target_endpoint_ids: ["ea111111-1111-1111-1111-111111111111", "FIN-WS-042"],
+          command_hash: null,
+        },
+      }
+    : {};
 
 /**
  * Requests an approval token for a mitigation task.

@@ -157,7 +157,7 @@ export function ConnectEndpointModal({
           token: data.token,
           tokenId: data.tokenId || "",
           expiresAt: data.expiresAt,
-          tenantId: data.tenantId || "acme-tenant",
+          tenantId: data.tenantId || "mints-global",
           installCommands: data.installCommands,
         });
       } else {

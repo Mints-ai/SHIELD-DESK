@@ -31,7 +31,7 @@ import { AutonomyTierBadge } from "@/components/governance/AutonomyTierBadge";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
 import { GlassDialog } from "@/components/ui/GlassDialog";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
-import { DEV_USERS, type DevUserId } from "@/lib/constants/devUsers";
+import { DEV_USERS, type DevUserId, getRoleTier, getUserRole, canAssignTaskToUser } from "@/lib/constants/devUsers";
 
 interface MitigationTaskItem {
   id: string;
@@ -73,6 +73,7 @@ export default function SOCTaskBoardPage() {
   const canEditTask = activeUser.role !== "analyst";
   const canAssignTask = activeUser.role !== "analyst";
   const canDispatch = activeUser.role === "system_admin" || activeUser.role === "super_admin" || activeUser.role === "responder";
+  const currentUserTier = getRoleTier(activeUser.role);
   // Responders can approve Tier 1 & Tier 2; Admins can approve all tiers; Analysts cannot approve any tier
   const canUserSignOffTask = (taskTier?: string) => {
     if (activeUser.role === "system_admin" || activeUser.role === "super_admin") {
@@ -98,6 +99,14 @@ export default function SOCTaskBoardPage() {
   const [newTaskTier, setNewTaskTier] = useState<"Tier 1" | "Tier 2" | "Tier 3">("Tier 2");
   const [newTaskPlanId, setNewTaskPlanId] = useState("");
   const [newTaskAssignedTo, setNewTaskAssignedTo] = useState<string>("dev-responder");
+
+  // Keep default assignee compatible with active operator's hierarchy tier
+  useEffect(() => {
+    const targetRole = getUserRole(newTaskAssignedTo);
+    if (targetRole && getRoleTier(targetRole) > currentUserTier) {
+      setNewTaskAssignedTo(activeUserId in DEV_USERS ? activeUserId : "dev-responder");
+    }
+  }, [activeUserId, currentUserTier, newTaskAssignedTo]);
   const [availablePlans, setAvailablePlans] = useState<
     Array<{
       id: string;
@@ -425,6 +434,19 @@ export default function SOCTaskBoardPage() {
     e.preventDefault();
     if (!newTaskTitle.trim() || isSubmitting) return;
 
+    // Client-side Hierarchy Constraint Guard: Lower tier employee cannot assign to higher tier employee
+    if (newTaskAssignedTo) {
+      const targetUserRole = getUserRole(newTaskAssignedTo);
+      if (targetUserRole && getRoleTier(targetUserRole) > currentUserTier) {
+        setExecutionNotice({
+          taskId: "create-task",
+          message: `Hierarchy violation: Lower tier employee (${activeUser.role}) cannot assign a task to higher tier employee (${targetUserRole}).`,
+          isError: true,
+        });
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const res = await fetch("/api/tasks", {
@@ -452,13 +474,25 @@ export default function SOCTaskBoardPage() {
             window.dispatchEvent(new CustomEvent("shielddesk:approvals-changed"));
           }
         }
+        setNewTaskTitle("");
+        setIsCreatingTask(false);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setExecutionNotice({
+          taskId: "create-task",
+          message: errData.error || "Failed to create task",
+          isError: true,
+        });
       }
     } catch (err) {
       console.error("Network error during task creation:", err);
+      setExecutionNotice({
+        taskId: "create-task",
+        message: "Network error during task creation",
+        isError: true,
+      });
     } finally {
       setIsSubmitting(false);
-      setNewTaskTitle("");
-      setIsCreatingTask(false);
     }
   };
 
@@ -860,10 +894,16 @@ export default function SOCTaskBoardPage() {
                 onChange={(e) => setNewTaskAssignedTo(e.target.value)}
                 className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
               >
-                <option value="dev-responder">Responder (dev-responder)</option>
-                <option value="dev-admin">System Admin (dev-admin)</option>
-                <option value="dev-super">Super Admin (dev-super)</option>
-                <option value="dev-analyst">SOC Analyst (dev-analyst)</option>
+                {(Object.keys(DEV_USERS) as DevUserId[]).map((userId) => {
+                  const user = DEV_USERS[userId];
+                  const userTier = getRoleTier(user.role);
+                  const isHigherTier = userTier > currentUserTier;
+                  return (
+                    <option key={userId} value={userId} disabled={isHigherTier}>
+                      {user.label} ({userId}){isHigherTier ? " — Higher tier (Restricted)" : ""}
+                    </option>
+                  );
+                })}
                 <option value="">Unassigned</option>
               </select>
               <p className="text-[10.5px] text-[var(--sd-text-muted)]">
@@ -1051,8 +1091,19 @@ export default function SOCTaskBoardPage() {
                     value={selectedTask.assigned_to || ""}
                     onChange={async (e) => {
                       const newAssignee = e.target.value || null;
+                      if (newAssignee) {
+                        const targetUserRole = getUserRole(newAssignee);
+                        if (targetUserRole && getRoleTier(targetUserRole) > currentUserTier) {
+                          setExecutionNotice({
+                            taskId: selectedTask.id,
+                            message: `Hierarchy violation: Lower tier employee (${activeUser.role}) cannot assign a task to higher tier employee (${targetUserRole}).`,
+                            isError: true,
+                          });
+                          return;
+                        }
+                      }
                       try {
-                        await fetch(`/api/tasks/${encodeURIComponent(selectedTask.id)}`, {
+                        const res = await fetch(`/api/tasks/${encodeURIComponent(selectedTask.id)}`, {
                           method: "PATCH",
                           headers: {
                             "Content-Type": "application/json",
@@ -1060,18 +1111,38 @@ export default function SOCTaskBoardPage() {
                           },
                           body: JSON.stringify({ assignedTo: newAssignee }),
                         });
-                        setSelectedTask((prev) => prev ? { ...prev, assigned_to: newAssignee } : null);
-                        setTasks((prev) => prev.map((t) => t.id === selectedTask.id ? { ...t, assigned_to: newAssignee } : t));
+                        if (res.ok) {
+                          setSelectedTask((prev) => prev ? { ...prev, assigned_to: newAssignee } : null);
+                          setTasks((prev) => prev.map((t) => t.id === selectedTask.id ? { ...t, assigned_to: newAssignee } : t));
+                        } else {
+                          const errData = await res.json().catch(() => ({}));
+                          setExecutionNotice({
+                            taskId: selectedTask.id,
+                            message: errData.error || "Failed to re-assign task",
+                            isError: true,
+                          });
+                        }
                       } catch (err) {
                         console.error("Failed to re-assign task:", err);
+                        setExecutionNotice({
+                          taskId: selectedTask.id,
+                          message: "Network error during re-assignment",
+                          isError: true,
+                        });
                       }
                     }}
                     className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-wheat)] font-semibold border border-[var(--sd-border)] rounded-lg px-2.5 py-1.5 outline-none font-mono cursor-pointer"
                   >
-                    <option value="dev-responder">Responder (dev-responder)</option>
-                    <option value="dev-admin">System Admin (dev-admin)</option>
-                    <option value="dev-super">Super Admin (dev-super)</option>
-                    <option value="dev-analyst">Analyst (dev-analyst)</option>
+                    {(Object.keys(DEV_USERS) as DevUserId[]).map((userId) => {
+                      const user = DEV_USERS[userId];
+                      const userTier = getRoleTier(user.role);
+                      const isHigherTier = userTier > currentUserTier;
+                      return (
+                        <option key={userId} value={userId} disabled={isHigherTier}>
+                          {user.label} ({userId}){isHigherTier ? " — Higher tier (Restricted)" : ""}
+                        </option>
+                      );
+                    })}
                     <option value="">Unassigned</option>
                   </select>
                 </div>

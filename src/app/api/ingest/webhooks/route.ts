@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     const requestedTenant =
       req.headers.get("x-shielddesk-tenant") || req.headers.get("x-tenant-id");
 
-    let tenantId = authResult.tenantId || "acme-tenant";
+    let tenantId = authResult.tenantId || "mints-global";
 
     // If a multi-tenant master key is used or header is supplied, verify tenant boundaries
     if (requestedTenant) {

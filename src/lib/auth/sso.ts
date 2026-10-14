@@ -24,6 +24,20 @@ export interface TenantSsoConfig {
 
 export const MOCK_SSO_CONFIGS: Map<string, TenantSsoConfig> = new Map([
   [
+    "mints-global",
+    {
+      tenantId: "mints-global",
+      provider: "okta",
+      enabled: true,
+      issuer: "https://auth.mintsglobal.ae/oauth2/default",
+      ssoUrl: "https://auth.mintsglobal.ae/sso/saml",
+      domainHint: "mintsglobal.ae",
+      defaultRole: "analyst",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+  ],
+  [
     "acme-tenant",
     {
       tenantId: "acme-tenant",

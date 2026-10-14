@@ -63,6 +63,16 @@ export interface TenantSubscription {
 
 // In-memory fallback for subscriptions
 const MOCK_SUBSCRIPTIONS: Record<string, TenantSubscription> = {
+  "mints-global": {
+    tenantId: "mints-global",
+    tier: "enterprise",
+    status: "active",
+    currentPeriodEnd: new Date(Date.now() + 365 * 86400 * 1000).toISOString(),
+    enrolledEndpoints: 0,
+    maxEndpoints: 500,
+    paymentProvider: "manual",
+    subscriptionId: "sub_mints_global_ent_001",
+  },
   "acme-tenant": {
     tenantId: "acme-tenant",
     tier: "professional",

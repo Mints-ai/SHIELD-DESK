@@ -6,20 +6,25 @@ import "fmt"
 type ErrorClass string
 
 const (
-	ErrClassDNS             ErrorClass = "DNS"
-	ErrClassRefused         ErrorClass = "REFUSED"
-	ErrClassTimeout         ErrorClass = "TIMEOUT"
-	ErrClassAuthFailed      ErrorClass = "AUTH_FAILED"
-	ErrClassHostKeyMismatch ErrorClass = "HOST_KEY_MISMATCH"
-	ErrClassDisconnected    ErrorClass = "DISCONNECTED_MID_COMMAND"
-	ErrClassUnknown         ErrorClass = "UNKNOWN"
+	ErrClassDNS                    ErrorClass = "DNS"
+	ErrClassRefused                ErrorClass = "REFUSED"
+	ErrClassTimeout                ErrorClass = "TIMEOUT"
+	ErrClassAuthFailed             ErrorClass = "AUTH_FAILED"
+	ErrClassHostKeyMismatch        ErrorClass = "HOST_KEY_MISMATCH"
+	ErrClassDisconnected           ErrorClass = "DISCONNECTED_MID_COMMAND"
+	ErrClassPassphraseRequired     ErrorClass = "PASSPHRASE_REQUIRED"
+	ErrClassInvalidKeyFormat       ErrorClass = "INVALID_KEY_FORMAT"
+	ErrClassPermissionsStrictModes ErrorClass = "PERMISSIONS_STRICTMODES"
+	ErrClassUnknown                ErrorClass = "UNKNOWN"
 )
 
-// SSHError provides a classified, structured SSH failure with wrapped root cause.
+// SSHError provides a classified, structured SSH failure with wrapped root cause and remediation hints.
 type SSHError struct {
-	Class   ErrorClass
-	Message string
-	Cause   error
+	Class            ErrorClass `json:"class"`
+	Message          string     `json:"message"`
+	DiagnosticHint   string     `json:"diagnostic_hint,omitempty"`
+	RemediationSteps []string   `json:"remediation_steps,omitempty"`
+	Cause            error      `json:"cause,omitempty"`
 }
 
 func (e *SSHError) Error() string {
@@ -31,6 +36,13 @@ func (e *SSHError) Error() string {
 
 func (e *SSHError) Unwrap() error {
 	return e.Cause
+}
+
+// WithRemediation decorates an SSHError with actionable Linux operational guidance.
+func (e *SSHError) WithRemediation(hint string, steps ...string) *SSHError {
+	e.DiagnosticHint = hint
+	e.RemediationSteps = steps
+	return e
 }
 
 // NewSSHError constructs a classified SSHError.

@@ -328,73 +328,80 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
 // "not_found" in the trained knowledge base, or the engine being
 // unreachable) are noted rather than failing the whole plan.
 // ---------------------------------------------------------------------------
-// In-memory mock storage for development / offline mode
-const MOCK_STORED_PLANS: Record<string, Record<string, unknown>> = {
-  "p1111111-1111-1111-1111-111111111111": {
-    id: "p1111111-1111-1111-1111-111111111111",
-    incident_code: "INC-1042",
-    incident_title: "Suspicious lateral movement on FIN-WS-042",
-    incident_severity: "critical",
-    tenant_id: "acme-tenant",
-    version: 1,
-    status: "active",
-    summary: "Multi-horizon containment and vulnerability remediation for lateral movement breach",
-    created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-  },
-};
+// In-memory plan storage for development / offline mode.
+// Pre-seeded test fixtures are isolated strictly to test runner executions (NODE_ENV === "test").
+const MOCK_STORED_PLANS: Record<string, Record<string, unknown>> =
+  process.env.NODE_ENV === "test"
+    ? {
+        "p1111111-1111-1111-1111-111111111111": {
+          id: "p1111111-1111-1111-1111-111111111111",
+          incident_code: "INC-1042",
+          incident_title: "Suspicious lateral movement on FIN-WS-042",
+          incident_severity: "critical",
+          tenant_id: "acme-tenant",
+          version: 1,
+          status: "active",
+          summary: "Multi-horizon containment and vulnerability remediation for lateral movement breach",
+          created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+        },
+      }
+    : {};
 
-const MOCK_STORED_TASKS: Record<string, Array<Record<string, unknown>>> = {
-  "p1111111-1111-1111-1111-111111111111": [
-    {
-      id: "t1111111-1111-1111-1111-111111111111",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      horizon: "immediate",
-      title: "Isolate affected host FIN-WS-042",
-      description: "Quarantine endpoint network interface to halt lateral movement toward database server",
-      tier: "Tier 2",
-      status: "pending",
-      blast_radius: "Single Workstation (FIN-WS-042)",
-      cve_id: null,
-      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-    },
-    {
-      id: "t2222222-2222-2222-2222-222222222222",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      horizon: "immediate",
-      title: "Revoke exposed user and administrative credentials",
-      description: "Terminate active session tokens for compromised user accounts",
-      tier: "Tier 1",
-      status: "completed",
-      blast_radius: "User Sessions",
-      cve_id: null,
-      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-    },
-    {
-      id: "t3333333-3333-3333-3333-333333333333",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      horizon: "short_term",
-      title: "Deploy vendor patch for CVE-2020-6240",
-      description: "Apply SAP Security Notes to resolve NetWeaver DoS vulnerability",
-      tier: "Tier 2",
-      status: "pending",
-      blast_radius: "Finance Subnet Application Servers",
-      cve_id: "CVE-2020-6240",
-      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-    },
-    {
-      id: "t4444444-4444-4444-4444-444444444444",
-      plan_id: "p1111111-1111-1111-1111-111111111111",
-      horizon: "long_term",
-      title: "Implement zero-trust microsegmentation",
-      description: "Enforce strict firewall ACLs between general workstations and financial database tier",
-      tier: "Tier 2",
-      status: "pending",
-      blast_radius: "Entire Finance Zone",
-      cve_id: null,
-      created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-    },
-  ],
-};
+const MOCK_STORED_TASKS: Record<string, Array<Record<string, unknown>>> =
+  process.env.NODE_ENV === "test"
+    ? {
+        "p1111111-1111-1111-1111-111111111111": [
+          {
+            id: "t1111111-1111-1111-1111-111111111111",
+            plan_id: "p1111111-1111-1111-1111-111111111111",
+            horizon: "immediate",
+            title: "Isolate affected host FIN-WS-042",
+            description: "Quarantine endpoint network interface to halt lateral movement toward database server",
+            tier: "Tier 2",
+            status: "pending",
+            blast_radius: "Single Workstation (FIN-WS-042)",
+            cve_id: null,
+            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+          },
+          {
+            id: "t2222222-2222-2222-2222-222222222222",
+            plan_id: "p1111111-1111-1111-1111-111111111111",
+            horizon: "immediate",
+            title: "Revoke exposed user and administrative credentials",
+            description: "Terminate active session tokens for compromised user accounts",
+            tier: "Tier 1",
+            status: "completed",
+            blast_radius: "User Sessions",
+            cve_id: null,
+            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+          },
+          {
+            id: "t3333333-3333-3333-3333-333333333333",
+            plan_id: "p1111111-1111-1111-1111-111111111111",
+            horizon: "short_term",
+            title: "Deploy vendor patch for CVE-2020-6240",
+            description: "Apply SAP Security Notes to resolve NetWeaver DoS vulnerability",
+            tier: "Tier 2",
+            status: "pending",
+            blast_radius: "Finance Subnet Application Servers",
+            cve_id: "CVE-2020-6240",
+            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+          },
+          {
+            id: "t4444444-4444-4444-4444-444444444444",
+            plan_id: "p1111111-1111-1111-1111-111111111111",
+            horizon: "long_term",
+            title: "Implement zero-trust microsegmentation",
+            description: "Enforce strict firewall ACLs between general workstations and financial database tier",
+            tier: "Tier 2",
+            status: "pending",
+            blast_radius: "Entire Finance Zone",
+            cve_id: null,
+            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+          },
+        ],
+      }
+    : {};
 
 // ---------------------------------------------------------------------------
 // Tool: generateMitigationPlan

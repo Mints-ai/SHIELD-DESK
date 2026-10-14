@@ -13,56 +13,18 @@ import { runGitleaksScan, isGitleaksAvailable, getLastGitleaksScanResult } from 
  * In production with FAIL_CLOSED=true, this endpoint returns 503 if the live
  * service is unreachable.
  */
-const MOCK_CVE_FINDINGS = [
-  {
-    cve_id: "CVE-2024-6387",
-    package_name: "openssh-server",
-    installed_version: "8.9p1-3ubuntu0.1",
-    fixed_version: "8.9p1-3ubuntu0.10",
-    severity: "CRITICAL",
-    cvss_score: 8.1,
-    epss_score: 0.92,
-    asset_id: "srv-prod-api-01",
-    description: "Signal handler race condition in OpenSSH server (regreSSHion) allowing unauthenticated RCE as root.",
-    remediation: "Upgrade openssh-server via apt-get or apply LVM rollback snapshot after testing.",
-  },
-  {
-    cve_id: "CVE-2024-3094",
-    package_name: "xz-utils",
-    installed_version: "5.6.0-0.2",
-    fixed_version: "5.6.1+really5.4.5-1",
-    severity: "CRITICAL",
-    cvss_score: 10.0,
-    epss_score: 0.97,
-    asset_id: "srv-prod-gateway-01",
-    description: "Malicious code backdoor in upstream xz/liblzma tarballs leading to SSH authentication bypass.",
-    remediation: "Downgrade xz-utils to safe version 5.4.5 and revoke all active host SSH keys.",
-  },
-  {
-    cve_id: "CVE-2023-4863",
-    package_name: "libwebp7",
-    installed_version: "1.2.2-2",
-    fixed_version: "1.2.2-2+deb11u1",
-    severity: "HIGH",
-    cvss_score: 8.8,
-    epss_score: 0.88,
-    asset_id: "srv-app-worker-02",
-    description: "Heap buffer overflow in WebP image processing allowing arbitrary code execution.",
-    remediation: "Update libwebp package and restart container workloads.",
-  },
-  {
-    cve_id: "CVE-2024-21626",
-    package_name: "runc",
-    installed_version: "1.1.11-0ubuntu1",
-    fixed_version: "1.1.12-0ubuntu1",
-    severity: "HIGH",
-    cvss_score: 8.6,
-    epss_score: 0.74,
-    asset_id: "k8s-node-worker-03",
-    description: "Internal file descriptor leak in runc allowing container breakout to host filesystem.",
-    remediation: "Patch container runtime runc across Kubernetes worker nodes.",
-  },
-];
+const MOCK_CVE_FINDINGS: Array<{
+  cve_id: string;
+  package_name: string;
+  installed_version: string;
+  fixed_version: string;
+  severity: string;
+  cvss_score: number;
+  epss_score: number;
+  asset_id: string;
+  description: string;
+  remediation: string;
+}> = [];
 
 
 export async function GET(req: NextRequest) {

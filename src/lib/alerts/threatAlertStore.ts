@@ -132,7 +132,7 @@ export function isIpBlocked(ip?: string | null): boolean {
 /**
  * Block a specific IP address and sync with Go Threat Engine
  */
-export function blockIp(ip: string, reason: string = "Exceeded 5 failed login attempts", attempts: number = 6, tenantId: string = "acme-tenant"): void {
+export function blockIp(ip: string, reason: string = "Exceeded 5 failed login attempts", attempts: number = 6, tenantId: string = "mints-global"): void {
   const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
   blockedIpsStore.set(cleanIp, {
     ip: cleanIp,
@@ -159,7 +159,7 @@ export function blockIp(ip: string, reason: string = "Exceeded 5 failed login at
 /**
  * Unblock a specific IP address and clear its failure records
  */
-export function unblockIp(ip: string, tenantId: string = "acme-tenant"): boolean {
+export function unblockIp(ip: string, tenantId: string = "mints-global"): boolean {
   const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
   const deleted = blockedIpsStore.delete(cleanIp);
   ipFailureTracker.delete(cleanIp);
@@ -231,7 +231,7 @@ export function recordFailureTimestamp(timestamp: number = Date.now(), count: nu
   fetch(`${threatServiceUrl}/api/threats/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "auth_failure", count, tenant_id: "acme-tenant" }),
+    body: JSON.stringify({ type: "auth_failure", count, tenant_id: "mints-global" }),
     signal: AbortSignal.timeout(500),
   }).catch(() => {});
 }
@@ -265,7 +265,7 @@ export function recordSudoExecution(count: number = 1): void {
   fetch(`${threatServiceUrl}/api/threats/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "sudo_burst", count, tenant_id: "acme-tenant" }),
+    body: JSON.stringify({ type: "sudo_burst", count, tenant_id: "mints-global" }),
     signal: AbortSignal.timeout(500),
   }).catch(() => {});
 }
@@ -296,7 +296,7 @@ export function recordNetworkEgress(mb: number, timestamp: number = Date.now()):
   fetch(`${threatServiceUrl}/api/threats/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "egress_spike", mb, tenant_id: "acme-tenant" }),
+    body: JSON.stringify({ type: "egress_spike", mb, tenant_id: "mints-global" }),
     signal: AbortSignal.timeout(500),
   }).catch(() => {});
 }
@@ -361,7 +361,7 @@ export function recordThreatAlert(params: {
 
   const cleanIp = params.clientIp === "::1" || !params.clientIp ? "127.0.0.1" : params.clientIp;
   const cleanEmail = (params.targetUser || "unknown").toLowerCase().trim();
-  const alertTenantId = params.tenantId || "acme-tenant";
+  const alertTenantId = params.tenantId || "mints-global";
   const key = `${alertTenantId}:${cleanIp}:${cleanEmail}`;
   const currentCount = (failureTracker.get(key) || 0) + 1;
   failureTracker.set(key, currentCount);
@@ -507,7 +507,7 @@ export function acknowledgeThreatAlert(
  * Reset all live sliding-window anomaly telemetry buffers back to nominal baseline.
  * Also removes synthetic simulated burst alerts and notifies Go Threat service.
  */
-export function resetAnomalyBaselines(tenantId: string = "acme-tenant"): void {
+export function resetAnomalyBaselines(tenantId: string = "mints-global"): void {
   failureTimestamps.length = 0;
   sudoTimestamps.length = 0;
   egressBursts.length = 0;
@@ -534,7 +534,7 @@ export function resetAnomalyBaselines(tenantId: string = "acme-tenant"): void {
 /**
  * Clear or reset all threat alerts, failures, and unblock IPs (for testing/demo)
  */
-export function resetThreatAlerts(tenantId: string = "acme-tenant"): void {
+export function resetThreatAlerts(tenantId: string = "mints-global"): void {
   alertsStore.length = 0;
   failureTracker.clear();
   ipFailureTracker.clear();

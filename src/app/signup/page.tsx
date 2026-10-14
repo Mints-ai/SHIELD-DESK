@@ -201,7 +201,7 @@ function SignupForm() {
                 required
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
-                placeholder="e.g. Acme Cybersecurity Corp"
+                placeholder="e.g. Mints Global Cybersecurity"
                 className="w-full px-3 py-2 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] text-sm text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)]/50 focus:outline-none focus:border-[var(--sd-pine)] transition"
               />
             </div>

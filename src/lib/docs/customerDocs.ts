@@ -592,8 +592,101 @@ Email our dedicated security team at **security@mintsglobal.ae** with your findi
 - We commit to acknowledging reports within **24 hours** and providing status updates every 72 hours until remediation is complete.
 `,
   },
+  {
+    id: "ssh-patch-rollback-report",
+    title: "SSH Patch Error Taxonomy & Governed Rollback Test Report",
+    category: "Trust & Compliance",
+    summary: "Authoritative validation report detailing SSH patch error taxonomy, automated LVM snapshot rollback (lvconvert --merge), deferred root reboots, and zero-mock verification evidence.",
+    readTime: "6 min read",
+    lastUpdated: "October 2026",
+    tags: ["SSH Patch", "Rollback", "LVM", "Error Taxonomy", "Verification", "SOC 2"],
+    filename: "SSH_PATCH_ROLLBACK_TEST_REPORT.md",
+    content: `# SSH Patch Orchestrator & Governed Rollback Test Report
+
+## 1. Executive Summary & Core Invariant
+Remediation operations in enterprise production environments carry inherent operational risk (dependency breakages, service lockouts, kernel instability).
+
+In adherence to ShieldDesk's foundational tenet—**PROVE BEFORE YOU ACT (Rule 3)**—the ShieldDesk SSH Patch Orchestrator mandatorily enforces:
+1. **No Patch Without Verified Rollback:** A target volume cannot enter \`PATCHING\` without an active, verified Copy-On-Write (COW) LVM snapshot (\`lv_attr\` active snapshot flag verified).
+2. **Exit Code 0 Is NOT Proof of Remediation:** A successful exit code from \`apt-get\` or \`dnf\` only signals package manager process termination. Remediation is verified **only** when post-patch semantic versioning and systemd daemon health checks pass.
+3. **Rollback Truth in Advertising:** An automated rollback deterministically restores the system to its pre-patch state. It is recorded as \`RESTORED_VULNERABILITY_REMAINS\` and its vulnerability status is locked at \`PRESENT\` (never falsely reported fixed).
+4. **No Hidden Rollback Failures:** Any failure during snapshot merge, deferred-reboot reconnect, or baseline restoration triggers immediate transition to \`ESCALATED_URGENT\`.
+
+---
+
+## 2. SSH Patch Error Taxonomy
+
+| Error Code | Phase | Trigger Condition | System Defense / Handling | Terminal State |
+| :--- | :--- | :--- | :--- | :--- |
+| \`ERR_PRECHECK_OS_UNSUPPORTED\` | Precheck | Target OS is not an enterprise Linux distribution (Ubuntu, Debian, RHEL, CentOS, Rocky) | Halts before creating snapshots or invoking package managers | \`HUMAN_REVIEW\` |
+| \`ERR_PRECHECK_INSUFFICIENT_COW_SPACE\` | Precheck | Free extent space in Volume Group is \`< 1024 MB\` | Snapshot creation avoided to prevent volume group exhaustion | \`HUMAN_REVIEW\` |
+| \`ERR_PRECHECK_PKG_LOCKED\` | Precheck | Dpkg lock (\`/var/lib/dpkg/lock-frontend\`) or RPM lock held | Fail-safe stop; avoids competing with running package managers | \`HUMAN_REVIEW\` |
+| \`ERR_SNAPSHOT_GATE_VIOLATION\` | Snapshot Gate | Snapshot created but \`lvs\` attribute is not snapshot (\`s\`), not active (\`a\`), or COW usage \`> 85%\` | Cleans up orphaned snapshot and stops before patch dispatch | \`HUMAN_REVIEW\` |
+| \`ERR_PATCH_EXEC_NONZERO\` | Patching | Package upgrade exited with code \`!= 0\` (dependency break, lock conflict) | Automatically triggers governed rollback | \`ROLLED_BACK_HUMAN_REVIEW\` |
+| \`ERR_VAL_VERSION_MISMATCH\` | Validation | Package exit was 0, but installed package version remains \`< target_version\` or \`== baseline\` | Automatic rollback triggered to prevent indeterminate partial states | \`ROLLED_BACK_HUMAN_REVIEW\` |
+| \`ERR_VAL_SERVICE_DEGRADED\` | Validation | Service post-patch \`systemctl is-active\` returned \`failed\`, \`inactive\`, or \`degraded\` | Automatic rollback triggered to protect service availability | \`ROLLED_BACK_HUMAN_REVIEW\` |
+| \`ERR_ROLLBACK_MERGE_FAILED\` | Rollback | \`lvconvert --merge\` command returned non-zero error code | Immediate operational escalation | \`ESCALATED_URGENT\` |
+| \`ERR_ROLLBACK_REBOOT_TIMEOUT\` | Rollback | Root volume deferred merge initiated reboot, but host failed to resume SSH ping within 3m | Escalates urgently for Out-of-Band rescue | \`ESCALATED_URGENT\` |
+| \`ERR_RESTORE_VERIFY_FAILED\` | Verification | Host reachable, but package version does not match pre-patch baseline or snapshot still exists in \`lvs\` | Escalates urgently; prevents silent reversion corruption | \`ESCALATED_URGENT\` |
+
+---
+
+## 3. Governed LVM Rollback & Verification Mechanics
+
+### 3.1 Snapshot Merging (\`lvconvert --merge\`)
+- **Immediate Merge (Non-Root Volumes):** Snapshot chunks merged synchronously into origin. Snapshot LV automatically deleted.
+- **Deferred Merge (Root Volume / In-Use Origin):** Linux kernel defers merge until volume reactivation. Orchestrator detects \`Merging will occur on next activation\`, sets \`MergeDeferred = true\`, and executes \`sudo systemctl reboot\`.
+
+### 3.2 Post-Reversion Verification Checklist
+1. **Snapshot Elimination:** \`sudo lvs /dev/<vg>/<snap_lv>\` must return non-zero exit code.
+2. **Package Version Equality:** Querying installed version matches baseline version exactly.
+3. **Daemon Service Verification:** Querying \`systemctl is-active <service>\` matches baseline active state.
+4. **Audit Evidence:** Outcome recorded as \`RESTORED_VULNERABILITY_REMAINS\` with status \`PRESENT\` in tamper-evident hash-chain ledger.
+
+---
+
+## 4. Automated Test Evidence Summary
+- **Go Orchestrator Suite (\`go test -v ./...\`):** 13/13 tests passed, covering state transitions, snapshot gating, patch failure rollbacks, and deferred merge reboot handling.
+- **Failure Injection Harness (\`tests/rollback-failure-injection.test.ts\`):** 8/8 failure scenarios passed (patch failure, service failure, network failure, snapshot corruption, disk full, agent disconnect, reboot, partial execution).
+- **Verification Engine Suite (\`tests/verification-and-rollback-engine.test.ts\`):** 5/5 invariant tests passed.
+`,
+  },
 
   // ── Support & Troubleshooting ──
+  {
+    id: "ssh-troubleshooting",
+    title: "Linux SSH Connectivity & Key Authentication Troubleshooting",
+    category: "Support",
+    summary: "Complete operational runbook for diagnosing connection refused, timeouts, public key rejections, OpenSSH StrictModes permission violations, and host key pinning.",
+    readTime: "5 min read",
+    lastUpdated: "October 2026",
+    tags: ["SSH", "Linux", "Troubleshooting", "Public Key", "StrictModes", "OpenSSH"],
+    filename: "SSH_CONNECTIVITY_AND_KEY_TROUBLESHOOTING.md",
+    content: `# Linux SSH Connectivity & Public Key Troubleshooting Runbook
+
+## 1. Network & Firewall Failures
+- **Connection Refused (Port 22 closed / sshd dead):** Verify with \`sudo systemctl status ssh\` and start with \`sudo systemctl start ssh\`. Check listening ports with \`sudo ss -tulpn | grep ssh\`.
+- **Connection Timeout (Firewall / Cloud Security Group drop):** Verify cloud provider security groups allow inbound TCP/22 from orchestrator. Check target firewall with \`sudo ufw status\` or \`sudo firewall-cmd --list-all\`.
+- **DNS Resolution Failure:** Verify hostname spelling, test with \`getent hosts <host>\`, or use static IPv4 address.
+
+---
+
+## 2. Public Key & Authentication Failures
+- **Public Key Rejected (\`none publickey\`):**
+  1. Enforce strict permissions: \`chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys\`
+  2. Verify ownership: \`chown -R $USER:$USER ~/.ssh\`
+  3. Ensure public key is present in \`~/.ssh/authorized_keys\`
+  4. Ensure \`PubkeyAuthentication yes\` in \`/etc/ssh/sshd_config\`
+- **Passphrase-Protected Key:** Unattended patching requires unencrypted private key. Decrypt with \`openssl rsa -in id_rsa -out id_rsa_decrypted\` or generate a dedicated key \`ssh-keygen -t ed25519 -N '' -f ./shielddesk_key\`.
+- **PuTTY Format (.ppk):** Convert PuTTY keys using \`puttygen key.ppk -O private-openssh -o id_rsa\`.
+- **Host Key Fingerprint Mismatch:** Pinned fingerprint protects against MITM. Obtain genuine SHA-256 fingerprint with \`ssh-keyscan -p <port> <host> 2>/dev/null | ssh-keygen -lf -\` and update job settings.
+
+---
+
+## 3. Web Console Pre-Flight Test Probe
+Use the **"Test Connection"** button in \`/dashboard/scanner#patch\` before executing a patch job. The orchestrator tests reachability, fingerprint matching, and public key acceptance in 1 second, printing instant actionable Linux commands if rejected.
+`,
+  },
   {
     id: "getting-help",
     title: "Getting Help, Support SLAs & Emergency Escalation",

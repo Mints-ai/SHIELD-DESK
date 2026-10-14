@@ -20,8 +20,8 @@ export async function GET(req: NextRequest) {
     session = {
       uid: "dev-analyst",
       role: "analyst",
-      tenantId: "acme-tenant",
-      email: "analyst@acme.corp",
+      tenantId: "mints-global",
+      email: "analyst@mintsglobal.ae",
     };
   }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -53,8 +53,8 @@ export async function POST(req: NextRequest) {
     session = {
       uid: "dev-analyst",
       role: "analyst",
-      tenantId: "acme-tenant",
-      email: "analyst@acme.corp",
+      tenantId: "mints-global",
+      email: "analyst@mintsglobal.ae",
     };
   }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

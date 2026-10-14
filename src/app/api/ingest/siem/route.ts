@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
         return NextResponse.json({ error: "Invalid HMAC signature" }, { status: 401 });
       }
-      tenantId = req.headers.get("x-shielddesk-tenant-id") || process.env.SHIELDDESK_INGEST_TENANT || "acme-tenant";
+      tenantId = req.headers.get("x-shielddesk-tenant-id") || process.env.SHIELDDESK_INGEST_TENANT || "mints-global";
     } else if (apiKeyHeader) {
       const authResult = authenticateIngestKey(apiKeyHeader);
       if (!authResult.authenticated || !authResult.tenantId) {
