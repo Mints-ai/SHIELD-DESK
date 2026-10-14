@@ -92,9 +92,9 @@ export interface HashChainAuditRecord {
 }
 
 // In-memory store for dynamically enrolled agents in development / production runtime.
-// Test fixtures are isolated strictly to test runner executions (NODE_ENV === "test").
+// Test fixtures and dev baseline agents are isolated strictly to non-production environments.
 export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] =
-  process.env.NODE_ENV === "test"
+  process.env.NODE_ENV !== "production"
     ? [
         {
           id: "5a6ae808-7424-4b25-bf03-d337b052a016",
