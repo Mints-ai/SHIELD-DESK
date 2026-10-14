@@ -94,6 +94,9 @@ export async function POST(req: NextRequest) {
     if (msg.includes("AGENT_NOT_FOUND")) {
       return NextResponse.json({ error: "Endpoint agent not found" }, { status: 404 });
     }
+    if (msg.includes("INVALID_IP_ADDRESS") || msg.includes("INVALID_PID")) {
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
     if (
       msg.includes("APPROVAL_TOKEN_REQUIRED") ||
       msg.includes("APPROVAL_TOKEN_NOT_APPROVED") ||
