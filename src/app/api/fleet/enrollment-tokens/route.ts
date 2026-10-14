@@ -39,17 +39,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Allow administrators or any authorized tenant operator in dev/demo environment
-  const isSuperOrAdmin =
-    session.role === "system_admin" ||
-    session.role === "super_admin" ||
-    session.role === "responder" ||
-    isDevPersonaAllowed();
-
-  if (!session.tenantId || !isSuperOrAdmin) {
+  if (!session.tenantId) {
     return NextResponse.json(
-      { error: "Insufficient permissions: Only administrators can create enrollment tokens" },
-      { status: 403 }
+      { error: "Invalid session: tenantId missing" },
+      { status: 400 }
     );
   }
 

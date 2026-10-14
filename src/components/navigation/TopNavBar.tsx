@@ -40,7 +40,8 @@ export function TopNavBar() {
     ollama: boolean;
     supabase: boolean;
     pythonAiEngine: boolean;
-  }>({ database: false, ollama: false, supabase: false, pythonAiEngine: false });
+    threatEngine: boolean;
+  }>({ database: false, ollama: false, supabase: false, pythonAiEngine: false, threatEngine: false });
 
   const [envMeta, setEnvMeta] = useState<{
     environment: string;
@@ -70,13 +71,14 @@ export function TopNavBar() {
           ollama: Boolean(data?.ollama?.reachable),
           supabase: Boolean(data?.supabase?.connected),
           pythonAiEngine: Boolean(data?.pythonAiEngine?.reachable),
+          threatEngine: Boolean(data?.threatEngine?.reachable ?? data?.pythonAiEngine?.reachable),
         });
         if (data?.environment) {
           setEnvMeta(data.environment);
         }
       })
       .catch(() => {
-        setHealthStatus({ database: false, ollama: false, supabase: false, pythonAiEngine: false });
+        setHealthStatus({ database: false, ollama: false, supabase: false, pythonAiEngine: false, threatEngine: false });
       })
       .finally(() => setHealthLoaded(true));
   }, []);
@@ -128,7 +130,7 @@ export function TopNavBar() {
     { label: "Database", connected: healthStatus.database, icon: Database },
     { label: "Supabase", connected: healthStatus.supabase, icon: Cloud },
     { label: "Local assistant", connected: healthStatus.ollama, icon: Cpu },
-    { label: "Threat engine", connected: healthStatus.pythonAiEngine, icon: Bot },
+    { label: "Threat engine", connected: healthStatus.threatEngine || healthStatus.pythonAiEngine, icon: Flame },
   ];
   const connectedCount = services.filter((service) => service.connected).length;
 

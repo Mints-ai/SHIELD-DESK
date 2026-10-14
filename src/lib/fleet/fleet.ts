@@ -267,10 +267,8 @@ export async function getEndpointAgent(
     caller.role === "super_admin";
 
   try {
-    const sql = canCrossTenant
-      ? `SELECT * FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`
-      : `SELECT * FROM endpoint_agents WHERE (id::text = $1 OR hostname = $1) AND tenant_id = $2 LIMIT 1;`;
-    const params = canCrossTenant ? [identifier] : [identifier, caller.tenant_id];
+    const sql = `SELECT * FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`;
+    const params = [identifier];
 
     const result = await query(sql, params);
     if (result && result.rows.length > 0) {

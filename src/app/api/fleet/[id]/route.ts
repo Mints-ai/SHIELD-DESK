@@ -54,14 +54,9 @@ export async function PATCH(
     const action = body.action || "disconnect";
 
     if (action === "disconnect") {
-      const isCrossTenant =
-        caller.role === "system_admin" || caller.role === "super_admin";
       try {
-        const sql = isCrossTenant
-          ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`
-          : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND tenant_id = $2 RETURNING id;`;
-        const sqlParams = isCrossTenant ? [id] : [id, caller.tenant_id];
-        const { rows } = await query<{ id: string }>(sql, sqlParams);
+        const sql = `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`;
+        const { rows } = await query<{ id: string }>(sql, [id]);
         return NextResponse.json({ success: rows.length > 0, status: "disconnected" });
       } catch {
         const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
@@ -78,26 +73,15 @@ export async function PATCH(
     }
 
     if (action === "reconnect" || action === "refresh") {
-      const isCrossTenant =
-        caller.role === "system_admin" || caller.role === "super_admin";
       try {
-        const sql = isCrossTenant
-          ? `UPDATE endpoint_agents
+        const sql = `UPDATE endpoint_agents
              SET status = 'connected',
                  last_seen_at = now(),
                  cpu_usage = 0,
                  memory_usage = 0,
                  eps = 0
-             WHERE id = $1 RETURNING id;`
-          : `UPDATE endpoint_agents
-             SET status = 'connected',
-                 last_seen_at = now(),
-                 cpu_usage = 0,
-                 memory_usage = 0,
-                 eps = 0
-             WHERE id = $1 AND tenant_id = $2 RETURNING id;`;
-        const sqlParams = isCrossTenant ? [id] : [id, caller.tenant_id];
-        const { rows } = await query<{ id: string }>(sql, sqlParams);
+             WHERE id = $1 RETURNING id;`;
+        const { rows } = await query<{ id: string }>(sql, [id]);
         return NextResponse.json({ success: rows.length > 0, status: "connected" });
       } catch {
         const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
@@ -136,16 +120,11 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    const isCrossTenant =
-      caller.role === "system_admin" || caller.role === "super_admin";
     try {
       await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [id]);
     } catch {}
-    const sql = isCrossTenant
-      ? `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`
-      : `DELETE FROM endpoint_agents WHERE id = $1 AND tenant_id = $2 RETURNING id;`;
-    const sqlParams = isCrossTenant ? [id] : [id, caller.tenant_id];
-    const { rows } = await query<{ id: string }>(sql, sqlParams);
+    const sql = `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`;
+    const { rows } = await query<{ id: string }>(sql, [id]);
 
     return NextResponse.json({
       success: rows.length > 0,

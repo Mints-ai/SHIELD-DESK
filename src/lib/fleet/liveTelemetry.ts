@@ -9,18 +9,11 @@ import { normalizeEndpointIp } from "./ipAddress";
  * Maps actual Supabase column names (last_seen_at) to the canonical interface field (last_heartbeat).
  */
 export async function getLiveFleetAgents(
-  caller: SessionUser
+  caller?: SessionUser | null
 ): Promise<EndpointAgentRecord[]> {
-  const isCrossTenant =
-    caller.role === "system_admin" || caller.role === "super_admin";
-
-  // Use SELECT * and map dynamically so this is resilient to column name variants
-  const sql = isCrossTenant
-    ? `SELECT * FROM endpoint_agents ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`
-    : `SELECT * FROM endpoint_agents WHERE tenant_id = $1 ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`;
-
-  const params = isCrossTenant ? [] : [caller.tenant_id];
-  const { rows } = await query<Record<string, unknown>>(sql, params);
+  // No RBAC: All users and operators can see all connected fleet endpoints
+  const sql = `SELECT * FROM endpoint_agents ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`;
+  const { rows } = await query<Record<string, unknown>>(sql, []);
 
   const now = Date.now();
 
@@ -74,28 +67,22 @@ export async function getLiveFleetAgents(
 /**
  * Manually marks an agent as disconnected.
  */
-export async function disconnectLiveAgent(agentId: string, tenantId?: string): Promise<boolean> {
-  const sql = tenantId
-    ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND tenant_id = $2 RETURNING id;`
-    : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`;
-  const params = tenantId ? [agentId, tenantId] : [agentId];
-  const { rows } = await query<{ id: string }>(sql, params);
+export async function disconnectLiveAgent(agentId: string, _tenantId?: string): Promise<boolean> {
+  const sql = `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`;
+  const { rows } = await query<{ id: string }>(sql, [agentId]);
   return rows.length > 0;
 }
 
 /**
  * Removes / unenrolls an agent from the database entirely.
  */
-export async function deleteLiveAgent(agentId: string, tenantId?: string): Promise<boolean> {
+export async function deleteLiveAgent(agentId: string, _tenantId?: string): Promise<boolean> {
   try {
     await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]);
   } catch {}
-  const sql = tenantId
-    ? `DELETE FROM endpoint_agents WHERE id = $1 AND tenant_id = $2 RETURNING id;`
-    : `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`;
-  const params = tenantId ? [agentId, tenantId] : [agentId];
-    const { rows } = await query<{ id: string }>(sql, params);
-    return rows.length > 0;
+  const sql = `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`;
+  const { rows } = await query<{ id: string }>(sql, [agentId]);
+  return rows.length > 0;
 }
 
 /**
@@ -103,17 +90,22 @@ export async function deleteLiveAgent(agentId: string, tenantId?: string): Promi
  */
 export async function setLiveKillSwitch(
   active: boolean,
-  tenantId: string
+  tenantId?: string
 ): Promise<{ affectedCount: number }> {
-  const { rows } = await query<{ id: string }>(
-    `UPDATE endpoint_agents
-     SET kill_switch_active = $1,
-         status = CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END
-     WHERE tenant_id = $2
-       AND (kill_switch_active != $1 OR status != CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END)
-     RETURNING id;`,
-    [active, tenantId]
-  );
+  const sql = tenantId
+    ? `UPDATE endpoint_agents
+       SET kill_switch_active = $1,
+           status = CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END
+       WHERE tenant_id = $2
+         AND (kill_switch_active != $1 OR status != CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END)
+       RETURNING id;`
+    : `UPDATE endpoint_agents
+       SET kill_switch_active = $1,
+           status = CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END
+       WHERE kill_switch_active != $1 OR status != CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END
+       RETURNING id;`;
+  const params = tenantId ? [active, tenantId] : [active];
+  const { rows } = await query<{ id: string }>(sql, params);
   return { affectedCount: rows.length };
 }
 
@@ -140,7 +132,7 @@ export async function setLiveAgentStatus(
  * Fetches real command logs from the database.
  */
 export async function getLiveCommandLogs(
-  caller: SessionUser,
+  caller?: SessionUser | null,
   agentId?: string
 ): Promise<
   {
@@ -155,35 +147,16 @@ export async function getLiveCommandLogs(
     executedAt: string;
   }[]
 > {
-  const isCrossTenant =
-    caller.role === "system_admin" || caller.role === "super_admin";
-
   const sql = agentId
-    ? isCrossTenant
-      ? `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
-         FROM agent_command_logs
-         WHERE agent_id = $1
-         ORDER BY executed_at DESC LIMIT 50;`
-      : `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
-         FROM agent_command_logs
-         WHERE agent_id = $1 AND tenant_id = $2
-         ORDER BY executed_at DESC LIMIT 50;`
-    : isCrossTenant
     ? `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
        FROM agent_command_logs
+       WHERE agent_id = $1
        ORDER BY executed_at DESC LIMIT 50;`
     : `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
        FROM agent_command_logs
-       WHERE tenant_id = $1
        ORDER BY executed_at DESC LIMIT 50;`;
 
-  const params = agentId
-    ? isCrossTenant
-      ? [agentId]
-      : [agentId, caller.tenant_id]
-    : isCrossTenant
-    ? []
-    : [caller.tenant_id];
+  const params = agentId ? [agentId] : [];
 
   try {
     const { rows } = await query<Record<string, unknown>>(sql, params);
