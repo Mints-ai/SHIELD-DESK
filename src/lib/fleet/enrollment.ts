@@ -191,7 +191,7 @@ export async function enrollEndpointAgent({
            AND ip_address = $2
            AND status = 'connected'
            AND kill_switch_active = false
-           AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '15 seconds')
+           AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '45 seconds')
          LIMIT 1;`,
         [tenantId, cleanIp]
       );
@@ -217,7 +217,7 @@ export async function enrollEndpointAgent({
           a.ip_address === cleanIp &&
           a.status === "connected" &&
           !a.kill_switch_active &&
-          Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+          Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
       );
 
       if (existingMock) {

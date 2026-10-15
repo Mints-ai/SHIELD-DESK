@@ -25,12 +25,12 @@ export async function getLiveFleetAgents(
   const sql = isCrossTenant
     ? `SELECT * FROM endpoint_agents 
        ORDER BY 
-         CASE WHEN status = 'connected' AND kill_switch_active = false AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '15 seconds') THEN 0 ELSE 1 END,
+         CASE WHEN status = 'connected' AND kill_switch_active = false AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '45 seconds') THEN 0 ELSE 1 END,
          created_at ASC NULLS LAST;`
     : `SELECT * FROM endpoint_agents 
        WHERE tenant_id = $1 
        ORDER BY 
-         CASE WHEN status = 'connected' AND kill_switch_active = false AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '15 seconds') THEN 0 ELSE 1 END,
+         CASE WHEN status = 'connected' AND kill_switch_active = false AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '45 seconds') THEN 0 ELSE 1 END,
          created_at ASC NULLS LAST;`;
 
   const params = isCrossTenant ? [] : [caller.tenant_id];
@@ -44,8 +44,8 @@ export async function getLiveFleetAgents(
       (row.last_seen_at || row.last_heartbeat || row.created_at || new Date()) as string
     );
     const msSinceHeartbeat = now - lastSeenDate.getTime();
-    // Agent ticks every 3 seconds. If no heartbeat for > 15s, mark as disconnected
-    const isTimedOut = msSinceHeartbeat > 15000;
+    // Agent ticks every 3 seconds. Allow up to 45s before marking disconnected to tolerate network jitter
+    const isTimedOut = msSinceHeartbeat > 45000;
 
     const cleanIp = normalizeEndpointIp(row.ip_address) || "Unknown";
     const tenantIdStr = String(row.tenant_id);
@@ -60,22 +60,17 @@ export async function getLiveFleetAgents(
       computedStatus = "disconnected";
     }
 
-    // Enforce single-endpoint-per-IP: only one endpoint per IP address can be connected at a time
+    // Single-endpoint-per-IP display enforcement
     if (computedStatus === "connected" && cleanIp !== "Unknown") {
       const tenantIpKey = `${tenantIdStr}:${cleanIp}`;
       if (connectedIpsByTenant.has(tenantIpKey)) {
-        // Another endpoint from this IP is already connected - force this duplicate to disconnected
         computedStatus = "disconnected";
-        query(
-          `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND status != 'disconnected'`,
-          [row.id]
-        ).catch(() => { });
       } else {
         connectedIpsByTenant.add(tenantIpKey);
       }
     }
 
-    // Proactively persist disconnected status to DB if it was previously marked connected or is blocked
+    // Persist disconnected status to DB only if truly timed out (>45s) or blocked
     if ((isTimedOut || isBlocked) && row.status !== "disconnected") {
       query(
         `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND status != 'disconnected'`,
@@ -83,7 +78,8 @@ export async function getLiveFleetAgents(
       ).catch(() => { });
     }
 
-    const isStale = msSinceHeartbeat > 8000;
+    // Stale indicator triggers only after 25s without a heartbeat (giving ample buffer for polling cycles)
+    const isStale = msSinceHeartbeat > 25000;
     const isOfflineOrStale = computedStatus === "disconnected" || isTimedOut || isStale || isBlocked;
 
     return {
@@ -123,8 +119,8 @@ export async function disconnectLiveAgent(agentId: string, tenantId?: string): P
 
   try {
     const sql = tenantId
-      ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND tenant_id = $2 RETURNING id;`
-      : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`;
+      ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id::text = $1 AND tenant_id = $2 RETURNING id;`
+      : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id::text = $1 RETURNING id;`;
     const params = tenantId ? [agentId, tenantId] : [agentId];
     const { rows } = await query<{ id: string }>(sql, params);
     return rows.length > 0 || Boolean(mockAgent);
@@ -141,10 +137,10 @@ export async function deleteLiveAgent(agentId: string, tenantId?: string): Promi
   const removedMock = removeMockEndpointAgent(agentId, tenantId);
 
   try {
-    await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]).catch(() => { });
+    await query(`DELETE FROM agent_command_logs WHERE agent_id::text = $1`, [agentId]).catch(() => { });
     const sql = tenantId
-      ? `DELETE FROM endpoint_agents WHERE id = $1 AND tenant_id = $2 RETURNING id;`
-      : `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`;
+      ? `DELETE FROM endpoint_agents WHERE id::text = $1 AND tenant_id = $2 RETURNING id;`
+      : `DELETE FROM endpoint_agents WHERE id::text = $1 RETURNING id;`;
     const params = tenantId ? [agentId, tenantId] : [agentId];
     const { rows } = await query<{ id: string }>(sql, params);
     return rows.length > 0 || removedMock;
@@ -158,18 +154,27 @@ export async function deleteLiveAgent(agentId: string, tenantId?: string): Promi
  */
 export async function setLiveKillSwitch(
   active: boolean,
-  tenantId: string
+  tenantId?: string
 ): Promise<{ affectedCount: number }> {
-  const { rows } = await query<{ id: string }>(
-    `UPDATE endpoint_agents
-     SET kill_switch_active = $1,
-         status = CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END
-     WHERE tenant_id = $2
-       AND (kill_switch_active != $1 OR status != CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END)
-     RETURNING id;`,
-    [active, tenantId]
-  );
-  return { affectedCount: rows.length };
+  try {
+    const sql = tenantId
+      ? `UPDATE endpoint_agents
+         SET kill_switch_active = $1,
+             status = CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END
+         WHERE tenant_id = $2
+           AND (kill_switch_active != $1 OR status != CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END)
+         RETURNING id;`
+      : `UPDATE endpoint_agents
+         SET kill_switch_active = $1,
+             status = CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END
+         WHERE (kill_switch_active != $1 OR status != CASE WHEN $1 THEN 'disconnected' ELSE 'connected' END)
+         RETURNING id;`;
+    const params = tenantId ? [active, tenantId] : [active];
+    const { rows } = await query<{ id: string }>(sql, params);
+    return { affectedCount: rows.length };
+  } catch {
+    return { affectedCount: 0 };
+  }
 }
 
 /**
@@ -191,7 +196,7 @@ export async function setLiveAgentStatus(
      SET status = $1
          ${isDisconnected ? ", cpu_usage = 0, memory_usage = 0, eps = 0" : ""}
          ${snapshotId !== undefined ? ", safety_snapshot_id = $3" : ""}
-     WHERE id = $2
+     WHERE id::text = $2
      RETURNING id;`,
     snapshotId !== undefined ? [status, agentId, snapshotId] : [status, agentId]
   );
