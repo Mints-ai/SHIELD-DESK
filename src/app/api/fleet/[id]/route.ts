@@ -97,6 +97,54 @@ export async function PATCH(
     }
 
     if (action === "reconnect" || action === "refresh") {
+      // Single-endpoint-per-IP: verify no other endpoint with this IP is currently connected
+      try {
+        const { rows: conflictRows } = await query<{ id: string; hostname: string; ip_address: string }>(
+          `SELECT c.id, c.hostname, c.ip_address
+           FROM endpoint_agents target
+           JOIN endpoint_agents c 
+             ON c.tenant_id = target.tenant_id 
+            AND c.ip_address = target.ip_address 
+            AND c.id != target.id
+            AND c.status = 'connected'
+            AND c.kill_switch_active = false
+            AND (COALESCE(c.last_seen_at, c.created_at) > now() - INTERVAL '15 seconds')
+           WHERE target.id = $1
+           LIMIT 1;`,
+          [id]
+        );
+
+        if (conflictRows.length > 0) {
+          return NextResponse.json(
+            {
+              error: `Cannot reconnect endpoint: Another endpoint ('${conflictRows[0].hostname}') is already connected from IP ${conflictRows[0].ip_address}. Only one endpoint per IP is allowed at a time.`,
+            },
+            { status: 409 }
+          );
+        }
+      } catch {}
+
+      const targetMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === id || a.hostname === id);
+      if (targetMock && targetMock.ip_address) {
+        const conflict = MOCK_ENDPOINT_AGENTS.find(
+          (a) =>
+            a.tenant_id === targetMock.tenant_id &&
+            a.id !== targetMock.id &&
+            a.ip_address === targetMock.ip_address &&
+            a.status === "connected" &&
+            !a.kill_switch_active &&
+            Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+        );
+        if (conflict) {
+          return NextResponse.json(
+            {
+              error: `Cannot reconnect endpoint: Another endpoint ('${conflict.hostname}') is already connected from IP ${conflict.ip_address}. Only one endpoint per IP is allowed at a time.`,
+            },
+            { status: 409 }
+          );
+        }
+      }
+
       const nowIso = new Date().toISOString();
       const mockAgent = MOCK_ENDPOINT_AGENTS.find(
         (a) => (a.id === id || a.hostname === id) && (isCrossTenant || a.tenant_id === caller.tenant_id)

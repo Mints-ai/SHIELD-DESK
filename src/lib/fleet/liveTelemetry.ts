@@ -14,15 +14,23 @@ export async function getLiveFleetAgents(
   const isCrossTenant =
     caller.role === "system_admin" || caller.role === "super_admin";
 
-  // Use SELECT * and map dynamically so this is resilient to column name variants
+  // Order by active status first, then created_at ASC (the incumbent connected endpoint wins)
   const sql = isCrossTenant
-    ? `SELECT * FROM endpoint_agents ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`
-    : `SELECT * FROM endpoint_agents WHERE tenant_id = $1 ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`;
+    ? `SELECT * FROM endpoint_agents 
+       ORDER BY 
+         CASE WHEN status = 'connected' AND kill_switch_active = false AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '15 seconds') THEN 0 ELSE 1 END,
+         created_at ASC NULLS LAST;`
+    : `SELECT * FROM endpoint_agents 
+       WHERE tenant_id = $1 
+       ORDER BY 
+         CASE WHEN status = 'connected' AND kill_switch_active = false AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '15 seconds') THEN 0 ELSE 1 END,
+         created_at ASC NULLS LAST;`;
 
   const params = isCrossTenant ? [] : [caller.tenant_id];
   const { rows } = await query<Record<string, unknown>>(sql, params);
 
   const now = Date.now();
+  const connectedIpsByTenant = new Set<string>();
 
   return rows.map((row) => {
     const lastSeenDate = new Date(
@@ -39,6 +47,24 @@ export async function getLiveFleetAgents(
       computedStatus = "disconnected";
     }
 
+    const cleanIp = normalizeEndpointIp(row.ip_address) || "Unknown";
+    const tenantIdStr = String(row.tenant_id);
+
+    // Enforce single-endpoint-per-IP: only one endpoint per IP address can be connected at a time
+    if (computedStatus === "connected" && cleanIp !== "Unknown") {
+      const tenantIpKey = `${tenantIdStr}:${cleanIp}`;
+      if (connectedIpsByTenant.has(tenantIpKey)) {
+        // Another endpoint from this IP is already connected - force this duplicate to disconnected
+        computedStatus = "disconnected";
+        query(
+          `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND status != 'disconnected'`,
+          [row.id]
+        ).catch(() => {});
+      } else {
+        connectedIpsByTenant.add(tenantIpKey);
+      }
+    }
+
     // Proactively persist disconnected status to DB if it was previously marked connected
     if (isTimedOut && row.status !== "disconnected") {
       query(
@@ -49,8 +75,6 @@ export async function getLiveFleetAgents(
 
     const isStale = msSinceHeartbeat > 8000;
     const isOfflineOrStale = computedStatus === "disconnected" || isTimedOut || isStale;
-
-    const cleanIp = normalizeEndpointIp(row.ip_address) || "Unknown";
 
     return {
       id: String(row.id),

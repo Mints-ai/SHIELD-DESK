@@ -273,4 +273,80 @@ test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry S
     const hbData2 = await hbRes2.json();
     assert.equal(hbData2.status, "connected", "Endpoint should be connected after explicit reconnect");
   });
+
+  await t.test("SD-030: Single-endpoint-per-IP policy rejects duplicate enrollment on same IP (409 Conflict)", async () => {
+    // Generate a new token
+    const tokReq = new NextRequest("http://localhost:3000/api/fleet/enrollment-tokens", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        label: "Duplicate IP test token",
+        expiresInHours: 1,
+        maxUses: 1,
+      }),
+    });
+    const tokRes = await enrollmentTokensPOST(tokReq);
+    assert.equal(tokRes.status, 200);
+    const { token: secondToken } = await tokRes.json();
+
+    // Attempt to enroll second agent using the same IP address ("10.0.15.99")
+    const dupEnrollReq = new NextRequest("http://localhost:3000/api/agent/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        token: secondToken,
+        hostname: "SRV-PROD-WORKER-DUP",
+        ipAddress: "10.0.15.99", // Same IP as enrolledAgentId
+        osType: "linux",
+      }),
+    });
+
+    const dupEnrollRes = await enrollPOST(dupEnrollReq);
+    assert.equal(dupEnrollRes.status, 409, "Enrollment from already-connected IP must be rejected with 409 Conflict");
+    const dupEnrollData = await dupEnrollRes.json();
+    assert.ok(dupEnrollData.error.includes("already connected"), "Error must clearly cite active IP conflict");
+  });
+
+  await t.test("SD-031: Heartbeat from duplicate endpoint on same IP is rejected (409 Conflict)", async () => {
+    // Register another agent directly into mock store with same IP
+    const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+    const dupAgentId = "dup-agent-test-id-002";
+    MOCK_ENDPOINT_AGENTS.push({
+      id: dupAgentId,
+      tenant_id: "acme-tenant",
+      hostname: "SRV-ROGUE-DUP-HB",
+      ip_address: "10.0.15.99", // Same IP as enrolledAgentId
+      os_type: "linux",
+      agent_version: "0.4.2",
+      status: "disconnected",
+      cpu_usage: 0,
+      memory_usage: 0,
+      eps: 0,
+      kill_switch_active: false,
+      safety_snapshot_id: null,
+      last_heartbeat: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    });
+
+    // Send heartbeat from dupAgentId while enrolledAgentId is actively connected on 10.0.15.99
+    const dupHbReq = new NextRequest("http://localhost:3000/api/agent/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agentId: dupAgentId,
+        ipAddress: "10.0.15.99",
+        cpuUsage: 10.0,
+        memoryUsage: 30.0,
+        eps: 25,
+      }),
+    });
+
+    const dupHbRes = await heartbeatPOST(dupHbReq);
+    assert.equal(dupHbRes.status, 409, "Heartbeat from duplicate IP must return 409 Conflict");
+    const dupHbData = await dupHbRes.json();
+    assert.equal(dupHbData.status, "disconnected");
+  });
 });
