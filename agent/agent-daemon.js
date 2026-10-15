@@ -823,6 +823,12 @@ async function start() {
       // Check and execute queued commands from control plane
       try {
         const cmdRes = await request(`${controlUrl}/api/agent/commands?agent_id=${agentId}`);
+        if (cmdRes.status === 404) {
+          console.log(`\n\x1b[31m[!] ENDPOINT REMOVED\x1b[0m — This host was deleted from the ShieldDesk fleet. Stopping daemon.`);
+          running = false;
+          clearInterval(interval);
+          process.exit(0);
+        }
         if (cmdRes.status === 200 && Array.isArray(cmdRes.data.commands) && cmdRes.data.commands.length > 0) {
           for (const cmd of cmdRes.data.commands) {
             console.log(`\n\x1b[35m[*] Received Command [${cmd.id}]:\x1b[0m ${cmd.command} (Tier: ${cmd.tier})`);

@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
     if (!isBlocked && agentId) {
       try {
         const { rows: agentRows } = await query<{ ip_address: string }>(
-          `SELECT ip_address FROM endpoint_agents WHERE id = $1 LIMIT 1;`,
+          `SELECT ip_address FROM endpoint_agents WHERE id::text = $1 LIMIT 1;`,
           [agentId]
         );
         if (agentRows.length > 0 && agentRows[0].ip_address) {
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
       await query(
         `UPDATE endpoint_agents
          SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
-         WHERE id = $1 OR ip_address = $2;`,
+         WHERE id::text = $1 OR ip_address = $2;`,
         [agentId, ipAddress || ""]
       ).catch(() => {});
 
@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
     if (!isExplicitlyDisconnected) {
       try {
         const { rows: agentLookup } = await query<{ id: string; hostname: string }>(
-          `SELECT id, hostname FROM endpoint_agents WHERE id = $1 OR hostname = $1 LIMIT 1;`,
+          `SELECT id, hostname FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`,
           [agentId]
         );
         if (agentLookup.length > 0) {
@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
       await query(
         `UPDATE endpoint_agents
          SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
-         WHERE id = $1 OR hostname = $1;`,
+         WHERE id::text = $1 OR hostname = $1;`,
         [agentId]
       ).catch(() => {});
 
@@ -146,12 +146,12 @@ export async function POST(req: NextRequest) {
       try {
         const { rows: conflictRows } = await query<{ id: string; hostname: string }>(
           `SELECT id, hostname FROM endpoint_agents
-           WHERE tenant_id = (SELECT tenant_id FROM endpoint_agents WHERE id = $1 LIMIT 1)
-             AND id != $1
+           WHERE tenant_id = (SELECT tenant_id FROM endpoint_agents WHERE id::text = $1 LIMIT 1)
+             AND id::text != $1
              AND ip_address = $2
              AND status = 'connected'
              AND kill_switch_active = false
-             AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '15 seconds')
+             AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '45 seconds')
            LIMIT 1;`,
           [agentId, ipAddress]
         );
@@ -160,7 +160,7 @@ export async function POST(req: NextRequest) {
           await query(
             `UPDATE endpoint_agents
              SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
-             WHERE id = $1;`,
+             WHERE id::text = $1;`,
             [agentId]
           ).catch(() => {});
 
@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
               a.ip_address === ipAddress &&
               a.status === "connected" &&
               !a.kill_switch_active &&
-              Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+              Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
           );
 
           if (conflictMock) {
@@ -227,7 +227,7 @@ export async function POST(req: NextRequest) {
                WHEN $6::text = 'disconnected' THEN 'disconnected'
                ELSE 'connected'
              END
-         WHERE id = $4
+         WHERE id::text = $4
          RETURNING id, kill_switch_active, tenant_id, status;`,
         [cpuUsage, memoryUsage, eps, agentId, ipAddress, requestedStatus, coreTelemetryJson]
       );
@@ -285,7 +285,7 @@ export async function POST(req: NextRequest) {
               a.ip_address === ipAddress &&
               a.status === "connected" &&
               !a.kill_switch_active &&
-              Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+              Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
           );
 
           if (conflictMock) {

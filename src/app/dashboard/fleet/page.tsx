@@ -293,7 +293,7 @@ export default function FleetPage() {
       const data = await res.json();
       if (res.ok) {
         setKillSwitchEngaged(data.killSwitchActive ?? nextState);
-        fetchFleet();
+        await fetchFleet(true);
         fetchLogs();
       } else {
         alert(data.error || "Action failed");
@@ -588,7 +588,7 @@ export default function FleetPage() {
         });
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
         setSelectedAgent((prev) => (prev?.id === agentId ? null : prev));
-        fetchFleet();
+        await fetchFleet(true);
       } else {
         alert(data.error || "Failed to remove agent");
       }
@@ -971,7 +971,7 @@ export default function FleetPage() {
                     agents.filter(
                       (a) =>
                         a.status === "connected" &&
-                        Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+                        Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
                     ).length
                   }
                 </span>
@@ -998,7 +998,7 @@ export default function FleetPage() {
                   (acc, a) =>
                     acc +
                     (a.status === "connected" &&
-                    Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+                    Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
                       ? a.eps || 0
                       : 0),
                   0
@@ -1087,10 +1087,10 @@ export default function FleetPage() {
               const msAgo = Math.max(0, Date.now() - new Date(agent.last_heartbeat).getTime());
               const secondsAgo = Math.floor(msAgo / 1000);
               const minutesAgo = Math.floor(secondsAgo / 60);
-              const isTimedOut = secondsAgo > 15;
+              const isTimedOut = secondsAgo > 45;
               const isDisconnected = agent.status === "disconnected" || isTimedOut;
               const effectiveStatus = isDisconnected ? "disconnected" : agent.status;
-              const isStale = !isDisconnected && secondsAgo > 8;
+              const isStale = !isDisconnected && secondsAgo > 25;
 
               const cleanIp =
                 agent.ip_address && agent.ip_address !== "Unknown"

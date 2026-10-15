@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -328,6 +329,9 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 	if resp.StatusCode == 423 {
 		log.Printf("[CommandPoll] Agent %s is locked by Emergency Admin Kill Switch.", agentID)
 		return
+	} else if resp.StatusCode == http.StatusNotFound {
+		fmt.Printf("\n\033[31m[!] ENDPOINT REMOVED\033[0m — This host was deleted from the ShieldDesk fleet. Stopping agent daemon.\n")
+		os.Exit(0)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -833,6 +837,10 @@ func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem flo
 	} else if resp.StatusCode == 403 {
 		log.Printf("[Heartbeat Alert] Connection rejected: IP address is blocked by SOC security policy. Endpoint disconnected from fleet.")
 		return "ip_blocked", nil
+	} else if resp.StatusCode == http.StatusNotFound {
+		fmt.Printf("\n\033[31m[!] ENDPOINT REMOVED\033[0m — This host was deleted from the ShieldDesk fleet. Stopping agent daemon.\n")
+		os.Exit(0)
+		return "removed", nil
 	}
 
 	if resp.StatusCode == http.StatusOK {
@@ -928,19 +936,61 @@ func getLocalEndpointIP() string {
 	if err != nil {
 		return ""
 	}
+
+	type candidate struct {
+		ip       string
+		priority int
+	}
+	var candidates []candidate
+
 	for _, iface := range interfaces {
+		lowerName := strings.ToLower(iface.Name)
+		isVirtual := strings.Contains(lowerName, "virtual") ||
+			strings.Contains(lowerName, "vbox") ||
+			strings.Contains(lowerName, "vmware") ||
+			strings.Contains(lowerName, "loopback") ||
+			strings.Contains(lowerName, "pseudo") ||
+			strings.Contains(lowerName, "docker") ||
+			strings.Contains(lowerName, "wsl") ||
+			strings.Contains(lowerName, "hyper-v") ||
+			strings.Contains(lowerName, "vethernet")
+
 		addresses, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
 		for _, address := range addresses {
 			ip, _, err := net.ParseCIDR(address.String())
-			if err == nil && ip.To4() != nil && !ip.IsLoopback() {
-				return ip.String()
+			if err != nil || ip.To4() == nil || ip.IsLoopback() {
+				continue
 			}
+			ipStr := ip.String()
+			if strings.HasPrefix(ipStr, "169.254.") || strings.HasPrefix(ipStr, "192.168.56.") {
+				continue
+			}
+
+			priority := 1
+			if isVirtual {
+				priority = 0
+			} else if strings.Contains(lowerName, "wi-fi") || strings.Contains(lowerName, "wifi") || strings.Contains(lowerName, "wireless") || strings.Contains(lowerName, "wlan") {
+				priority = 10
+			} else if strings.Contains(lowerName, "ethernet") || strings.Contains(lowerName, "eth") || strings.Contains(lowerName, "en") {
+				priority = 5
+			}
+
+			candidates = append(candidates, candidate{ip: ipStr, priority: priority})
 		}
 	}
-	return ""
+
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].priority > candidates[j].priority
+	})
+
+	return candidates[0].ip
 }
 
 func cacheEndpointIP(ip string) string {
