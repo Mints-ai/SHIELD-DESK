@@ -2,6 +2,7 @@ import { query } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth/session";
 import type { EndpointAgentRecord } from "./fleet";
 import { normalizeEndpointIp } from "./ipAddress";
+import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
 
 /**
  * Returns the live fleet agents for a caller, reading exclusively from the database.
@@ -40,15 +41,18 @@ export async function getLiveFleetAgents(
     // Agent ticks every 3 seconds. If no heartbeat for > 15s, mark as disconnected
     const isTimedOut = msSinceHeartbeat > 15000;
 
+    const cleanIp = normalizeEndpointIp(row.ip_address) || "Unknown";
+    const tenantIdStr = String(row.tenant_id);
+
     let computedStatus: import("./fleet").AgentStatus = String(row.status || "disconnected") as import("./fleet").AgentStatus;
-    if (row.kill_switch_active) {
+    const isBlocked = cleanIp !== "Unknown" && isIpBlocked(cleanIp);
+    if (isBlocked) {
+      computedStatus = "disconnected";
+    } else if (row.kill_switch_active) {
       computedStatus = "disconnected";
     } else if (computedStatus !== "isolated" && isTimedOut) {
       computedStatus = "disconnected";
     }
-
-    const cleanIp = normalizeEndpointIp(row.ip_address) || "Unknown";
-    const tenantIdStr = String(row.tenant_id);
 
     // Enforce single-endpoint-per-IP: only one endpoint per IP address can be connected at a time
     if (computedStatus === "connected" && cleanIp !== "Unknown") {
@@ -59,22 +63,22 @@ export async function getLiveFleetAgents(
         query(
           `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND status != 'disconnected'`,
           [row.id]
-        ).catch(() => {});
+        ).catch(() => { });
       } else {
         connectedIpsByTenant.add(tenantIpKey);
       }
     }
 
-    // Proactively persist disconnected status to DB if it was previously marked connected
-    if (isTimedOut && row.status !== "disconnected") {
+    // Proactively persist disconnected status to DB if it was previously marked connected or is blocked
+    if ((isTimedOut || isBlocked) && row.status !== "disconnected") {
       query(
-        `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, eps = 0 WHERE id = $1 AND status != 'disconnected'`,
+        `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND status != 'disconnected'`,
         [row.id]
-      ).catch(() => {});
+      ).catch(() => { });
     }
 
     const isStale = msSinceHeartbeat > 8000;
-    const isOfflineOrStale = computedStatus === "disconnected" || isTimedOut || isStale;
+    const isOfflineOrStale = computedStatus === "disconnected" || isTimedOut || isStale || isBlocked;
 
     return {
       id: String(row.id),
@@ -130,7 +134,7 @@ export async function deleteLiveAgent(agentId: string, tenantId?: string): Promi
   const removedMock = removeMockEndpointAgent(agentId, tenantId);
 
   try {
-    await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]).catch(() => {});
+    await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [agentId]).catch(() => { });
     const sql = tenantId
       ? `DELETE FROM endpoint_agents WHERE id = $1 AND tenant_id = $2 RETURNING id;`
       : `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`;
@@ -169,9 +173,11 @@ export async function setLiveAgentStatus(
   status: string,
   snapshotId?: string | null
 ): Promise<boolean> {
+  const isDisconnected = status === "disconnected";
   const { rows } = await query<{ id: string }>(
     `UPDATE endpoint_agents
      SET status = $1
+         ${isDisconnected ? ", cpu_usage = 0, memory_usage = 0, eps = 0" : ""}
          ${snapshotId !== undefined ? ", safety_snapshot_id = $3" : ""}
      WHERE id = $2
      RETURNING id;`,
@@ -213,10 +219,10 @@ export async function getLiveCommandLogs(
          WHERE agent_id = $1 AND tenant_id = $2
          ORDER BY executed_at DESC LIMIT 50;`
     : isCrossTenant
-    ? `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
+      ? `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
        FROM agent_command_logs
        ORDER BY executed_at DESC LIMIT 50;`
-    : `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
+      : `SELECT id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at
        FROM agent_command_logs
        WHERE tenant_id = $1
        ORDER BY executed_at DESC LIMIT 50;`;
@@ -226,8 +232,8 @@ export async function getLiveCommandLogs(
       ? [agentId]
       : [agentId, caller.tenant_id]
     : isCrossTenant
-    ? []
-    : [caller.tenant_id];
+      ? []
+      : [caller.tenant_id];
 
   try {
     const { rows } = await query<Record<string, unknown>>(sql, params);

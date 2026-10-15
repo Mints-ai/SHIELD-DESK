@@ -4,8 +4,8 @@ import { MOCK_ENDPOINT_AGENTS } from "@/lib/fleet/fleet";
 import { resolveEndpointIp } from "@/lib/fleet/ipAddress";
 import { trackError } from "@/lib/observability/errorTracker";
 import { MetricsRegistry } from "@/lib/observability/metrics";
-
 import { storeEndpointCoreTelemetry } from "@/lib/fleet/liveTelemetryCollector";
+import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
 
 /**
  * POST /api/agent/heartbeat
@@ -39,6 +39,53 @@ export async function POST(req: NextRequest) {
       body.coreTelemetry && typeof body.coreTelemetry === "object"
         ? JSON.stringify(body.coreTelemetry)
         : null;
+
+    // Enforce SOC IP containment: check if resolved IP or agent's registered IP is blocked
+    let isBlocked = ipAddress ? isIpBlocked(ipAddress) : false;
+    if (!isBlocked && agentId) {
+      try {
+        const { rows: agentRows } = await query<{ ip_address: string }>(
+          `SELECT ip_address FROM endpoint_agents WHERE id = $1 LIMIT 1;`,
+          [agentId]
+        );
+        if (agentRows.length > 0 && agentRows[0].ip_address) {
+          isBlocked = isIpBlocked(agentRows[0].ip_address);
+        }
+      } catch {
+        const mockAgent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId);
+        if (mockAgent && mockAgent.ip_address) {
+          isBlocked = isIpBlocked(mockAgent.ip_address);
+        }
+      }
+    }
+
+    if (isBlocked) {
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+         WHERE id = $1 OR ip_address = $2;`,
+        [agentId, ipAddress || ""]
+      ).catch(() => {});
+
+      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || (ipAddress && a.ip_address === ipAddress));
+      if (currentMock) {
+        currentMock.status = "disconnected";
+        currentMock.cpu_usage = 0;
+        currentMock.memory_usage = 0;
+        currentMock.eps = 0;
+      }
+
+      MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "ip_blocked" });
+      return NextResponse.json(
+        {
+          error: "IP_BLOCKED",
+          message: `Traffic from IP ${ipAddress || "this host"} is blocked by SOC security policy. Connectivity has been terminated. To restore connectivity, run 'unblock_ip'.`,
+          status: "disconnected",
+          killSwitchActive: false,
+        },
+        { status: 403 }
+      );
+    }
 
     // Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
     if (ipAddress && requestedStatus !== "disconnected") {

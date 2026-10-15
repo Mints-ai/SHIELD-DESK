@@ -3,6 +3,7 @@ import { enrollEndpointAgent } from "@/lib/fleet/enrollment";
 import { resolveEndpointIp } from "@/lib/fleet/ipAddress";
 import type { OsType } from "@/lib/fleet/fleet";
 import { trackError } from "@/lib/observability/errorTracker";
+import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
 
 /**
  * POST /api/agent/enroll
@@ -24,6 +25,16 @@ export async function POST(req: NextRequest) {
     const resolvedOsType: OsType = validOsTypes.includes(osType) ? osType : "linux";
 
     const clientIp = resolveEndpointIp(req.headers, ipAddress) ?? "Unknown";
+
+    if (clientIp && clientIp !== "Unknown" && isIpBlocked(clientIp)) {
+      return NextResponse.json(
+        {
+          error: "IP_BLOCKED",
+          message: `Enrollment rejected: IP address ${clientIp} is blocked by SOC security policy. Unblock this IP before enrolling.`,
+        },
+        { status: 403 }
+      );
+    }
 
     const result = await enrollEndpointAgent({
       rawToken: token.trim(),

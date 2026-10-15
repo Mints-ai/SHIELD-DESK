@@ -215,7 +215,13 @@ export function getCapability(nameOrCommand: string): AgentCapability | undefine
   if (normalized.startsWith("kill_process") || normalized.startsWith("terminate_process")) {
     return ALL_CAPABILITIES_REGISTRY["process.terminate"];
   }
-  if (normalized.startsWith("block_ip") || normalized.startsWith("firewall_block") || normalized.startsWith("firewall_")) {
+  if (
+    normalized.startsWith("block_ip") ||
+    normalized.startsWith("unblock_ip") ||
+    normalized.startsWith("unblock ip") ||
+    normalized.startsWith("firewall_block") ||
+    normalized.startsWith("firewall_")
+  ) {
     return ALL_CAPABILITIES_REGISTRY["firewall.block"];
   }
   if (normalized.startsWith("take_safety_snapshot") || normalized.startsWith("snapshot_create")) {

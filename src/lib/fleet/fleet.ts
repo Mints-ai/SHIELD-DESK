@@ -660,7 +660,15 @@ export class SimulationExecutor {
       agent.status = "connected";
     } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
       const ip = (command.startsWith("block ip") ? command.replace(/^block ip\s+/i, "") : command.replace(/^block_ip\s+/i, "")).trim();
-      output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Safety snapshot ${snapshotId} registered.`;
+      output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Safety snapshot ${snapshotId} registered. Endpoint is DISCONNECTED from the fleet.`;
+      agent.status = "disconnected";
+      agent.cpu_usage = 0;
+      agent.memory_usage = 0;
+      agent.eps = 0;
+    } else if (command.startsWith("unblock_ip") || command.startsWith("unblock ip")) {
+      const ip = (command.startsWith("unblock ip") ? command.replace(/^unblock ip\s+/i, "") : command.replace(/^unblock_ip\s+/i, "")).trim();
+      output = `Firewall block rule removed on ${agent.hostname} for IP ${ip}. Host connectivity restored.`;
+      agent.status = "connected";
     } else if (command.startsWith("kill_process")) {
       const pid = command.trim().split(/\s+/)[1] || "";
       output = `Process ${pid} terminated via SIGKILL on ${agent.hostname}. Process dump captured for forensics.`;
@@ -760,8 +768,21 @@ export async function executeAgentCommand({
   }
 
   // Parameter validation for targeted actions
-  if (command.startsWith("block_ip") || command.startsWith("block ip")) {
-    const rawIp = (command.startsWith("block ip") ? command.replace(/^block ip\s+/i, "") : command.replace(/^block_ip\s+/i, "")).trim();
+  if (
+    command.startsWith("block_ip") ||
+    command.startsWith("block ip") ||
+    command.startsWith("unblock_ip") ||
+    command.startsWith("unblock ip")
+  ) {
+    const rawIp = (
+      command.startsWith("block ip")
+        ? command.replace(/^block ip\s+/i, "")
+        : command.startsWith("block_ip")
+        ? command.replace(/^block_ip\s+/i, "")
+        : command.startsWith("unblock ip")
+        ? command.replace(/^unblock ip\s+/i, "")
+        : command.replace(/^unblock_ip\s+/i, "")
+    ).trim();
     const val = validateIpAddress(rawIp);
     if (!val.valid) {
       throw new Error(`INVALID_IP_ADDRESS: ${val.error}`);
@@ -858,6 +879,7 @@ export async function executeAgentCommand({
   if (
     command.startsWith("isolate_host") ||
     command.startsWith("block_ip") ||
+    command.startsWith("unblock_ip") ||
     command.startsWith("kill_process") ||
     command.startsWith("take_safety_snapshot") ||
     command.startsWith("firewall_")
