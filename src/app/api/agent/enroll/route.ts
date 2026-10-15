@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
     });
 
     if (!result.success) {
-      return NextResponse.json({ error: result.error }, { status: 401 });
+      const isConflict = result.error?.includes("already connected");
+      return NextResponse.json({ error: result.error }, { status: isConflict ? 409 : 401 });
     }
 
     return NextResponse.json({

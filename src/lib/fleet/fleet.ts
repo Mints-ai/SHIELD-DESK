@@ -236,9 +236,19 @@ export async function listEndpointAgents(caller: SessionUser): Promise<EndpointA
     // Database offline or test mode — fall back to in-memory store
   }
 
+  const connectedIps = new Set<string>();
   return MOCK_ENDPOINT_AGENTS.filter(
     (a) => canCrossTenant || a.tenant_id === caller.tenant_id
-  );
+  ).map((a) => {
+    if (a.status === "connected" && a.ip_address) {
+      const key = `${a.tenant_id}:${a.ip_address}`;
+      if (connectedIps.has(key)) {
+        return { ...a, status: "disconnected" as const, cpu_usage: 0, memory_usage: 0, eps: 0 };
+      }
+      connectedIps.add(key);
+    }
+    return a;
+  });
 }
 
 /**

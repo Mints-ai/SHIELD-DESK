@@ -818,6 +818,8 @@ func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem flo
 
 	if resp.StatusCode == 423 {
 		log.Printf("[Heartbeat Alert] Kill switch is active for agent %s. Host commands blocked.", agentID)
+	} else if resp.StatusCode == 409 {
+		log.Printf("[Heartbeat Alert] Connection rejected: Another endpoint is already connected from this IP address. Agent in standby.")
 	}
 }
 

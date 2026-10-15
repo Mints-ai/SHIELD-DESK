@@ -783,6 +783,8 @@ async function start() {
 
       if (hbRes.status === 423) {
         console.log(`\x1b[31m[!] KILL SWITCH ACTIVE\x1b[0m — Telemetry dropped by control plane.`);
+      } else if (hbRes.status === 409) {
+        console.log(`\x1b[33m[!] DUPLICATE IP CONFLICT\x1b[0m — Another endpoint is already connected from this IP. Host in standby.`);
       } else if (hbRes.status === 404) {
         console.log(`\n\x1b[31m[!] ENDPOINT REMOVED\x1b[0m — This endpoint was unenrolled from the ShieldDesk fleet. Stopping daemon.`);
         running = false;

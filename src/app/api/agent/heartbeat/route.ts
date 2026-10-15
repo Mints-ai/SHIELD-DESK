@@ -40,6 +40,73 @@ export async function POST(req: NextRequest) {
         ? JSON.stringify(body.coreTelemetry)
         : null;
 
+    // Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
+    if (ipAddress && requestedStatus !== "disconnected") {
+      try {
+        const { rows: conflictRows } = await query<{ id: string; hostname: string }>(
+          `SELECT id, hostname FROM endpoint_agents
+           WHERE tenant_id = (SELECT tenant_id FROM endpoint_agents WHERE id = $1 LIMIT 1)
+             AND id != $1
+             AND ip_address = $2
+             AND status = 'connected'
+             AND kill_switch_active = false
+             AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '15 seconds')
+           LIMIT 1;`,
+          [agentId, ipAddress]
+        );
+
+        if (conflictRows.length > 0) {
+          await query(
+            `UPDATE endpoint_agents
+             SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+             WHERE id = $1;`,
+            [agentId]
+          ).catch(() => {});
+
+          MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "duplicate_ip_conflict" });
+          return NextResponse.json(
+            {
+              error: "DUPLICATE_IP_CONFLICT",
+              message: `Another endpoint ('${conflictRows[0].hostname}') is already connected from IP ${ipAddress}. Only one endpoint per IP address is allowed at a time.`,
+              status: "disconnected",
+              killSwitchActive: false,
+            },
+            { status: 409 }
+          );
+        }
+      } catch {
+        // In-memory fallback check
+        const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId);
+        if (currentMock) {
+          const conflictMock = MOCK_ENDPOINT_AGENTS.find(
+            (a) =>
+              a.tenant_id === currentMock.tenant_id &&
+              a.id !== agentId &&
+              a.ip_address === ipAddress &&
+              a.status === "connected" &&
+              !a.kill_switch_active &&
+              Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+          );
+
+          if (conflictMock) {
+            currentMock.status = "disconnected";
+            currentMock.cpu_usage = 0;
+            currentMock.memory_usage = 0;
+            currentMock.eps = 0;
+            return NextResponse.json(
+              {
+                error: "DUPLICATE_IP_CONFLICT",
+                message: `Another endpoint ('${conflictMock.hostname}') is already connected from IP ${ipAddress}. Only one endpoint per IP address is allowed at a time.`,
+                status: "disconnected",
+                killSwitchActive: false,
+              },
+              { status: 409 }
+            );
+          }
+        }
+      }
+    }
+
     try {
       const { rows } = await query<{
         id: string;
@@ -110,6 +177,34 @@ export async function POST(req: NextRequest) {
         agent.memory_usage = 0;
         agent.eps = 0;
       } else {
+        if (ipAddress) {
+          const conflictMock = MOCK_ENDPOINT_AGENTS.find(
+            (a) =>
+              a.tenant_id === agent.tenant_id &&
+              a.id !== agentId &&
+              a.ip_address === ipAddress &&
+              a.status === "connected" &&
+              !a.kill_switch_active &&
+              Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+          );
+
+          if (conflictMock) {
+            agent.status = "disconnected";
+            agent.cpu_usage = 0;
+            agent.memory_usage = 0;
+            agent.eps = 0;
+            return NextResponse.json(
+              {
+                error: "DUPLICATE_IP_CONFLICT",
+                message: `Another endpoint ('${conflictMock.hostname}') is already connected from IP ${ipAddress}. Only one endpoint per IP address is allowed at a time.`,
+                status: "disconnected",
+                killSwitchActive: false,
+              },
+              { status: 409 }
+            );
+          }
+        }
+
         agent.last_heartbeat = new Date().toISOString();
         if (ipAddress) agent.ip_address = ipAddress;
         if (cpuUsage !== null) agent.cpu_usage = cpuUsage;
