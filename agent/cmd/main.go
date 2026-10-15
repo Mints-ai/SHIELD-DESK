@@ -260,9 +260,17 @@ func main() {
 				eps = 12 + (tickCount % 15)
 			}
 			coreTelem := collector.HarvestCoreTelemetry(*hostname, metrics.CPUPercent, metrics.MemPercent)
-			sendHeartbeat(httpClient, *controlURL, *agentID, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
-			log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
-				tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			hbStatus, _ := sendHeartbeat(httpClient, *controlURL, *agentID, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
+			if hbStatus == "disconnected" {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | Status: DISCONNECTED BY CONTROL PANEL (Standing by)",
+					tickCount, *hostname)
+			} else if hbStatus == "duplicate_ip" || hbStatus == "kill_switch" || hbStatus == "ip_blocked" {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | Status: DISCONNECTED (%s)",
+					tickCount, *hostname, hbStatus)
+			} else {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
+					tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			}
 		}
 	}()
 
@@ -789,7 +797,7 @@ func enrollWithControlPlane(client *http.Client, controlURL, token, hostname str
 	return enrollResp.AgentID, enrollResp.TenantID, nil
 }
 
-func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem float64, eps int, coreTelem telemetry.CoreTelemetry) {
+func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem float64, eps int, coreTelem telemetry.CoreTelemetry) (string, error) {
 	payload := map[string]interface{}{
 		"agentId":       agentID,
 		"cpuUsage":      cpu,
@@ -801,28 +809,44 @@ func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem flo
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return "", err
 	}
 	req, err := http.NewRequest("POST", controlURL+"/api/agent/heartbeat", bytes.NewBuffer(data))
 	if err != nil {
-		return
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-ShieldDesk-Agent-ID", agentID)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 423 {
 		log.Printf("[Heartbeat Alert] Kill switch is active for agent %s. Host commands blocked.", agentID)
+		return "kill_switch", nil
 	} else if resp.StatusCode == 409 {
 		log.Printf("[Heartbeat Alert] Connection rejected: Another endpoint is already connected from this IP address. Agent in standby.")
+		return "duplicate_ip", nil
 	} else if resp.StatusCode == 403 {
 		log.Printf("[Heartbeat Alert] Connection rejected: IP address is blocked by SOC security policy. Endpoint disconnected from fleet.")
+		return "ip_blocked", nil
 	}
+
+	if resp.StatusCode == http.StatusOK {
+		var hbResp struct {
+			Success bool   `json:"success"`
+			Status  string `json:"status"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&hbResp); err == nil && hbResp.Status != "" {
+			return hbResp.Status, nil
+		}
+		return "connected", nil
+	}
+
+	return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 }
 
 func sendDisconnectHeartbeat(client *http.Client, controlURL, agentID string) {
@@ -858,6 +882,11 @@ func getEndpointIP(client *http.Client, controlPlaneURL string) string {
 		return ip
 	}
 	endpointIPCacheMu.Unlock()
+
+	// Prioritize local physical network adapter IP to distinguish multiple endpoints on same LAN/Wi-Fi
+	if local := getLocalEndpointIP(); local != "" {
+		return cacheEndpointIP(local)
+	}
 
 	discoveryURLs := []string{
 		strings.TrimRight(controlPlaneURL, "/") + "/api/agent/my-ip",

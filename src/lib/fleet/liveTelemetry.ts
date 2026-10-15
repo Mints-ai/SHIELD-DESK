@@ -5,6 +5,12 @@ import { normalizeEndpointIp } from "./ipAddress";
 import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
 
 /**
+ * Registry of endpoint IDs explicitly marked disconnected by an operator action.
+ * Normal timeouts or idle agents are not locked; only explicit admin disconnects are preserved.
+ */
+export const adminDisconnectedAgents = new Set<string>();
+
+/**
  * Returns the live fleet agents for a caller, reading exclusively from the database.
  * No simulated or in-memory agents are included — only real enrolled endpoints.
  * Maps actual Supabase column names (last_seen_at) to the canonical interface field (last_heartbeat).
@@ -103,6 +109,7 @@ export async function getLiveFleetAgents(
  * Manually marks an agent as disconnected.
  */
 export async function disconnectLiveAgent(agentId: string, tenantId?: string): Promise<boolean> {
+  adminDisconnectedAgents.add(agentId);
   const { MOCK_ENDPOINT_AGENTS } = await import("./fleet");
   const mockAgent = MOCK_ENDPOINT_AGENTS.find(
     (a) => (a.id === agentId || a.hostname === agentId) && (!tenantId || a.tenant_id === tenantId)
@@ -173,6 +180,11 @@ export async function setLiveAgentStatus(
   status: string,
   snapshotId?: string | null
 ): Promise<boolean> {
+  if (status === "connected") {
+    adminDisconnectedAgents.delete(agentId);
+  } else if (status === "disconnected") {
+    adminDisconnectedAgents.add(agentId);
+  }
   const isDisconnected = status === "disconnected";
   const { rows } = await query<{ id: string }>(
     `UPDATE endpoint_agents

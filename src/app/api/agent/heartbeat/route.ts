@@ -6,6 +6,7 @@ import { trackError } from "@/lib/observability/errorTracker";
 import { MetricsRegistry } from "@/lib/observability/metrics";
 import { storeEndpointCoreTelemetry } from "@/lib/fleet/liveTelemetryCollector";
 import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
+import { adminDisconnectedAgents } from "@/lib/fleet/liveTelemetry";
 
 /**
  * POST /api/agent/heartbeat
@@ -87,6 +88,59 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Check if operator explicitly disconnected this specific agent
+    let isExplicitlyDisconnected = adminDisconnectedAgents.has(agentId);
+    if (!isExplicitlyDisconnected) {
+      try {
+        const { rows: agentLookup } = await query<{ id: string; hostname: string }>(
+          `SELECT id, hostname FROM endpoint_agents WHERE id = $1 OR hostname = $1 LIMIT 1;`,
+          [agentId]
+        );
+        if (agentLookup.length > 0) {
+          if (
+            adminDisconnectedAgents.has(agentLookup[0].id) ||
+            (agentLookup[0].hostname && adminDisconnectedAgents.has(agentLookup[0].hostname))
+          ) {
+            isExplicitlyDisconnected = true;
+          }
+        }
+      } catch {
+        const mockAgent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
+        if (
+          mockAgent &&
+          (adminDisconnectedAgents.has(mockAgent.id) ||
+            (mockAgent.hostname && adminDisconnectedAgents.has(mockAgent.hostname)))
+        ) {
+          isExplicitlyDisconnected = true;
+        }
+      }
+    }
+
+    if (isExplicitlyDisconnected) {
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+         WHERE id = $1 OR hostname = $1;`,
+        [agentId]
+      ).catch(() => {});
+
+      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
+      if (currentMock) {
+        currentMock.status = "disconnected";
+        currentMock.cpu_usage = 0;
+        currentMock.memory_usage = 0;
+        currentMock.eps = 0;
+      }
+
+      return NextResponse.json({
+        success: true,
+        agentId,
+        status: "disconnected",
+        killSwitchActive: false,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     // Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
     if (ipAddress && requestedStatus !== "disconnected") {
       try {
@@ -162,15 +216,14 @@ export async function POST(req: NextRequest) {
         status: string;
       }>(
         `UPDATE endpoint_agents
-         SET last_seen_at = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN last_seen_at ELSE now() END,
-             cpu_usage = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN 0 ELSE COALESCE($1, cpu_usage) END,
-             memory_usage = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN 0 ELSE COALESCE($2, memory_usage) END,
-             eps = CASE WHEN status = 'disconnected' OR $6::text = 'disconnected' THEN 0 ELSE COALESCE($3, eps) END,
+         SET last_seen_at = CASE WHEN $6::text = 'disconnected' THEN last_seen_at ELSE now() END,
+             cpu_usage = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($1, cpu_usage) END,
+             memory_usage = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($2, memory_usage) END,
+             eps = CASE WHEN $6::text = 'disconnected' THEN 0 ELSE COALESCE($3, eps) END,
              ip_address = COALESCE($5, ip_address),
              core_telemetry = CASE WHEN $7::jsonb IS NOT NULL THEN $7::jsonb ELSE core_telemetry END,
              status = CASE
                WHEN status = 'isolated' THEN 'isolated'
-               WHEN status = 'disconnected' THEN 'disconnected'
                WHEN $6::text = 'disconnected' THEN 'disconnected'
                ELSE 'connected'
              END
@@ -218,7 +271,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      if (agent.status === "disconnected" || requestedStatus === "disconnected") {
+      if (adminDisconnectedAgents.has(agentId) || requestedStatus === "disconnected") {
         agent.status = "disconnected";
         agent.cpu_usage = 0;
         agent.memory_usage = 0;
