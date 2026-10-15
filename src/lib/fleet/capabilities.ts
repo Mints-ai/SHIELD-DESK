@@ -124,6 +124,12 @@ export const CAPABILITY_REGISTRY: Record<string, AgentCapability> = {
     description: "Append firewall block rule for specified remote IP address or CIDR subnet.",
   },
 
+};
+
+/**
+ * Microsoft Defender EDR and inspection capabilities (Windows-specific extensions).
+ */
+export const DEFENDER_CAPABILITY_REGISTRY: Record<string, AgentCapability> = {
   "defender.scan": {
     name: "defender.scan",
     riskLevel: "low",
@@ -181,52 +187,60 @@ export const CAPABILITY_REGISTRY: Record<string, AgentCapability> = {
 };
 
 /**
+ * Unified capabilities dictionary including core and platform extension capabilities.
+ */
+export const ALL_CAPABILITIES_REGISTRY: Record<string, AgentCapability> = {
+  ...CAPABILITY_REGISTRY,
+  ...DEFENDER_CAPABILITY_REGISTRY,
+};
+
+/**
  * Resolves capability specification by name or legacy command string.
  */
 export function getCapability(nameOrCommand: string): AgentCapability | undefined {
   const normalized = nameOrCommand.trim().toLowerCase();
 
-  // Direct capability key match (e.g. "network.isolate")
-  if (CAPABILITY_REGISTRY[normalized]) {
-    return CAPABILITY_REGISTRY[normalized];
+  // Direct capability key match (e.g. "network.isolate", "defender.scan")
+  if (ALL_CAPABILITIES_REGISTRY[normalized]) {
+    return ALL_CAPABILITIES_REGISTRY[normalized];
   }
 
   // Legacy command prefix match (e.g. "isolate_host" -> "network.isolate")
   if (normalized.startsWith("isolate_host") || normalized.startsWith("network_isolate")) {
-    return CAPABILITY_REGISTRY["network.isolate"];
+    return ALL_CAPABILITIES_REGISTRY["network.isolate"];
   }
   if (normalized.startsWith("restore_host") || normalized.startsWith("network_restore")) {
-    return CAPABILITY_REGISTRY["network.restore"];
+    return ALL_CAPABILITIES_REGISTRY["network.restore"];
   }
   if (normalized.startsWith("kill_process") || normalized.startsWith("terminate_process")) {
-    return CAPABILITY_REGISTRY["process.terminate"];
+    return ALL_CAPABILITIES_REGISTRY["process.terminate"];
   }
   if (normalized.startsWith("block_ip") || normalized.startsWith("firewall_block") || normalized.startsWith("firewall_")) {
-    return CAPABILITY_REGISTRY["firewall.block"];
+    return ALL_CAPABILITIES_REGISTRY["firewall.block"];
   }
   if (normalized.startsWith("take_safety_snapshot") || normalized.startsWith("snapshot_create")) {
-    return CAPABILITY_REGISTRY["snapshot.create"];
+    return ALL_CAPABILITIES_REGISTRY["snapshot.create"];
   }
   if (normalized.startsWith("rollback_snapshot") || normalized.startsWith("snapshot_restore")) {
-    return CAPABILITY_REGISTRY["snapshot.restore"];
+    return ALL_CAPABILITIES_REGISTRY["snapshot.restore"];
   }
   if (normalized.startsWith("apply_patch") || normalized.startsWith("patch_cve")) {
-    return CAPABILITY_REGISTRY["patch.apply"];
+    return ALL_CAPABILITIES_REGISTRY["patch.apply"];
   }
   if (normalized.startsWith("defender_scan") || normalized.startsWith("defender.scan")) {
-    return CAPABILITY_REGISTRY["defender.scan"];
+    return ALL_CAPABILITIES_REGISTRY["defender.scan"];
   }
   if (normalized.startsWith("defender_update") || normalized.startsWith("defender.update")) {
-    return CAPABILITY_REGISTRY["defender.update"];
+    return ALL_CAPABILITIES_REGISTRY["defender.update"];
   }
   if (normalized.startsWith("defender_set_realtime") || normalized.startsWith("defender.realtime")) {
-    return CAPABILITY_REGISTRY["defender.realtime"];
+    return ALL_CAPABILITIES_REGISTRY["defender.realtime"];
   }
   if (normalized.startsWith("defender_remediate") || normalized.startsWith("defender.remediate")) {
-    return CAPABILITY_REGISTRY["defender.remediate"];
+    return ALL_CAPABILITIES_REGISTRY["defender.remediate"];
   }
   if (normalized.startsWith("defender_add_exclusion") || normalized.startsWith("defender_remove_exclusion") || normalized.startsWith("defender.exclusion")) {
-    return CAPABILITY_REGISTRY["defender.exclusion"];
+    return ALL_CAPABILITIES_REGISTRY["defender.exclusion"];
   }
 
   return undefined;
@@ -269,4 +283,11 @@ export function validateCapabilitySupport(
  */
 export function listCapabilities(): AgentCapability[] {
   return Object.values(CAPABILITY_REGISTRY);
+}
+
+/**
+ * Lists all registered agent capabilities including platform extensions.
+ */
+export function listAllCapabilities(): AgentCapability[] {
+  return Object.values(ALL_CAPABILITIES_REGISTRY);
 }
