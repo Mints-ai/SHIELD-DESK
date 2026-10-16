@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -260,9 +261,17 @@ func main() {
 				eps = 12 + (tickCount % 15)
 			}
 			coreTelem := collector.HarvestCoreTelemetry(*hostname, metrics.CPUPercent, metrics.MemPercent)
-			sendHeartbeat(httpClient, *controlURL, *agentID, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
-			log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
-				tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			hbStatus, _ := sendHeartbeat(httpClient, *controlURL, *agentID, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
+			if hbStatus == "disconnected" {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | Status: DISCONNECTED BY CONTROL PANEL (Standing by)",
+					tickCount, *hostname)
+			} else if hbStatus == "duplicate_ip" || hbStatus == "kill_switch" || hbStatus == "ip_blocked" {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | Status: DISCONNECTED (%s)",
+					tickCount, *hostname, hbStatus)
+			} else {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
+					tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			}
 		}
 	}()
 
@@ -320,6 +329,9 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 	if resp.StatusCode == 423 {
 		log.Printf("[CommandPoll] Agent %s is locked by Emergency Admin Kill Switch.", agentID)
 		return
+	} else if resp.StatusCode == http.StatusNotFound {
+		fmt.Printf("\n\033[31m[!] ENDPOINT REMOVED\033[0m — This host was deleted from the ShieldDesk fleet. Stopping agent daemon.\n")
+		os.Exit(0)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -789,7 +801,7 @@ func enrollWithControlPlane(client *http.Client, controlURL, token, hostname str
 	return enrollResp.AgentID, enrollResp.TenantID, nil
 }
 
-func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem float64, eps int, coreTelem telemetry.CoreTelemetry) {
+func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem float64, eps int, coreTelem telemetry.CoreTelemetry) (string, error) {
 	payload := map[string]interface{}{
 		"agentId":       agentID,
 		"cpuUsage":      cpu,
@@ -801,26 +813,48 @@ func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem flo
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return "", err
 	}
 	req, err := http.NewRequest("POST", controlURL+"/api/agent/heartbeat", bytes.NewBuffer(data))
 	if err != nil {
-		return
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-ShieldDesk-Agent-ID", agentID)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 423 {
 		log.Printf("[Heartbeat Alert] Kill switch is active for agent %s. Host commands blocked.", agentID)
+		return "kill_switch", nil
 	} else if resp.StatusCode == 409 {
 		log.Printf("[Heartbeat Alert] Connection rejected: Another endpoint is already connected from this IP address. Agent in standby.")
+		return "duplicate_ip", nil
+	} else if resp.StatusCode == 403 {
+		log.Printf("[Heartbeat Alert] Connection rejected: IP address is blocked by SOC security policy. Endpoint disconnected from fleet.")
+		return "ip_blocked", nil
+	} else if resp.StatusCode == http.StatusNotFound {
+		fmt.Printf("\n\033[31m[!] ENDPOINT REMOVED\033[0m — This host was deleted from the ShieldDesk fleet. Stopping agent daemon.\n")
+		os.Exit(0)
+		return "removed", nil
 	}
+
+	if resp.StatusCode == http.StatusOK {
+		var hbResp struct {
+			Success bool   `json:"success"`
+			Status  string `json:"status"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&hbResp); err == nil && hbResp.Status != "" {
+			return hbResp.Status, nil
+		}
+		return "connected", nil
+	}
+
+	return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 }
 
 func sendDisconnectHeartbeat(client *http.Client, controlURL, agentID string) {
@@ -856,6 +890,11 @@ func getEndpointIP(client *http.Client, controlPlaneURL string) string {
 		return ip
 	}
 	endpointIPCacheMu.Unlock()
+
+	// Prioritize local physical network adapter IP to distinguish multiple endpoints on same LAN/Wi-Fi
+	if local := getLocalEndpointIP(); local != "" {
+		return cacheEndpointIP(local)
+	}
 
 	discoveryURLs := []string{
 		strings.TrimRight(controlPlaneURL, "/") + "/api/agent/my-ip",
@@ -897,19 +936,61 @@ func getLocalEndpointIP() string {
 	if err != nil {
 		return ""
 	}
+
+	type candidate struct {
+		ip       string
+		priority int
+	}
+	var candidates []candidate
+
 	for _, iface := range interfaces {
+		lowerName := strings.ToLower(iface.Name)
+		isVirtual := strings.Contains(lowerName, "virtual") ||
+			strings.Contains(lowerName, "vbox") ||
+			strings.Contains(lowerName, "vmware") ||
+			strings.Contains(lowerName, "loopback") ||
+			strings.Contains(lowerName, "pseudo") ||
+			strings.Contains(lowerName, "docker") ||
+			strings.Contains(lowerName, "wsl") ||
+			strings.Contains(lowerName, "hyper-v") ||
+			strings.Contains(lowerName, "vethernet")
+
 		addresses, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
 		for _, address := range addresses {
 			ip, _, err := net.ParseCIDR(address.String())
-			if err == nil && ip.To4() != nil && !ip.IsLoopback() {
-				return ip.String()
+			if err != nil || ip.To4() == nil || ip.IsLoopback() {
+				continue
 			}
+			ipStr := ip.String()
+			if strings.HasPrefix(ipStr, "169.254.") || strings.HasPrefix(ipStr, "192.168.56.") {
+				continue
+			}
+
+			priority := 1
+			if isVirtual {
+				priority = 0
+			} else if strings.Contains(lowerName, "wi-fi") || strings.Contains(lowerName, "wifi") || strings.Contains(lowerName, "wireless") || strings.Contains(lowerName, "wlan") {
+				priority = 10
+			} else if strings.Contains(lowerName, "ethernet") || strings.Contains(lowerName, "eth") || strings.Contains(lowerName, "en") {
+				priority = 5
+			}
+
+			candidates = append(candidates, candidate{ip: ipStr, priority: priority})
 		}
 	}
-	return ""
+
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].priority > candidates[j].priority
+	})
+
+	return candidates[0].ip
 }
 
 func cacheEndpointIP(ip string) string {

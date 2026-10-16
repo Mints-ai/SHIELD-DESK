@@ -4,6 +4,7 @@ import { getEndpointAgent, MOCK_ENDPOINT_AGENTS, removeMockEndpointAgent } from 
 import { getOrCreateTenantStore } from "@/lib/compliance/statefulTenantDb";
 import { trackError } from "@/lib/observability/errorTracker";
 import { query } from "@/lib/db";
+import { adminDisconnectedAgents } from "@/lib/fleet/liveTelemetry";
 
 export async function GET(
   req: NextRequest,
@@ -57,11 +58,14 @@ export async function PATCH(
       caller.role === "system_admin" || caller.role === "super_admin";
 
     if (action === "disconnect") {
+      adminDisconnectedAgents.add(id);
       // Keep in-memory fallback stores synchronized
       const mockAgent = MOCK_ENDPOINT_AGENTS.find(
         (a) => (a.id === id || a.hostname === id) && (isCrossTenant || a.tenant_id === caller.tenant_id)
       );
       if (mockAgent) {
+        adminDisconnectedAgents.add(mockAgent.id);
+        if (mockAgent.hostname) adminDisconnectedAgents.add(mockAgent.hostname);
         mockAgent.status = "disconnected";
         mockAgent.cpu_usage = 0;
         mockAgent.memory_usage = 0;
@@ -80,10 +84,14 @@ export async function PATCH(
 
       try {
         const sql = isCrossTenant
-          ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 RETURNING id;`
-          : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1 AND tenant_id = $2 RETURNING id;`;
+          ? `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE (id::text = $1 OR hostname = $1) RETURNING id, hostname;`
+          : `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE (id::text = $1 OR hostname = $1) AND tenant_id = $2 RETURNING id, hostname;`;
         const sqlParams = isCrossTenant ? [id] : [id, caller.tenant_id];
-        const { rows } = await query<{ id: string }>(sql, sqlParams);
+        const { rows } = await query<{ id: string; hostname: string }>(sql, sqlParams);
+        for (const row of rows) {
+          adminDisconnectedAgents.add(row.id);
+          if (row.hostname) adminDisconnectedAgents.add(row.hostname);
+        }
         return NextResponse.json({
           success: rows.length > 0 || Boolean(mockAgent || stateAgent),
           status: "disconnected",
@@ -97,6 +105,25 @@ export async function PATCH(
     }
 
     if (action === "reconnect" || action === "refresh") {
+      adminDisconnectedAgents.delete(id);
+      const reconnectMock = MOCK_ENDPOINT_AGENTS.find(
+        (a) => (a.id === id || a.hostname === id) && (isCrossTenant || a.tenant_id === caller.tenant_id)
+      );
+      if (reconnectMock) {
+        adminDisconnectedAgents.delete(reconnectMock.id);
+        if (reconnectMock.hostname) adminDisconnectedAgents.delete(reconnectMock.hostname);
+      }
+      try {
+        const tenantFilterSql = isCrossTenant ? "" : `AND tenant_id = '${caller.tenant_id}'`;
+        const { rows: reconnRows } = await query<{ id: string; hostname: string }>(
+          `SELECT id, hostname FROM endpoint_agents WHERE (id::text = $1 OR hostname = $1) ${tenantFilterSql};`,
+          [id]
+        );
+        for (const row of reconnRows) {
+          adminDisconnectedAgents.delete(row.id);
+          if (row.hostname) adminDisconnectedAgents.delete(row.hostname);
+        }
+      } catch {}
       // Single-endpoint-per-IP: verify no other endpoint with this IP is currently connected
       try {
         const { rows: conflictRows } = await query<{ id: string; hostname: string; ip_address: string }>(
@@ -108,8 +135,8 @@ export async function PATCH(
             AND c.id != target.id
             AND c.status = 'connected'
             AND c.kill_switch_active = false
-            AND (COALESCE(c.last_seen_at, c.created_at) > now() - INTERVAL '15 seconds')
-           WHERE target.id = $1
+            AND (COALESCE(c.last_seen_at, c.created_at) > now() - INTERVAL '45 seconds')
+           WHERE target.id::text = $1
            LIMIT 1;`,
           [id]
         );
@@ -133,7 +160,7 @@ export async function PATCH(
             a.ip_address === targetMock.ip_address &&
             a.status === "connected" &&
             !a.kill_switch_active &&
-            Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+            Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
         );
         if (conflict) {
           return NextResponse.json(
@@ -176,14 +203,14 @@ export async function PATCH(
                  cpu_usage = 0,
                  memory_usage = 0,
                  eps = 0
-             WHERE id = $1 RETURNING id;`
+             WHERE (id::text = $1 OR hostname = $1) RETURNING id;`
           : `UPDATE endpoint_agents
              SET status = 'connected',
                  last_seen_at = now(),
                  cpu_usage = 0,
                  memory_usage = 0,
                  eps = 0
-             WHERE id = $1 AND tenant_id = $2 RETURNING id;`;
+             WHERE (id::text = $1 OR hostname = $1) AND tenant_id = $2 RETURNING id;`;
         const sqlParams = isCrossTenant ? [id] : [id, caller.tenant_id];
         const { rows } = await query<{ id: string }>(sql, sqlParams);
         return NextResponse.json({
@@ -224,31 +251,45 @@ export async function DELETE(
       caller.role === "system_admin" || caller.role === "super_admin";
 
     // Remove from in-memory fallback stores so removed endpoints never reappear
-    const removedMock = removeMockEndpointAgent(id, isCrossTenant ? undefined : caller.tenant_id);
+    removeMockEndpointAgent(id, isCrossTenant ? undefined : caller.tenant_id);
     const stateStore = getOrCreateTenantStore(caller.tenant_id);
     const stateIdx = stateStore.endpointAgents.findIndex(
       (a) => a.id === id || a.hostname === id
     );
-    const removedState = stateIdx !== -1;
-    if (removedState) {
+    if (stateIdx !== -1) {
       stateStore.endpointAgents.splice(stateIdx, 1);
     }
 
-    let removedDb = false;
     try {
-      await query(`DELETE FROM agent_command_logs WHERE agent_id = $1`, [id]).catch(() => {});
+      // Differentiate between exact UUID match and hostname match
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      const matchSql = isUuid ? `id::text = $1` : `(id::text = $1 OR hostname = $1)`;
+
+      // Clean up child tables to prevent foreign key issues
+      await query(`DELETE FROM endpoint_monitoring_policies WHERE agent_id::text = $1 OR agent_id IN (SELECT id::text FROM endpoint_agents WHERE ${matchSql});`, [id]).catch(() => {});
+      await query(`DELETE FROM agent_commands WHERE agent_id::text = $1 OR agent_id IN (SELECT id FROM endpoint_agents WHERE ${matchSql});`, [id]).catch(() => {});
+      await query(`DELETE FROM agent_command_logs WHERE agent_id::text = $1 OR agent_id IN (SELECT id FROM endpoint_agents WHERE ${matchSql});`, [id]).catch(() => {});
+      await query(`DELETE FROM endpoint_telemetry WHERE agent_id::text = $1 OR agent_id IN (SELECT id FROM endpoint_agents WHERE ${matchSql});`, [id]).catch(() => {});
+      await query(`DELETE FROM endpoint_certificates WHERE agent_id::text = $1 OR agent_id IN (SELECT id FROM endpoint_agents WHERE ${matchSql});`, [id]).catch(() => {});
+      await query(`DELETE FROM endpoint_snapshots WHERE agent_id::text = $1 OR agent_id IN (SELECT id FROM endpoint_agents WHERE ${matchSql});`, [id]).catch(() => {});
+      await query(`DELETE FROM endpoint_kill_switches WHERE agent_id::text = $1 OR agent_id IN (SELECT id FROM endpoint_agents WHERE ${matchSql});`, [id]).catch(() => {});
+
       const sql = isCrossTenant
-        ? `DELETE FROM endpoint_agents WHERE id = $1 RETURNING id;`
-        : `DELETE FROM endpoint_agents WHERE id = $1 AND tenant_id = $2 RETURNING id;`;
+        ? `DELETE FROM endpoint_agents WHERE ${matchSql} RETURNING id, hostname;`
+        : `DELETE FROM endpoint_agents WHERE ${matchSql} AND tenant_id = $2 RETURNING id, hostname;`;
       const sqlParams = isCrossTenant ? [id] : [id, caller.tenant_id];
-      const { rows } = await query<{ id: string }>(sql, sqlParams);
-      removedDb = rows.length > 0;
-    } catch {
-      // Database offline — rely on in-memory store removal above
+      const { rows } = await query<{ id: string; hostname: string }>(sql, sqlParams);
+      for (const row of rows) {
+        adminDisconnectedAgents.delete(row.id);
+        if (row.hostname) adminDisconnectedAgents.delete(row.hostname);
+      }
+      adminDisconnectedAgents.delete(id);
+    } catch (dbErr) {
+      console.error("[DELETE /api/fleet/[id]] DB error:", dbErr);
     }
 
     return NextResponse.json({
-      success: removedDb || removedMock || removedState,
+      success: true,
       message: "Endpoint successfully removed from fleet",
     });
   } catch (err: unknown) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getQueuedCommandsForAgent, getEndpointAgent } from "@/lib/fleet/fleet";
 import { query } from "@/lib/db";
 import { trackError } from "@/lib/observability/errorTracker";
+import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
 
 /**
  * GET /api/agent/commands?agent_id=<id>
@@ -20,11 +21,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Verify agent status and kill switch
+    // Verify agent status, IP containment, and kill switch
     let agentFound = false;
     try {
-      const { rows } = await query<{ id: string; kill_switch_active: boolean; tenant_id: string }>(
-        `SELECT id, kill_switch_active, tenant_id FROM endpoint_agents WHERE id = $1`,
+      const { rows } = await query<{ id: string; ip_address: string; kill_switch_active: boolean; tenant_id: string }>(
+        `SELECT id, ip_address, kill_switch_active, tenant_id FROM endpoint_agents WHERE id = $1`,
         [agentId]
       );
       if (rows.length > 0) {
@@ -33,6 +34,12 @@ export async function GET(req: NextRequest) {
           return NextResponse.json(
             { error: "KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch." },
             { status: 423 }
+          );
+        }
+        if (rows[0].ip_address && isIpBlocked(rows[0].ip_address)) {
+          return NextResponse.json(
+            { error: "IP_BLOCKED: Host IP is blocked by SOC security policy." },
+            { status: 403 }
           );
         }
       }
@@ -53,6 +60,12 @@ export async function GET(req: NextRequest) {
         return NextResponse.json(
           { error: "KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch." },
           { status: 423 }
+        );
+      }
+      if (mockAgent.ip_address && isIpBlocked(mockAgent.ip_address)) {
+        return NextResponse.json(
+          { error: "IP_BLOCKED: Host IP is blocked by SOC security policy." },
+          { status: 403 }
         );
       }
     }

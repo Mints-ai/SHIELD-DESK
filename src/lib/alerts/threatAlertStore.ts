@@ -120,12 +120,22 @@ if (ipFailureTracker.has("127.0.0.1")) {
  */
 export const MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK = 5;
 
+function sanitizeIp(ip?: string | null): string {
+  if (!ip) return "";
+  let clean = ip.trim();
+  if (clean === "::1" || clean === "localhost") return "127.0.0.1";
+  if (clean.startsWith("::ffff:")) clean = clean.replace("::ffff:", "");
+  if (clean.includes(":") && clean.includes(".")) clean = clean.split(":")[0];
+  return clean;
+}
+
 /**
  * Check if a given client IP is currently blocked
  */
 export function isIpBlocked(ip?: string | null): boolean {
   if (!ip) return false;
-  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+  const cleanIp = sanitizeIp(ip);
+  if (!cleanIp) return false;
   return blockedIpsStore.has(cleanIp);
 }
 
@@ -133,7 +143,8 @@ export function isIpBlocked(ip?: string | null): boolean {
  * Block a specific IP address and sync with Go Threat Engine
  */
 export function blockIp(ip: string, reason: string = "Exceeded 5 failed login attempts", attempts: number = 6, tenantId: string = "mints-global"): void {
-  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+  const cleanIp = sanitizeIp(ip);
+  if (!cleanIp) return;
   blockedIpsStore.set(cleanIp, {
     ip: cleanIp,
     blockedAt: new Date().toISOString(),
@@ -160,7 +171,8 @@ export function blockIp(ip: string, reason: string = "Exceeded 5 failed login at
  * Unblock a specific IP address and clear its failure records
  */
 export function unblockIp(ip: string, tenantId: string = "mints-global"): boolean {
-  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+  const cleanIp = sanitizeIp(ip);
+  if (!cleanIp) return false;
   const deleted = blockedIpsStore.delete(cleanIp);
   ipFailureTracker.delete(cleanIp);
   resetRateLimit(`login:${cleanIp}`);

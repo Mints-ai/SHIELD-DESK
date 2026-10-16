@@ -7,8 +7,10 @@ import { POST as enrollmentTokensPOST } from "@/app/api/fleet/enrollment-tokens/
 import { POST as enrollPOST } from "@/app/api/agent/enroll/route";
 import { POST as heartbeatPOST } from "@/app/api/agent/heartbeat/route";
 import { POST as telemetryPOST } from "@/app/api/agent/telemetry/route";
+import { POST as executePOST } from "@/app/api/fleet/execute/route";
 import { triggerKillSwitch } from "@/lib/fleet/fleet";
 import { issueCommercialLicense } from "@/lib/billing/licenses";
+import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
 
 test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry Suite", async (t) => {
   const licenseKey = issueCommercialLicense({ tenantId: "acme-tenant", tier: "professional", maxEndpoints: 100, maxUsers: 20, features: ["endpointFleet"], expiresAt: new Date(Date.now() + 86400000).toISOString() }).rawLicense;
@@ -348,5 +350,109 @@ test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry S
     assert.equal(dupHbRes.status, 409, "Heartbeat from duplicate IP must return 409 Conflict");
     const dupHbData = await dupHbRes.json();
     assert.equal(dupHbData.status, "disconnected");
+  });
+
+  await t.test("SD-032: block_ip immediately disconnects endpoint, rejects subsequent heartbeats (403), and returns next-step guidance", async () => {
+    // Execute block_ip on enrolledAgentId's IP (10.0.15.99)
+    const blockReq = new NextRequest("http://localhost:3000/api/fleet/execute", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: enrolledAgentId,
+        command: "block_ip 10.0.15.99",
+        tier: "Tier 1",
+      }),
+    });
+
+    const blockRes = await executePOST(blockReq);
+    assert.equal(blockRes.status, 200, "block_ip should execute successfully");
+    const blockData = await blockRes.json();
+    assert.equal(blockData.success, true);
+    assert.match(blockData.output, /CONTAINMENT ACTIVE/, "Output must state containment is active");
+    assert.match(blockData.output, /DISCONNECTED/, "Output must state endpoint is disconnected");
+    assert.match(blockData.output, /unblock_ip 10\.0\.15\.99/, "Output must provide unblock instructions");
+
+    // Verify IP is marked blocked in threatAlertStore
+    assert.equal(isIpBlocked("10.0.15.99"), true, "Target IP must be in blocked store");
+
+    // Subsequent heartbeat from that IP must be rejected with 403 Forbidden
+    const blockedHbReq = new NextRequest("http://localhost:3000/api/agent/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agentId: enrolledAgentId,
+        ipAddress: "10.0.15.99",
+        cpuUsage: 25.0,
+        memoryUsage: 55.0,
+        eps: 40,
+      }),
+    });
+
+    const blockedHbRes = await heartbeatPOST(blockedHbReq);
+    assert.equal(blockedHbRes.status, 403, "Heartbeat from blocked IP must be rejected with 403");
+    const blockedHbData = await blockedHbRes.json();
+    assert.equal(blockedHbData.status, "disconnected");
+    assert.equal(blockedHbData.error, "IP_BLOCKED");
+
+    // Enrollment attempt from blocked IP must also be rejected with 403
+    const blockedEnrollReq = new NextRequest("http://localhost:3000/api/agent/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        token: "sdt_dummy_token_12345",
+        hostname: "SRV-BLOCKED-ENROLL",
+        ipAddress: "10.0.15.99",
+        osType: "linux",
+      }),
+    });
+    const blockedEnrollRes = await enrollPOST(blockedEnrollReq);
+    assert.equal(blockedEnrollRes.status, 403, "Enrollment from blocked IP must be rejected with 403");
+  });
+
+  await t.test("SD-033: unblock_ip lifts containment and allows endpoint heartbeats to resume", async () => {
+    // Execute unblock_ip on 10.0.15.99
+    const unblockReq = new NextRequest("http://localhost:3000/api/fleet/execute", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        agentId: enrolledAgentId,
+        command: "unblock_ip 10.0.15.99",
+        tier: "Tier 1",
+      }),
+    });
+
+    const unblockRes = await executePOST(unblockReq);
+    assert.equal(unblockRes.status, 200, "unblock_ip should execute successfully");
+    const unblockData = await unblockRes.json();
+    assert.equal(unblockData.success, true);
+    assert.match(unblockData.output, /CONTAINMENT LIFTED/, "Output must state containment is lifted");
+
+    // Verify IP is no longer blocked
+    assert.equal(isIpBlocked("10.0.15.99"), false, "Target IP must be removed from blocked store");
+
+    // Heartbeats should now be accepted again
+    const resumedHbReq = new NextRequest("http://localhost:3000/api/agent/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agentId: enrolledAgentId,
+        ipAddress: "10.0.15.99",
+        cpuUsage: 14.5,
+        memoryUsage: 45.0,
+        eps: 28,
+        status: "connected",
+      }),
+    });
+
+    const resumedHbRes = await heartbeatPOST(resumedHbReq);
+    assert.equal(resumedHbRes.status, 200, "Heartbeat should be accepted after unblocking");
+    const resumedHbData = await resumedHbRes.json();
+    assert.equal(resumedHbData.status, "connected");
   });
 });

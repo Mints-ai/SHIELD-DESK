@@ -98,6 +98,17 @@ async function getEndpointIpAddress() {
     return cachedEndpointIp;
   }
 
+  // Prioritize local physical network adapter IP.
+  // This ensures multiple endpoints on the same Wi-Fi/LAN register their unique local IPs
+  // rather than colliding on a shared NAT router public IP, while preserving single-endpoint-per-IP
+  // enforcement for duplicate daemons started on the exact same host.
+  const local = getLocalIpAddress();
+  if (local) {
+    cachedEndpointIp = local;
+    cachedEndpointIpAt = Date.now();
+    return local;
+  }
+
   const discoveryUrls = [
     `${controlUrl}/api/agent/my-ip`,
     'https://api.ipify.org?format=json',
@@ -120,7 +131,7 @@ async function getEndpointIpAddress() {
     }
   }
 
-  cachedEndpointIp = getLocalIpAddress();
+  cachedEndpointIp = '127.0.0.1';
   cachedEndpointIpAt = Date.now();
   return cachedEndpointIp;
 }
@@ -648,11 +659,17 @@ async function request(urlStr, options = {}, data = null) {
     const url = new URL(urlStr);
     const client = url.protocol === 'https:' ? https : http;
 
+    const headers = {
+      'Connection': 'close',
+      ...(options.headers || {}),
+    };
+
     const req = client.request(
       urlStr,
       {
         method: options.method || 'GET',
-        headers: options.headers || {},
+        headers,
+        agent: false,
       },
       (res) => {
         let body = '';
@@ -785,6 +802,8 @@ async function start() {
         console.log(`\x1b[31m[!] KILL SWITCH ACTIVE\x1b[0m — Telemetry dropped by control plane.`);
       } else if (hbRes.status === 409) {
         console.log(`\x1b[33m[!] DUPLICATE IP CONFLICT\x1b[0m — Another endpoint is already connected from this IP. Host in standby.`);
+      } else if (hbRes.status === 403) {
+        console.log(`\x1b[31m[!] IP BLOCKED BY SOC\x1b[0m — Host IP is blocked by SOC security policy. Endpoint disconnected.`);
       } else if (hbRes.status === 404) {
         console.log(`\n\x1b[31m[!] ENDPOINT REMOVED\x1b[0m — This endpoint was unenrolled from the ShieldDesk fleet. Stopping daemon.`);
         running = false;
@@ -793,7 +812,7 @@ async function start() {
       } else if (hbRes.status === 200) {
         const timeStr = new Date().toLocaleTimeString();
         if (hbRes.data && hbRes.data.status === 'disconnected') {
-          process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> Status: \x1b[33mDISCONNECTED BY CONTROL PLANE (Standing by)\x1b[0m`);
+          process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> Status: \x1b[33mDISCONNECTED BY CONTROL PANEL (Standing by)\x1b[0m`);
         } else {
           process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> CPU: \x1b[36m${cpu}%\x1b[0m | RAM: \x1b[36m${mem}%\x1b[0m | EPS: \x1b[36m${eps}\x1b[0m | Status: \x1b[32mOK\x1b[0m`);
         }
@@ -804,6 +823,12 @@ async function start() {
       // Check and execute queued commands from control plane
       try {
         const cmdRes = await request(`${controlUrl}/api/agent/commands?agent_id=${agentId}`);
+        if (cmdRes.status === 404) {
+          console.log(`\n\x1b[31m[!] ENDPOINT REMOVED\x1b[0m — This host was deleted from the ShieldDesk fleet. Stopping daemon.`);
+          running = false;
+          clearInterval(interval);
+          process.exit(0);
+        }
         if (cmdRes.status === 200 && Array.isArray(cmdRes.data.commands) && cmdRes.data.commands.length > 0) {
           for (const cmd of cmdRes.data.commands) {
             console.log(`\n\x1b[35m[*] Received Command [${cmd.id}]:\x1b[0m ${cmd.command} (Tier: ${cmd.tier})`);
@@ -866,6 +891,9 @@ async function start() {
         }
       } catch {}
     } catch (err) {
+      if (err && (err.code === 'ECONNRESET' || err.message?.includes('ECONNRESET'))) {
+        return;
+      }
       console.error(`\n[Heartbeat Error]`, err.message);
     }
   }, 3000);

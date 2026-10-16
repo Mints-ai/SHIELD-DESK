@@ -58,6 +58,7 @@ interface CommandLogEntry {
 const COMMAND_TIERS: Record<string, "Tier 1" | "Tier 2"> = {
   take_safety_snapshot: "Tier 1",
   block_ip: "Tier 1",
+  unblock_ip: "Tier 1",
   isolate_host: "Tier 2",
   restore_host: "Tier 2",
   kill_process: "Tier 2",
@@ -178,7 +179,6 @@ export default function FleetPage() {
   // One-shot or manual refresh of fleet
   const fetchFleet = useCallback(async (forceRefresh = false) => {
     try {
-      setLoading(true);
       const url = forceRefresh ? "/api/fleet?refresh=true" : "/api/fleet";
       const res = await fetch(url, {
         headers: { "X-ShieldDesk-User": activeUserId },
@@ -293,7 +293,7 @@ export default function FleetPage() {
       const data = await res.json();
       if (res.ok) {
         setKillSwitchEngaged(data.killSwitchActive ?? nextState);
-        fetchFleet();
+        await fetchFleet(true);
         fetchLogs();
       } else {
         alert(data.error || "Action failed");
@@ -309,12 +309,12 @@ export default function FleetPage() {
     if (!selectedAgent || isExecuting) return;
 
     let cmd = selectedAction;
-    if (selectedAction === "block_ip") {
+    if (selectedAction === "block_ip" || selectedAction === "unblock_ip") {
       const cleanIp = targetIp.trim();
       if (!cleanIp) {
         setDispatchFeedback({
           type: "error",
-          message: "Please specify an IP address to block (e.g. 203.0.113.15 or 10.0.0.1).",
+          message: `Please specify an IP address to ${selectedAction === "unblock_ip" ? "unblock" : "block"} (e.g. 203.0.113.15 or 10.0.0.1).`,
         });
         return;
       }
@@ -326,7 +326,7 @@ export default function FleetPage() {
         });
         return;
       }
-      cmd = `block_ip ${cleanIp}`;
+      cmd = `${selectedAction} ${cleanIp}`;
     } else if (selectedAction === "kill_process") {
       const cleanPid = targetPid.trim();
       if (!cleanPid) {
@@ -409,6 +409,25 @@ export default function FleetPage() {
           type: "success",
           message: `Successfully executed ${cmd} on ${selectedAgent.hostname}. Live telemetry updated.`,
         });
+        if (cmd.startsWith("block_ip")) {
+          setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
+          setAgents((prev) =>
+            prev.map((a) =>
+              a.id === selectedAgent.id || a.ip_address === targetIp.trim()
+                ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
+                : a
+            )
+          );
+        } else if (cmd.startsWith("unblock_ip")) {
+          setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
+          setAgents((prev) =>
+            prev.map((a) =>
+              a.id === selectedAgent.id || a.ip_address === targetIp.trim()
+                ? { ...a, status: "connected" }
+                : a
+            )
+          );
+        }
       } else {
         setDispatchFeedback({
           type: "error",
@@ -569,7 +588,7 @@ export default function FleetPage() {
         });
         setAgents((prev) => prev.filter((a) => a.id !== agentId));
         setSelectedAgent((prev) => (prev?.id === agentId ? null : prev));
-        fetchFleet();
+        await fetchFleet(true);
       } else {
         alert(data.error || "Failed to remove agent");
       }
@@ -952,7 +971,7 @@ export default function FleetPage() {
                     agents.filter(
                       (a) =>
                         a.status === "connected" &&
-                        Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+                        Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
                     ).length
                   }
                 </span>
@@ -979,7 +998,7 @@ export default function FleetPage() {
                   (acc, a) =>
                     acc +
                     (a.status === "connected" &&
-                    Date.now() - new Date(a.last_heartbeat).getTime() <= 15000
+                    Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
                       ? a.eps || 0
                       : 0),
                   0
@@ -1068,10 +1087,10 @@ export default function FleetPage() {
               const msAgo = Math.max(0, Date.now() - new Date(agent.last_heartbeat).getTime());
               const secondsAgo = Math.floor(msAgo / 1000);
               const minutesAgo = Math.floor(secondsAgo / 60);
-              const isTimedOut = secondsAgo > 15;
+              const isTimedOut = secondsAgo > 45;
               const isDisconnected = agent.status === "disconnected" || isTimedOut;
               const effectiveStatus = isDisconnected ? "disconnected" : agent.status;
-              const isStale = !isDisconnected && secondsAgo > 8;
+              const isStale = !isDisconnected && secondsAgo > 25;
 
               const cleanIp =
                 agent.ip_address && agent.ip_address !== "Unknown"
@@ -1399,6 +1418,9 @@ export default function FleetPage() {
                     <option value="block_ip">
                       block_ip — Block specific IP address via local firewall [Tier 1 Auto]
                     </option>
+                    <option value="unblock_ip">
+                      unblock_ip — Unblock IP address and restore connectivity [Tier 1 Auto]
+                    </option>
                     <option value="isolate_host">
                       isolate_host — Quarantine network interface [Tier 2 Gated]
                     </option>
@@ -1417,18 +1439,19 @@ export default function FleetPage() {
                   </select>
                 </div>
 
-                {selectedAction === "block_ip" && (() => {
+                {(selectedAction === "block_ip" || selectedAction === "unblock_ip") && (() => {
                   const hasInput = targetIp.trim().length > 0;
                   const ipVal = hasInput ? validateIpAddress(targetIp.trim()) : null;
                   const isInvalid = ipVal && !ipVal.valid;
                   const isValid = ipVal && ipVal.valid;
+                  const isUnblock = selectedAction === "unblock_ip";
 
                   return (
                     <div className="space-y-2 p-3.5 rounded-xl bg-[var(--sd-panel-raised)]/80 border border-[var(--sd-border)]">
                       <div className="flex items-center justify-between">
                         <label className="text-[11px] font-medium text-[var(--sd-pine)] flex items-center gap-1.5">
-                          <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
-                          Target IP Address to Block <span className="text-red-400">*</span>
+                          <ShieldAlert className={cn("h-3.5 w-3.5", isUnblock ? "text-emerald-400" : "text-amber-400")} />
+                          Target IP Address to {isUnblock ? "Unblock" : "Block"} <span className="text-red-400">*</span>
                         </label>
                         {selectedAgent.ip_address && (
                           <button
@@ -1479,7 +1502,7 @@ export default function FleetPage() {
                               : "text-[var(--sd-text-dim)] bg-[var(--sd-panel)] border-[var(--sd-border)]"
                           )}
                         >
-                          block_ip {targetIp.trim() || "<ip-address>"}
+                          {selectedAction} {targetIp.trim() || "<ip-address>"}
                         </code>
                       </div>
                     </div>
@@ -1566,7 +1589,7 @@ export default function FleetPage() {
                   disabled={
                     isExecuting ||
                     killSwitchEngaged ||
-                    (selectedAction === "block_ip" && (!targetIp.trim() || !validateIpAddress(targetIp.trim()).valid)) ||
+                    ((selectedAction === "block_ip" || selectedAction === "unblock_ip") && (!targetIp.trim() || !validateIpAddress(targetIp.trim()).valid)) ||
                     (selectedAction === "kill_process" && !targetPid.trim())
                   }
                   className="sd-button sd-button-primary w-full py-2.5 px-4 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
