@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -185,3 +186,127 @@ func TestNonRetryableFailureFailsFast(t *testing.T) {
 		t.Errorf("Expected exactly 1 attempt for non-retryable 401 error, got %d attempts", attempts)
 	}
 }
+
+func TestDiscordPayloadFormatting(t *testing.T) {
+	payload := &WebhookPayload{
+		ID:        "del_test_12345",
+		Event:     "alert.created",
+		Timestamp: "2026-10-16T12:00:00Z",
+		TenantID:  "ten_enterprise_soc",
+		Data: map[string]interface{}{
+			"title":       "Ransomware Detected",
+			"description": "Suspicious mass file encryption on endpoint.",
+			"severity":    "critical",
+			"host":        "srv-prod-db-01",
+			"threat":      "LockBit 3.0",
+			"action_url":  "https://shielddesk.io/incidents/inc_999",
+		},
+	}
+
+	formattedBytes := formatDiscordPayload(payload)
+	var discordMsg map[string]interface{}
+	if err := json.Unmarshal(formattedBytes, &discordMsg); err != nil {
+		t.Fatalf("Failed to parse Discord payload as valid JSON: %v", err)
+	}
+
+	if discordMsg["content"] != "🛡️ **[ShieldDesk SOC Alert]**" {
+		t.Errorf("Unexpected Discord content prefix: %v", discordMsg["content"])
+	}
+
+	embeds, ok := discordMsg["embeds"].([]interface{})
+	if !ok || len(embeds) == 0 {
+		t.Fatalf("Discord payload missing embeds list")
+	}
+
+	embed := embeds[0].(map[string]interface{})
+	if !strings.Contains(embed["title"].(string), "Ransomware Detected") {
+		t.Errorf("Expected embed title to contain rule/alert name, got: %v", embed["title"])
+	}
+
+	// Critical severity color is 0xDC2626 (14427686 in decimal)
+	if color, ok := embed["color"].(float64); !ok || int(color) != 0xDC2626 {
+		t.Errorf("Expected critical color 0xDC2626 (14427686), got: %v", embed["color"])
+	}
+
+	fields, ok := embed["fields"].([]interface{})
+	if !ok || len(fields) < 4 {
+		t.Errorf("Expected at least 4 fields (Tenant, Severity, Host, Threat), got %d", len(fields))
+	}
+}
+
+func TestSlackPayloadFormatting(t *testing.T) {
+	payload := &WebhookPayload{
+		Event:     "alert.created",
+		Timestamp: "2026-10-16T12:00:00Z",
+		TenantID:  "ten_enterprise_soc",
+		Data: map[string]interface{}{
+			"title":       "Privilege Escalation",
+			"description": "User escalated to root via sudo vulnerability.",
+			"severity":    "high",
+			"host":        "workstation-user-05",
+		},
+	}
+
+	formattedBytes := formatSlackPayload(payload)
+	var slackMsg map[string]interface{}
+	if err := json.Unmarshal(formattedBytes, &slackMsg); err != nil {
+		t.Fatalf("Failed to parse Slack payload as valid JSON: %v", err)
+	}
+
+	attachments, ok := slackMsg["attachments"].([]interface{})
+	if !ok || len(attachments) == 0 {
+		t.Fatalf("Slack payload missing attachments list")
+	}
+
+	attachment := attachments[0].(map[string]interface{})
+	if color, ok := attachment["color"].(string); !ok || color != "#ea580c" {
+		t.Errorf("Expected high severity color #ea580c, got: %v", attachment["color"])
+	}
+}
+
+func TestPlatformSpecificWebhookDispatch(t *testing.T) {
+	var receivedBody []byte
+	var receivedContentType string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedContentType = r.Header.Get("Content-Type")
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		receivedBody = buf[:n]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	dispatcher := NewWebhookDispatcher()
+	dispatcher.AllowLocal = true
+
+	// Simulate target URL that routes to discord
+	targetURL := server.URL + "/discord.com/api/webhooks/mock"
+	payload := &WebhookPayload{
+		Event:    "alert.created",
+		TenantID: "ten_test",
+		Data: map[string]interface{}{
+			"severity": "critical",
+			"title":    "Database Breach Attempt",
+		},
+	}
+
+	err := dispatcher.DispatchWithRetry(context.Background(), targetURL, "whsec_test", payload)
+	if err != nil {
+		t.Fatalf("Discord adapter dispatch failed: %v", err)
+	}
+
+	if receivedContentType != "application/json" {
+		t.Errorf("Expected application/json content-type, got: %s", receivedContentType)
+	}
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(receivedBody, &parsed); err != nil {
+		t.Fatalf("Received body is not valid JSON: %v", err)
+	}
+
+	if _, hasEmbeds := parsed["embeds"]; !hasEmbeds {
+		t.Errorf("Expected Discord payload to contain embeds array, got: %s", string(receivedBody))
+	}
+}
+

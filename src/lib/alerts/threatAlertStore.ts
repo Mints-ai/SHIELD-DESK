@@ -349,7 +349,7 @@ export function isUserAuthorizedForAlerts(userId?: string | null, role?: string 
   }
   const devUser = DEV_USERS[userId as DevUserId];
   if (devUser) {
-    return devUser.role === "system_admin" || devUser.role === "super_admin" || devUser.role === "analyst";
+    return devUser.role === "system_admin" || devUser.role === "super_admin" || devUser.role === "analyst" || devUser.role === "responder";
   }
   // Allow real authenticated non-dev users if authenticated
   return typeof userId === "string" && userId.length > 0;
@@ -382,8 +382,8 @@ export function recordThreatAlert(params: {
   const ipFailures = (ipFailureTracker.get(cleanIp) || 0) + 1;
   ipFailureTracker.set(cleanIp, ipFailures);
 
-  // Autonomous IP Containment: Block IP if failures exceed 5
-  const isBlocked = ipFailures > MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK;
+  // Autonomous IP Containment: Block IP if failures exceed 5 or already blocked
+  const isBlocked = ipFailures > MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK || blockedIpsStore.has(cleanIp);
   if (isBlocked && !blockedIpsStore.has(cleanIp)) {
     blockedIpsStore.set(cleanIp, {
       ip: cleanIp,
@@ -435,7 +435,7 @@ export function recordThreatAlert(params: {
       attemptsCount: ipFailures,
       isBlocked,
       tenantId: alertTenantId,
-      allowedRecipients: ["dev-admin"],
+      allowedRecipients: ["dev-admin", "dev-super", "dev-responder", "dev-analyst"],
       createdAt: new Date().toISOString(),
     };
   } else {
@@ -454,7 +454,7 @@ export function recordThreatAlert(params: {
       attemptsCount: ipFailures,
       isBlocked,
       tenantId: alertTenantId,
-      allowedRecipients: ["dev-admin"],
+      allowedRecipients: ["dev-admin", "dev-super", "dev-responder", "dev-analyst"],
       status: "active",
       createdAt: new Date().toISOString(),
     };
@@ -478,10 +478,11 @@ export function getThreatAlertsForUser(
   tenantId?: string | null,
   role?: string | null
 ): ThreatAlert[] {
-  if (!isUserAuthorizedForAlerts(userId, role)) {
+  const effectiveRole = role || (userId && DEV_USERS[userId as DevUserId]?.role) || null;
+  if (!isUserAuthorizedForAlerts(userId, effectiveRole)) {
     return [];
   }
-  const isCrossTenant = role === "system_admin" || role === "super_admin";
+  const isCrossTenant = effectiveRole === "system_admin" || effectiveRole === "super_admin";
   return alertsStore.filter((a) => {
     if (a.status !== "active") return false;
     if (isCrossTenant || !tenantId) return true;
@@ -498,11 +499,12 @@ export function acknowledgeThreatAlert(
   tenantId?: string | null,
   role?: string | null
 ): boolean {
-  if (!isUserAuthorizedForAlerts(userId, role)) {
+  const effectiveRole = role || (userId && DEV_USERS[userId as DevUserId]?.role) || null;
+  if (!isUserAuthorizedForAlerts(userId, effectiveRole)) {
     return false;
   }
 
-  const isCrossTenant = role === "system_admin" || role === "super_admin";
+  const isCrossTenant = effectiveRole === "system_admin" || effectiveRole === "super_admin";
   const alert = alertsStore.find((a) => {
     if (a.id !== alertId) return false;
     if (isCrossTenant || !tenantId) return true;

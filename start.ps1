@@ -224,10 +224,17 @@ $agentExe   = Join-Path $ROOT "bin\shielddesk-agent.exe"
 $startLocalAgent = ($envMap["START_LOCAL_AGENT"] -eq "true") -or ($env:START_LOCAL_AGENT -eq "true")
 $agentJob = $null
 if ($startLocalAgent) {
-    $agentCmd   = if (Test-Path $agentExe) { "& `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
-    $agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
+    $configuredAgentId = if ($envMap["SHIELDDESK_AGENT_ID"]) { $envMap["SHIELDDESK_AGENT_ID"] } else { $env:SHIELDDESK_AGENT_ID }
+    $configuredToken   = if ($envMap["SHIELDDESK_ENROLL_TOKEN"]) { $envMap["SHIELDDESK_ENROLL_TOKEN"] } else { $env:SHIELDDESK_ENROLL_TOKEN }
+    $agentArgs = if ($configuredToken) { "-token `"$configuredToken`" -control-url http://localhost:3000" } elseif ($configuredAgentId) { "-agent-id `"$configuredAgentId`" -control-url http://localhost:3000" } else { "" }
+    if ($agentArgs) {
+        $agentCmd   = if (Test-Path $agentExe) { "& `"$agentExe`" $agentArgs" } else { "go run ./cmd $agentArgs" }
+        $agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
+    } else {
+        Write-Host "  [INFO] Local agent daemon requires SHIELDDESK_ENROLL_TOKEN or SHIELDDESK_AGENT_ID in .env.local to enroll." -ForegroundColor DarkYellow
+    }
 } else {
-    Write-Host "  [INFO] Local agent daemon disabled (remote endpoints will stream genuine telemetry via Connect Endpoint)." -ForegroundColor DarkYellow
+    Write-Host "  [INFO] Local agent daemon disabled (remote endpoints stream genuine telemetry via Connect Endpoint)." -ForegroundColor DarkYellow
 }
 
 $allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob)
@@ -262,7 +269,9 @@ Write-Host "  |  Go Threat Engine-->  http://localhost:8003     |" -ForegroundCo
 Write-Host "  |  Go Ingest & PII -->  http://localhost:8004     |" -ForegroundColor Blue
 Write-Host "  |  SSH Patch Orch  -->  http://localhost:8006     |" -ForegroundColor Green
 Write-Host "  |  Go Webhook Svc  -->  http://localhost:8080     |" -ForegroundColor DarkYellow
-Write-Host "  |  Go Agent (EDR)  -->  Streaming FIN-WS-042      |" -ForegroundColor Green
+if ($agentJob) {
+Write-Host "  |  Go Agent (EDR)  -->  Active Local Endpoint      |" -ForegroundColor Green
+}
 if ($hasNats) {
 Write-Host "  |  NATS JetStream  -->  http://localhost:8222     |" -ForegroundColor Cyan
 }

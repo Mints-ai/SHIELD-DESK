@@ -91,14 +91,8 @@ export interface HashChainAuditRecord {
   created_at: string;
 }
 
-// In-memory store for dynamically enrolled agents in development / production runtime.
-// Test fixtures are isolated strictly to automated test runner environments.
-export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] =
-  process.env.NODE_ENV === "test"
-    ? [
-
-    ]
-    : [];
+// In-memory registry for dynamically connected agents. No mock data is seeded.
+export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] = [];
 
 export const MOCK_COMMAND_LOGS: AgentCommandLogRecord[] = [];
 

@@ -174,6 +174,13 @@ func (s *WebhookService) Start(ctx context.Context) error {
 				}()
 			}
 
+			discordURL := os.Getenv("DISCORD_WEBHOOK_URL")
+			if discordURL != "" {
+				go func() {
+					_ = s.dispatcher.DispatchWithRetry(context.Background(), discordURL, "shielddesk-discord-secret", payload)
+				}()
+			}
+
 			_ = msg.Ack()
 		}, nats.Durable("webhooks-dispatcher-worker"), nats.ManualAck())
 
