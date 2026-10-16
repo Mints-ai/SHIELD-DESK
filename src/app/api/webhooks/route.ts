@@ -232,10 +232,21 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: val.reason || "Invalid destination URL" }, { status: 400 });
       }
 
+      // Auto-resolve platform type if generic was selected but a known provider URL was provided
+      let resolvedType = type;
+      const destTrimmed = String(destination).trim().toLowerCase();
+      if (destTrimmed.includes("discord.com/api/webhooks") || destTrimmed.includes("discordapp.com/api/webhooks")) {
+        resolvedType = "discord";
+      } else if (destTrimmed.includes("hooks.slack.com")) {
+        resolvedType = "slack";
+      } else if (destTrimmed.includes("office.com/webhook") || destTrimmed.includes("outlook.office.com")) {
+        resolvedType = "teams";
+      }
+
       const created = await createTenantWebhookEndpoint({
         tenantId: session.tenantId,
         name: String(name).trim(),
-        type,
+        type: resolvedType,
         destination: String(destination).trim(),
         secretKey: secret_key ? String(secret_key).trim() : undefined,
         events: Array.isArray(events) ? events : undefined,
@@ -318,8 +329,19 @@ export async function POST(req: NextRequest) {
     let deliveryStatus = 200;
     let responseBody = "";
 
+    const destLower = targetEndpoint.destination.toLowerCase();
+    const isDiscord =
+      targetEndpoint.type === "discord" ||
+      destLower.includes("discord.com/api/webhooks") ||
+      destLower.includes("discordapp.com/api/webhooks");
+    const isSlack = targetEndpoint.type === "slack" || destLower.includes("hooks.slack.com");
+    const isTeams =
+      targetEndpoint.type === "teams" ||
+      destLower.includes("office.com/webhook") ||
+      destLower.includes("outlook.office.com");
+
     try {
-      if (targetEndpoint.type === "discord") {
+      if (isDiscord) {
         const discordRes = await fetch(targetEndpoint.destination, {
           method: "POST",
           headers: {
@@ -353,7 +375,7 @@ export async function POST(req: NextRequest) {
         });
         deliveryStatus = discordRes.status;
         responseBody = await discordRes.text().catch(() => "");
-      } else if (targetEndpoint.type === "slack") {
+      } else if (isSlack) {
         const slackRes = await fetch(targetEndpoint.destination, {
           method: "POST",
           headers: {

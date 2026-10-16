@@ -1487,8 +1487,19 @@ export default function ThreatsDashboardPage() {
                           type="url"
                           required
                           value={newWebhookUrl}
-                          onChange={(e) => setNewWebhookUrl(e.target.value)}
-                          placeholder="https://hooks.slack.com/services/... or https://siem.corp/webhook"
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setNewWebhookUrl(val);
+                            const lower = val.toLowerCase();
+                            if (lower.includes("discord.com/api/webhooks") || lower.includes("discordapp.com/api/webhooks")) {
+                              setNewWebhookType("discord");
+                            } else if (lower.includes("hooks.slack.com")) {
+                              setNewWebhookType("slack");
+                            } else if (lower.includes("office.com/webhook") || lower.includes("outlook.office.com")) {
+                              setNewWebhookType("teams");
+                            }
+                          }}
+                          placeholder="https://discord.com/api/webhooks/... or https://hooks.slack.com/services/..."
                           className="w-full px-3 py-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs text-[var(--sd-text)] font-mono focus:outline-hidden focus:border-[var(--sd-pine)] transition"
                         />
                         <p className="text-[10px] text-[var(--sd-text-muted)]">
