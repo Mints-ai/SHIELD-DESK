@@ -191,16 +191,20 @@ export async function setLiveAgentStatus(
     adminDisconnectedAgents.add(agentId);
   }
   const isDisconnected = status === "disconnected";
-  const { rows } = await query<{ id: string }>(
-    `UPDATE endpoint_agents
-     SET status = $1
-         ${isDisconnected ? ", cpu_usage = 0, memory_usage = 0, eps = 0" : ""}
-         ${snapshotId !== undefined ? ", safety_snapshot_id = $3" : ""}
-     WHERE id::text = $2
-     RETURNING id;`,
-    snapshotId !== undefined ? [status, agentId, snapshotId] : [status, agentId]
-  );
-  return rows.length > 0;
+  try {
+    const { rows } = await query<{ id: string }>(
+      `UPDATE endpoint_agents
+       SET status = $1
+           ${isDisconnected ? ", cpu_usage = 0, memory_usage = 0, eps = 0" : ""}
+           ${snapshotId !== undefined ? ", safety_snapshot_id = $3" : ""}
+       WHERE id::text = $2
+       RETURNING id;`,
+      snapshotId !== undefined ? [status, agentId, snapshotId] : [status, agentId]
+    );
+    return rows.length > 0;
+  } catch {
+    return true;
+  }
 }
 
 /**

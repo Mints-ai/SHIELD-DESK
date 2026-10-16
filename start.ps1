@@ -221,10 +221,17 @@ $patchCmd   = if (Test-Path $patchExe) { ".\orchestrator.exe server --port 8006"
 $patchJob   = Start-Service "GoPatch"     $patchCmd        $patchDir    $envMap
 $agentDir   = Join-Path $ROOT "agent"
 $agentExe   = Join-Path $ROOT "bin\shielddesk-agent.exe"
-$agentCmd   = if (Test-Path $agentExe) { "& `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
-$agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
+$startLocalAgent = ($envMap["START_LOCAL_AGENT"] -eq "true") -or ($env:START_LOCAL_AGENT -eq "true")
+$agentJob = $null
+if ($startLocalAgent) {
+    $agentCmd   = if (Test-Path $agentExe) { "& `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
+    $agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
+} else {
+    Write-Host "  [INFO] Local agent daemon disabled (remote endpoints will stream genuine telemetry via Connect Endpoint)." -ForegroundColor DarkYellow
+}
 
-$allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob, $agentJob)
+$allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob)
+if ($agentJob) { $allJobs += $agentJob }
 if ($ollamaJob) { $allJobs += $ollamaJob }
 if ($natsJob) { $allJobs += $natsJob }
 

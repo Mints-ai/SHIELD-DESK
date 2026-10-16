@@ -294,7 +294,7 @@ func main() {
 
 	go func() {
 		for range pollTicker.C {
-			pollCommands(httpClient, *controlURL, *agentID, *hostname, actionHandler)
+			pollCommands(httpClient, *controlURL, *agentID, *hostname, actionHandler, collector)
 		}
 	}()
 
@@ -312,7 +312,7 @@ func main() {
 	fmt.Println("\033[32m[+] Successfully signaled DISCONNECTED to control plane. Exiting clean.\033[0m")
 }
 
-func pollCommands(client *http.Client, controlURL, agentID, hostname string, handler *handlers.ActionHandler) {
+func pollCommands(client *http.Client, controlURL, agentID, hostname string, handler *handlers.ActionHandler, collector *telemetry.Collector) {
 	reqURL := fmt.Sprintf("%s/api/agent/commands?agent_id=%s", controlURL, agentID)
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
@@ -395,6 +395,13 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 
 		status, output, snapshotID := dispatch(cmd.Command, hostname, handler)
 		reportResult(client, controlURL, cmd.ID, status, output, snapshotID)
+
+		// Immediately publish updated heartbeat with fresh telemetry (e.g. process terminated)
+		if collector != nil {
+			metrics := collector.HarvestMetrics()
+			coreTelem := collector.HarvestCoreTelemetry(hostname, metrics.CPUPercent, metrics.MemPercent)
+			_, _ = sendHeartbeat(client, controlURL, agentID, metrics.CPUPercent, metrics.MemPercent, 15, coreTelem)
+		}
 	}
 }
 

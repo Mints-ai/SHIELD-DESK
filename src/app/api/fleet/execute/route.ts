@@ -135,12 +135,12 @@ export async function POST(req: NextRequest) {
         // 1. Lift IP containment in threatAlertStore
         unblockIp(targetIp, caller.tenant_id);
 
-        // 2. Restore connected status in PostgreSQL
+        // 2. Restore connected status in PostgreSQL for target agent
         await query(
           `UPDATE endpoint_agents
            SET status = 'connected', last_seen_at = now()
-           WHERE ip_address = $1 OR id = $2;`,
-          [targetIp, agentId]
+           WHERE id = $1;`,
+          [agentId]
         ).catch(() => {});
 
         // 3. Mark live agent status as connected
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
         // 4. Update in-memory fallback store
         const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
         for (const a of MOCK_ENDPOINT_AGENTS) {
-          if (a.ip_address === targetIp || a.id === agentId) {
+          if (a.id === agentId) {
             a.status = "connected";
           }
         }

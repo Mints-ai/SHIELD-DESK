@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
 
 
     if (body.coreTelemetry && typeof body.coreTelemetry === "object") {
-      storeEndpointCoreTelemetry(agentId, body.coreTelemetry);
+      storeEndpointCoreTelemetry(agentId, body.coreTelemetry, body.hostname || req.headers.get("x-shielddesk-hostname") || undefined);
     }
 
     const cpuUsage = typeof body.cpuUsage === "number" ? Math.round(body.cpuUsage * 10) / 10 : null;
@@ -310,6 +310,9 @@ export async function POST(req: NextRequest) {
         if (cpuUsage !== null) agent.cpu_usage = cpuUsage;
         if (memoryUsage !== null) agent.memory_usage = memoryUsage;
         if (eps !== null) agent.eps = eps;
+        if (body.coreTelemetry && typeof body.coreTelemetry === "object") {
+          (agent as any).core_telemetry = body.coreTelemetry;
+        }
         agent.status = "connected";
       }
 
