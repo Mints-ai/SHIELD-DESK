@@ -219,6 +219,31 @@ func (h *ActionHandler) BlockIP(hostname, ipAddress string, mgmtGatewayIP ...str
 	return fmt.Sprintf("Host %s: firewall rule inserted to DROP all traffic with %s. Safety snapshot %s recorded.", hostname, cleanIP, snapID), nil
 }
 
+// UnblockIP removes host-level drop rules for the designated IP address.
+func (h *ActionHandler) UnblockIP(hostname, ipAddress string) (string, error) {
+	cleanIP := strings.TrimSpace(ipAddress)
+	if cleanIP == "" {
+		return "", fmt.Errorf("ip address cannot be empty")
+	}
+
+	parsed := net.ParseIP(cleanIP)
+	if parsed == nil {
+		return "", fmt.Errorf("invalid IP address: %s", cleanIP)
+	}
+
+	if runtime.GOOS == "windows" {
+		ruleIn := fmt.Sprintf("ShieldDesk-Block-In-%s", cleanIP)
+		ruleOut := fmt.Sprintf("ShieldDesk-Block-Out-%s", cleanIP)
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleIn)).Run()
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleOut)).Run()
+	} else {
+		_ = exec.Command("iptables", "-D", "INPUT", "-s", cleanIP, "-j", "DROP").Run()
+		_ = exec.Command("iptables", "-D", "OUTPUT", "-d", cleanIP, "-j", "DROP").Run()
+	}
+
+	return fmt.Sprintf("Host %s: firewall drop rules removed for %s. Traffic restored.", hostname, cleanIP), nil
+}
+
 // KillProcess terminates a suspicious or rogue process ID, with protection
 // against terminating init (PID <= 1) or the agent's own process.
 func (h *ActionHandler) KillProcess(hostname string, pid int) (string, error) {
