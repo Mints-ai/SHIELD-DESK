@@ -46,6 +46,93 @@ process.env.SLACK_WEBHOOK_URL = "";
 process.env.TEAMS_WEBHOOK_URL = "";
 process.env.SECURITY_WEBHOOK_URL = "";
 
+// Initialize test fixtures strictly within unit test runner process
+const { MOCK_ENDPOINT_AGENTS } = require("../src/lib/fleet/fleet");
+if (MOCK_ENDPOINT_AGENTS && MOCK_ENDPOINT_AGENTS.length === 0) {
+  MOCK_ENDPOINT_AGENTS.push(
+    {
+      id: "ea111111-1111-1111-1111-111111111111",
+      tenant_id: "acme-tenant",
+      hostname: "FIN-WS-042",
+      ip_address: "10.0.4.42",
+      os_type: "windows",
+      agent_version: "0.4.2",
+      status: "connected",
+      cpu_usage: 42.5,
+      memory_usage: 68.2,
+      eps: 145,
+      kill_switch_active: false,
+      safety_snapshot_id: "snap-finws042-baseline",
+      last_heartbeat: new Date().toISOString(),
+      created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
+    },
+    {
+      id: "ea222222-2222-2222-2222-222222222222",
+      tenant_id: "acme-tenant",
+      hostname: "FIN-DB-01",
+      ip_address: "10.0.4.10",
+      os_type: "linux",
+      agent_version: "0.4.2",
+      status: "connected",
+      cpu_usage: 18.2,
+      memory_usage: 84.1,
+      eps: 412,
+      kill_switch_active: false,
+      safety_snapshot_id: "snap-findb01-baseline",
+      last_heartbeat: new Date().toISOString(),
+      created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
+    },
+    {
+      id: "ea333333-3333-3333-3333-333333333333",
+      tenant_id: "acme-tenant",
+      hostname: "ENG-LAPTOP-09",
+      ip_address: "10.0.12.9",
+      os_type: "linux",
+      agent_version: "0.4.2",
+      status: "connected",
+      cpu_usage: 12.1,
+      memory_usage: 45.0,
+      eps: 32,
+      kill_switch_active: false,
+      safety_snapshot_id: "snap-eng09-baseline",
+      last_heartbeat: new Date().toISOString(),
+      created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+    },
+    {
+      id: "ea444444-4444-4444-4444-444444444444",
+      tenant_id: "acme-tenant",
+      hostname: "PROD-API-01",
+      ip_address: "10.0.2.100",
+      os_type: "linux",
+      agent_version: "0.4.2",
+      status: "connected",
+      cpu_usage: 64.8,
+      memory_usage: 71.3,
+      eps: 890,
+      kill_switch_active: false,
+      safety_snapshot_id: "snap-prodapi-baseline",
+      last_heartbeat: new Date().toISOString(),
+      created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+    },
+    {
+      id: "ea555555-5555-5555-5555-555555555555",
+      tenant_id: "globex-tenant",
+      hostname: "GLX-SEC-01",
+      ip_address: "192.168.1.15",
+      os_type: "linux",
+      agent_version: "0.4.2",
+      status: "connected",
+      cpu_usage: 15.0,
+      memory_usage: 38.0,
+      eps: 80,
+      kill_switch_active: false,
+      safety_snapshot_id: "snap-glx01-baseline",
+      last_heartbeat: new Date().toISOString(),
+      created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
+    }
+  );
+}
+
 // Clean up background DB pools or open handles so test runner exits promptly
 process.on("beforeExit", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
