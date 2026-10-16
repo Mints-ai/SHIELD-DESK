@@ -157,18 +157,6 @@ export const CHAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
-const MOCK_CVE_RECORDS: Record<string, Record<string, unknown>> = {
-  "CVE-2024-3400": {
-    cve_id: "CVE-2024-3400",
-    cvss_score: 10.0,
-    severity: "CRITICAL",
-    cisa_kev: true,
-    remediation_tier: "IMMEDIATE_ACTION",
-    description: "Command injection vulnerability in PAN-OS GlobalProtect feature allows an unauthenticated attacker to execute arbitrary code with root privileges.",
-    recommended_mitigation: "Apply vendor hotfixes immediately. Disable device telemetry as temporary workaround if hotfix cannot be immediately deployed.",
-  },
-};
-
 // ---------------------------------------------------------------------------
 // Tool: getIncidents
 // Always scoped to the caller's tenant unless they hold VIEW_CROSS_TENANT.
@@ -296,22 +284,9 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
     }
   }
 
-  // Dev fallback:
-  const cveUpper = args.cveId.toUpperCase();
-  if (MOCK_CVE_RECORDS[cveUpper]) {
-    return { record: MOCK_CVE_RECORDS[cveUpper] };
-  }
-
   return {
-    record: {
-      cve_id: cveUpper,
-      cvss_score: 8.8,
-      severity: "HIGH",
-      cisa_kev: false,
-      remediation_tier: "SCHEDULED_PATCH",
-      description: `Threat intelligence analysis for ${cveUpper}.`,
-      recommended_mitigation: `Apply vendor patches for ${cveUpper}, enforce boundary firewalls, and monitor endpoint logs.`,
-    },
+    error: "cve_service_unavailable",
+    message: `CVE threat intelligence service is unreachable or offline for ${args.cveId}.`,
   };
 }
 
