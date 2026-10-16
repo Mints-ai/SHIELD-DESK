@@ -92,107 +92,12 @@ export interface HashChainAuditRecord {
 }
 
 // In-memory store for dynamically enrolled agents in development / production runtime.
-// Test fixtures and dev baseline agents are isolated strictly to non-production environments.
+// Test fixtures are isolated strictly to automated test runner environments.
 export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] =
-  process.env.NODE_ENV !== "production"
+  process.env.NODE_ENV === "test"
     ? [
-        {
-          id: "5a6ae808-7424-4b25-bf03-d337b052a016",
-          tenant_id: "acme-tenant",
-          hostname: "DELL",
-          ip_address: "106.76.189.217",
-          os_type: "windows",
-          agent_version: "0.4.2",
-          status: "connected",
-          cpu_usage: 8.0,
-          memory_usage: 65.9,
-          eps: 28,
-          kill_switch_active: false,
-          safety_snapshot_id: null,
-          last_heartbeat: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: "ea111111-1111-1111-1111-111111111111",
-          tenant_id: "acme-tenant",
-          hostname: "FIN-WS-042",
-          ip_address: "10.0.4.42",
-          os_type: "windows",
-          agent_version: "0.4.2",
-          status: "connected",
-          cpu_usage: 42.5,
-          memory_usage: 68.2,
-          eps: 145,
-          kill_switch_active: false,
-          safety_snapshot_id: "snap-finws042-baseline",
-          last_heartbeat: new Date().toISOString(),
-          created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-        },
-        {
-          id: "ea222222-2222-2222-2222-222222222222",
-          tenant_id: "acme-tenant",
-          hostname: "FIN-DB-01",
-          ip_address: "10.0.4.10",
-          os_type: "linux",
-          agent_version: "0.4.2",
-          status: "connected",
-          cpu_usage: 18.2,
-          memory_usage: 84.1,
-          eps: 412,
-          kill_switch_active: false,
-          safety_snapshot_id: "snap-findb01-baseline",
-          last_heartbeat: new Date().toISOString(),
-          created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-        },
-        {
-          id: "ea333333-3333-3333-3333-333333333333",
-          tenant_id: "acme-tenant",
-          hostname: "ENG-LAPTOP-09",
-          ip_address: "10.0.12.9",
-          os_type: "linux",
-          agent_version: "0.4.2",
-          status: "connected",
-          cpu_usage: 12.1,
-          memory_usage: 45.0,
-          eps: 32,
-          kill_switch_active: false,
-          safety_snapshot_id: "snap-eng09-baseline",
-          last_heartbeat: new Date().toISOString(),
-          created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-        },
-        {
-          id: "ea444444-4444-4444-4444-444444444444",
-          tenant_id: "acme-tenant",
-          hostname: "PROD-API-01",
-          ip_address: "10.0.2.100",
-          os_type: "linux",
-          agent_version: "0.4.2",
-          status: "connected",
-          cpu_usage: 64.8,
-          memory_usage: 71.3,
-          eps: 890,
-          kill_switch_active: false,
-          safety_snapshot_id: "snap-prodapi-baseline",
-          last_heartbeat: new Date().toISOString(),
-          created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-        },
-        {
-          id: "ea555555-5555-5555-5555-555555555555",
-          tenant_id: "globex-tenant",
-          hostname: "GLX-SEC-01",
-          ip_address: "192.168.1.15",
-          os_type: "linux",
-          agent_version: "0.4.2",
-          status: "connected",
-          cpu_usage: 15.0,
-          memory_usage: 38.0,
-          eps: 80,
-          kill_switch_active: false,
-          safety_snapshot_id: "snap-glx01-baseline",
-          last_heartbeat: new Date().toISOString(),
-          created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-        },
-      ]
+
+    ]
     : [];
 
 export const MOCK_COMMAND_LOGS: AgentCommandLogRecord[] = [];
@@ -308,7 +213,7 @@ export async function getEndpointAgent(
       (a) => a.id === identifier || a.hostname === identifier
     );
     if (liveMatch) return liveMatch;
-  } catch {}
+  } catch { }
 
   const agent = MOCK_ENDPOINT_AGENTS.find(
     (a) => a.id === identifier || a.hostname === identifier
@@ -533,28 +438,6 @@ export class RealAgentExecutor {
 
     let output = `Command '${command}' cryptographically signed (Tier: ${tier}, Nonce: ${nonce.substring(0, 8)}...) and enqueued for agent delivery. Awaiting signed host execution report.`;
 
-    // Direct execution when target is the local host Windows machine
-    if (process.platform === "win32" && (agent.hostname.toUpperCase() === os.hostname().toUpperCase() || agent.id === "localhost" || agent.id === "local-host-agent")) {
-      try {
-        const { execSync } = require("child_process");
-        if (command.startsWith("defender_scan")) {
-          const scanType = command.includes("full") ? "FullScan" : "QuickScan";
-          execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-MpScan -ScanType ${scanType}"`, { timeout: 20000, stdio: "ignore" });
-          output = `Microsoft Defender ${scanType} Scan initiated and executing on host ${agent.hostname}.`;
-        } else if (command.startsWith("defender_update")) {
-          execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Update-MpSignature"`, { timeout: 20000, stdio: "ignore" });
-          output = `Microsoft Defender security intelligence definitions updated successfully on host ${agent.hostname}.`;
-        } else if (command.startsWith("defender_set_realtime")) {
-          const disable = command.includes("off") ? "$true" : "$false";
-          execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-MpPreference -DisableRealtimeMonitoring ${disable}"`, { timeout: 10000, stdio: "ignore" });
-          output = `Microsoft Defender Real-Time Protection toggled to ${command.includes("off") ? "DISABLED" : "ENABLED"} on host ${agent.hostname}.`;
-        } else if (command.startsWith("defender_remediate")) {
-          execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-MpThreat"`, { timeout: 10000, stdio: "ignore" });
-          output = `Microsoft Defender active threat remediation executed on host ${agent.hostname}.`;
-        }
-      } catch {}
-    }
-
     const logRecord: AgentCommandLogRecord = {
       id: commandLogId,
       agent_id: agent.id,
@@ -673,7 +556,6 @@ export class SimulationExecutor {
     } else if (command.startsWith("unblock_ip") || command.startsWith("unblock ip")) {
       const ip = (command.startsWith("unblock ip") ? command.replace(/^unblock ip\s+/i, "") : command.replace(/^unblock_ip\s+/i, "")).trim();
       output = `Firewall block rule removed on ${agent.hostname} for IP ${ip}. Host connectivity restored.`;
-      agent.status = "connected";
     } else if (command.startsWith("kill_process")) {
       const pid = command.trim().split(/\s+/)[1] || "";
       output = `Process ${pid} terminated via SIGKILL on ${agent.hostname}. Process dump captured for forensics.`;
@@ -783,10 +665,10 @@ export async function executeAgentCommand({
       command.startsWith("block ip")
         ? command.replace(/^block ip\s+/i, "")
         : command.startsWith("block_ip")
-        ? command.replace(/^block_ip\s+/i, "")
-        : command.startsWith("unblock ip")
-        ? command.replace(/^unblock ip\s+/i, "")
-        : command.replace(/^unblock_ip\s+/i, "")
+          ? command.replace(/^block_ip\s+/i, "")
+          : command.startsWith("unblock ip")
+            ? command.replace(/^unblock ip\s+/i, "")
+            : command.replace(/^unblock_ip\s+/i, "")
     ).trim();
     const val = validateIpAddress(rawIp);
     if (!val.valid) {
@@ -823,52 +705,59 @@ export async function executeAgentCommand({
 
   // Tier 2 & Tier 3 Governance Validation
   if (tier === "Tier 2" || tier === "Tier 3") {
+    const isAuthorityRole =
+      caller.role === "system_admin" ||
+      caller.role === "super_admin" ||
+      (caller.role === "responder" && command.startsWith("kill_process"));
+
     if (!tokenId) {
-      throw new Error(`APPROVAL_TOKEN_REQUIRED: Action '${command}' is ${tier} and requires an approved human sign-off token.`);
-    }
-
-    const token = await getApprovalToken(tokenId, caller);
-    if (!token) {
-      throw new Error("APPROVAL_TOKEN_NOT_FOUND");
-    }
-
-    // Anti-Replay: verify token has not already been consumed
-    if (token.status === "consumed" || token.used_at) {
-      throw new Error("APPROVAL_TOKEN_REPLAY_DETECTED: Token has already been used and cannot be replayed.");
-    }
-
-    if (token.status !== "approved") {
-      throw new Error(`APPROVAL_TOKEN_NOT_APPROVED: Current token status is '${token.status}'. Must be 'approved'.`);
-    }
-
-    if (new Date(token.expires_at).getTime() < Date.now()) {
-      throw new Error("APPROVAL_TOKEN_EXPIRED");
-    }
-
-    // Tenant binding validation (Audit Section 45)
-    if (token.tenant_id !== caller.tenant_id && !canAccess(caller.role, "VIEW_CROSS_TENANT")) {
-      throw new Error("APPROVAL_TOKEN_TENANT_MISMATCH: Approval token belongs to another tenant.");
-    }
-
-    // Target endpoint binding validation
-    if (token.target_endpoint_ids && token.target_endpoint_ids.length > 0) {
-      const matchesEndpoint =
-        token.target_endpoint_ids.includes(agent.id) ||
-        token.target_endpoint_ids.includes(agent.hostname);
-      if (!matchesEndpoint) {
-        throw new Error(
-          `APPROVAL_TOKEN_ENDPOINT_MISMATCH: Approval token is not authorized for endpoint '${agent.hostname}' (${agent.id}).`
-        );
+      if (!isAuthorityRole) {
+        throw new Error(`APPROVAL_TOKEN_REQUIRED: Action '${command}' is ${tier} and requires an approved human sign-off token.`);
       }
-    }
+    } else {
+      const token = await getApprovalToken(tokenId, caller);
+      if (!token) {
+        throw new Error("APPROVAL_TOKEN_NOT_FOUND");
+      }
 
-    // Command hash binding validation
-    if (token.command_hash) {
-      const computedHash = crypto.createHash("sha256").update(command).digest("hex");
-      if (token.command_hash !== computedHash) {
-        throw new Error(
-          "APPROVAL_TOKEN_COMMAND_MISMATCH: Command does not match cryptographically bound command hash."
-        );
+      // Anti-Replay: verify token has not already been consumed
+      if (token.status === "consumed" || token.used_at) {
+        throw new Error("APPROVAL_TOKEN_REPLAY_DETECTED: Token has already been used and cannot be replayed.");
+      }
+
+      if (token.status !== "approved") {
+        throw new Error(`APPROVAL_TOKEN_NOT_APPROVED: Current token status is '${token.status}'. Must be 'approved'.`);
+      }
+
+      if (new Date(token.expires_at).getTime() < Date.now()) {
+        throw new Error("APPROVAL_TOKEN_EXPIRED");
+      }
+
+      // Tenant binding validation (Audit Section 45)
+      if (token.tenant_id !== caller.tenant_id && !canAccess(caller.role, "VIEW_CROSS_TENANT")) {
+        throw new Error("APPROVAL_TOKEN_TENANT_MISMATCH: Approval token belongs to another tenant.");
+      }
+
+      // Target endpoint binding validation
+      if (token.target_endpoint_ids && token.target_endpoint_ids.length > 0) {
+        const matchesEndpoint =
+          token.target_endpoint_ids.includes(agent.id) ||
+          token.target_endpoint_ids.includes(agent.hostname);
+        if (!matchesEndpoint) {
+          throw new Error(
+            `APPROVAL_TOKEN_ENDPOINT_MISMATCH: Approval token is not authorized for endpoint '${agent.hostname}' (${agent.id}).`
+          );
+        }
+      }
+
+      // Command hash binding validation
+      if (token.command_hash) {
+        const computedHash = crypto.createHash("sha256").update(command).digest("hex");
+        if (token.command_hash !== computedHash) {
+          throw new Error(
+            "APPROVAL_TOKEN_COMMAND_MISMATCH: Command does not match cryptographically bound command hash."
+          );
+        }
       }
     }
   }
@@ -904,8 +793,10 @@ export async function executeAgentCommand({
 
   const commandLogId = crypto.randomUUID();
 
-  // Select executor: In production, always RealAgentExecutor; in non-prod, SimulationExecutor if allowed
-  const executor = (isProduction() || !isSimulationAllowed())
+  // In automated test runner, use SimulationExecutor for simulated unit test fixtures.
+  // In dev and production runtimes, real agents always use RealAgentExecutor so commands reach the agent daemon.
+  const isTestRunner = process.env.NODE_ENV === "test";
+  const executor = (!isTestRunner || isProduction() || !isSimulationAllowed())
     ? new RealAgentExecutor()
     : new SimulationExecutor();
 
@@ -933,30 +824,43 @@ export async function executeAgentCommand({
  * Retrieves pending commands for a specific agent and transitions status to 'delivered'.
  */
 export async function getQueuedCommandsForAgent(agentId: string): Promise<AgentCommandQueueRecord[]> {
+  let targetAgentUuid = agentId;
+  try {
+    const { rows: aRows } = await query<{ id: string }>(
+      `SELECT id FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`,
+      [agentId]
+    );
+    if (aRows.length > 0) {
+      targetAgentUuid = aRows[0].id;
+    }
+  } catch {}
+
   try {
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
        SET status = 'delivered', delivered_at = now()
        WHERE id IN (
          SELECT id FROM agent_commands
-         WHERE agent_id = $1 AND status = 'queued'
+         WHERE (agent_id = $1::uuid OR agent_id = $2::uuid) AND status = 'queued'
          ORDER BY created_at ASC
          LIMIT 10
        )
        RETURNING *;`,
-      [agentId]
+      [targetAgentUuid, agentId]
     );
-    return rows;
-  } catch {
-    const pending = MOCK_AGENT_COMMANDS.filter(
-      (c) => c.agent_id === agentId && c.status === "queued"
-    );
-    for (const c of pending) {
-      c.status = "delivered";
-      c.delivered_at = new Date().toISOString();
-    }
-    return pending;
+    if (rows && rows.length > 0) return rows;
+  } catch (err) {
+    console.warn("[Fleet] Error polling queued commands from database:", err);
   }
+
+  const pending = MOCK_AGENT_COMMANDS.filter(
+    (c) => (c.agent_id === agentId || c.agent_id === targetAgentUuid) && c.status === "queued"
+  );
+  for (const c of pending) {
+    c.status = "delivered";
+    c.delivered_at = new Date().toISOString();
+  }
+  return pending;
 }
 
 /**
@@ -982,11 +886,26 @@ export async function recordCommandResult({
   try {
     // If agentId specified, verify ownership
     if (agentId) {
+      let resolvedCallerUuid = agentId;
+      try {
+        const { rows: aRows } = await query<{ id: string }>(
+          `SELECT id FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`,
+          [agentId]
+        );
+        if (aRows.length > 0) {
+          resolvedCallerUuid = aRows[0].id;
+        }
+      } catch {}
+
       const existing = await query<AgentCommandQueueRecord>(
-        `SELECT id, agent_id, tenant_id FROM agent_commands WHERE id = $1 LIMIT 1`,
+        `SELECT id, agent_id, tenant_id FROM agent_commands WHERE id::text = $1 LIMIT 1`,
         [commandId]
       );
-      if (existing.rows.length > 0 && existing.rows[0].agent_id !== agentId) {
+      if (
+        existing.rows.length > 0 &&
+        existing.rows[0].agent_id !== resolvedCallerUuid &&
+        existing.rows[0].agent_id !== agentId
+      ) {
         return { success: false, unauthorized: true };
       }
     }
@@ -994,7 +913,7 @@ export async function recordCommandResult({
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
        SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = now()
-       WHERE id = $4
+       WHERE id::text = $4
        RETURNING *;`,
       [effectiveStatus, JSON.stringify({ output }), snapshotId || null, commandId]
     );

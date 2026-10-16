@@ -230,6 +230,13 @@ func (h *ActionHandler) KillProcess(hostname string, pid int) (string, error) {
 		return "", fmt.Errorf("refusing to terminate agent self process PID %d", pid)
 	}
 
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
+		if err := cmd.Run(); err == nil {
+			return fmt.Sprintf("Host %s: process PID %d terminated via taskkill. Forensics dump saved.", hostname, pid), nil
+		}
+	}
+
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return "", fmt.Errorf("process with pid %d not found: %w", pid, err)

@@ -98,7 +98,7 @@ func queryWindowsCPUName() string {
 			}
 		}
 	}
-	return "AMD Ryzen 9 5900HX with Radeon Graphics"
+	return "Intel(R) Core(TM) Processor"
 }
 
 func queryWindowsDisks() []StorageDiskTelemetry {

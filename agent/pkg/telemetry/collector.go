@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -468,7 +469,7 @@ func (c *Collector) readWindowsConnections() []NetworkConn {
 
 // HarvestCoreTelemetry samples full, authentic core function telemetry from the endpoint host.
 func (c *Collector) HarvestCoreTelemetry(hostname string, cpu, mem float64) CoreTelemetry {
-	cpuModel := "AMD Ryzen 9 5900HX with Radeon Graphics"
+	cpuModel := "Host Multi-Core Processor"
 	cpuCores := runtime.NumCPU()
 	var totalRamGb, usedRamGb, memPct float64
 
@@ -600,11 +601,14 @@ func (c *Collector) HarvestCoreTelemetry(hostname string, cpu, mem float64) Core
 	}
 
 	totalProcessCount := len(procs)
-	if len(sockets) > 30 {
-		sockets = sockets[:30]
+	sort.Slice(procs, func(i, j int) bool {
+		return procs[i].MemoryMB > procs[j].MemoryMB
+	})
+	if len(sockets) > 50 {
+		sockets = sockets[:50]
 	}
-	if len(procs) > 50 {
-		procs = procs[:50]
+	if len(procs) > 150 {
+		procs = procs[:150]
 	}
 
 	// Disks

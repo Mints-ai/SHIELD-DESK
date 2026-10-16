@@ -2019,7 +2019,7 @@ export default function FleetPage() {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            {monitoringData?.process_inventory?.processes?.length || 0} Tasks Active
+                            {monitoringData?.system_performance?.metrics?.threads_active || monitoringData?.process_inventory?.processes?.length || 0} Tasks Active
                           </span>
                           <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
                             {monitoringData?.process_inventory?.enabled ? "MONITORED" : "EXCLUDED"}
@@ -2105,8 +2105,19 @@ export default function FleetPage() {
                                                 });
                                                 const data = await res.json();
                                                 if (res.ok && data.success) {
-                                                  alert(`Process ${p.name} (PID ${p.pid}) terminated successfully.`);
-                                                  if (selectedAgent) fetchMonitoring(selectedAgent.id, true);
+                                                  setMonitoringData((prev: any) => {
+                                                    if (!prev?.process_inventory?.processes) return prev;
+                                                    return {
+                                                      ...prev,
+                                                      process_inventory: {
+                                                        ...prev.process_inventory,
+                                                        processes: prev.process_inventory.processes.filter((item: any) => item.pid !== p.pid),
+                                                      },
+                                                    };
+                                                  });
+                                                  if (selectedAgent) {
+                                                    setTimeout(() => fetchMonitoring(selectedAgent.id, true), 1000);
+                                                  }
                                                 } else {
                                                   alert(`Failed to terminate process: ${data.error || data.message || "Unknown error"}`);
                                                 }

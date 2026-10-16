@@ -189,7 +189,23 @@ function collectEndpointCoreTelemetry(currentCpuPct) {
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
   const usedMem = totalMem - freeMem;
-  const cpuModel = cpus[0]?.model ? cpus[0].model.trim() : 'AMD Ryzen 9 5900HX with Radeon Graphics';
+  let cpuModel = cpus[0]?.model ? cpus[0].model.trim() : "";
+  if (!cpuModel && os.platform() === "win32") {
+    try {
+      const cp = require("child_process");
+      const regOut = cp.execSync(
+        'reg query "HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0" /v ProcessorNameString',
+        { timeout: 1500, windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+      );
+      const match = regOut.match(/ProcessorNameString\s+REG_SZ\s+(.*)/i);
+      if (match && match[1]?.trim()) {
+        cpuModel = match[1].trim();
+      }
+    } catch {}
+  }
+  if (!cpuModel) {
+    cpuModel = os.arch() ? `${os.arch().toUpperCase()} Host Processor` : "Host Processor";
+  }
   const cpuCores = cpus.length || 16;
   const memoryTotalGb = Number((totalMem / (1024 ** 3)).toFixed(1));
   const memoryUsedGb = Number((usedMem / (1024 ** 3)).toFixed(1));
@@ -642,8 +658,8 @@ function collectEndpointCoreTelemetry(currentCpuPct) {
       handle_count: (processList.length || 120) * 16,
       sampling_overhead: '< 0.05% CPU',
     },
-    network_sockets: socketList.slice(0, 20),
-    process_inventory: processList.slice(0, 20),
+    network_sockets: socketList.slice(0, 50),
+    process_inventory: processList.slice(0, 150),
     firewall_baseline: firewall,
     defender_status: defenderStatus,
     storage_disk: storageList,
@@ -866,6 +882,26 @@ async function start() {
                   const name = parts[1];
                   cp.execSync(`netsh advfirewall firewall delete rule name="${name}"`, { timeout: 5000, stdio: 'ignore' });
                   execOutput = `Firewall rule ${name} deleted successfully on ${customHostname}.`;
+                } else if (cmd.command.startsWith('kill_process')) {
+                  const parts = cmd.command.split(/\s+/);
+                  const pid = parseInt(parts[1], 10);
+                  if (isNaN(pid) || pid <= 4) {
+                    throw new Error(`Invalid or kernel protected PID: ${parts[1]}`);
+                  }
+                  cp.execSync(`taskkill /F /PID ${pid}`, { timeout: 5000, stdio: 'ignore' });
+                  execOutput = `Process PID ${pid} terminated successfully on ${customHostname}.`;
+                  cachedCoreTelemetry = null;
+                }
+              } else {
+                if (cmd.command.startsWith('kill_process')) {
+                  const parts = cmd.command.split(/\s+/);
+                  const pid = parseInt(parts[1], 10);
+                  if (isNaN(pid) || pid <= 1) {
+                    throw new Error(`Invalid or protected PID: ${parts[1]}`);
+                  }
+                  process.kill(pid, 'SIGKILL');
+                  execOutput = `Process PID ${pid} killed successfully on ${customHostname}.`;
+                  cachedCoreTelemetry = null;
                 }
               }
             } catch (cmdErr) {
@@ -887,6 +923,27 @@ async function start() {
               snapshotId: cmd.snapshot_id,
             });
             console.log(`\x1b[32m[+] Execution reported for Command [${cmd.id}]: \x1b[0m${execStatus}`);
+          }
+
+          if (cachedCoreTelemetry === null) {
+            const freshCpu = getCpuUsage();
+            const freshMem = getMemoryUsage();
+            const freshTelemetry = collectEndpointCoreTelemetry(freshCpu);
+            await request(`${controlUrl}/api/agent/heartbeat`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-ShieldDesk-Agent-ID': agentId,
+              },
+            }, {
+              agentId,
+              ipAddress: endpointIp,
+              cpuUsage: freshCpu,
+              memoryUsage: freshMem,
+              eps,
+              status: 'connected',
+              coreTelemetry: freshTelemetry,
+            }).catch(() => {});
           }
         }
       } catch {}
