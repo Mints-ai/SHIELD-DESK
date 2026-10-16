@@ -94,7 +94,9 @@ func (s *WebhookService) setupHTTP(port string) *http.Server {
 			event = "alert.dispatched"
 		}
 
+		deliveryID := GenerateDeliveryID()
 		payload := &WebhookPayload{
+			ID:        deliveryID,
 			Event:     event,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			TenantID:  tenantID,
@@ -106,20 +108,21 @@ func (s *WebhookService) setupHTTP(port string) *http.Server {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := s.dispatcher.DispatchWithRetry(ctx, target, sec, p); err != nil {
-				log.Error().Err(err).Str("url", target).Msg("[Webhooks] Async dispatch failed after retries")
+				log.Error().Err(err).Str("url", target).Str("delivery_id", p.ID).Msg("[Webhooks] Async dispatch failed after retries")
 			}
 		}(req.TargetURL, secret, payload)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":   "queued",
-			"queued":   true,
-			"target":   req.TargetURL,
-			"tenant":   tenantID,
-			"event":    event,
-			"retry":    "3 attempts (500ms, 1s, 2s)",
-			"signed":   true,
+			"status":      "queued",
+			"queued":      true,
+			"delivery_id": deliveryID,
+			"target":      req.TargetURL,
+			"tenant":      tenantID,
+			"event":       event,
+			"retry":       "3 attempts (500ms, 1s, 2s)",
+			"signed":      true,
 		})
 	})
 

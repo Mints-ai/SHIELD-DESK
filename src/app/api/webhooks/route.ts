@@ -133,9 +133,13 @@ export async function POST(req: NextRequest) {
       ? endpoints.find((ep) => ep.id === endpointId) || endpoints[0]
       : endpoints[0];
 
+    const deliveryId = `del_${crypto.randomBytes(12).toString("hex")}`;
+    const nowEpoch = Math.floor(Date.now() / 1000);
+
     const testPayload = JSON.stringify({
+      id: deliveryId,
       event: "test.webhook.verification",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       severity: "TEST",
       tenant_id: session.tenantId,
       message: "ShieldDesk real HMAC-SHA256 webhook test dispatch.",
@@ -145,8 +149,12 @@ export async function POST(req: NextRequest) {
       process.env.SHIELDDESK_WEBHOOK_SECRET ||
       (process.env.NODE_ENV !== "production" ? "sd_webhook_dev_secret" : "");
 
-    const signature = secret
-      ? crypto.createHmac("sha256", secret).update(testPayload).digest("hex")
+    const hmacHex = secret
+      ? crypto.createHmac("sha256", secret).update(`${nowEpoch}.${testPayload}`).digest("hex")
+      : "";
+    const signature = hmacHex ? `t=${nowEpoch},v1=${hmacHex}` : "";
+    const legacySig = secret
+      ? `sha256=${crypto.createHmac("sha256", secret).update(testPayload).digest("hex")}`
       : "";
 
     const startTime = Date.now();
@@ -158,7 +166,12 @@ export async function POST(req: NextRequest) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(signature ? { "X-ShieldDesk-Signature": `sha256=${signature}` } : {}),
+          ...(signature ? {
+            "X-ShieldDesk-Signature": signature,
+            "X-ShieldDesk-Signature-Legacy": legacySig,
+            "X-ShieldDesk-Timestamp": String(nowEpoch),
+            "X-ShieldDesk-Delivery-Id": deliveryId,
+          } : {}),
         },
         body: JSON.stringify({
           content: "🛡️ **[ShieldDesk SOC]** Real Webhook Verification Dispatch",
@@ -170,7 +183,8 @@ export async function POST(req: NextRequest) {
               fields: [
                 { name: "Tenant", value: session.tenantId, inline: true },
                 { name: "Status", value: "Verified Active", inline: true },
-                { name: "Signature", value: signature ? `sha256=${signature.slice(0, 16)}...` : "None", inline: false },
+                { name: "Signature", value: signature ? `${signature.slice(0, 24)}...` : "None", inline: false },
+                { name: "Delivery ID", value: deliveryId, inline: false },
               ],
               footer: { text: "ShieldDesk Autonomous EDR / SOC" },
               timestamp: new Date().toISOString(),
@@ -185,10 +199,15 @@ export async function POST(req: NextRequest) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(signature ? { "X-ShieldDesk-Signature": `sha256=${signature}` } : {}),
+          ...(signature ? {
+            "X-ShieldDesk-Signature": signature,
+            "X-ShieldDesk-Signature-Legacy": legacySig,
+            "X-ShieldDesk-Timestamp": String(nowEpoch),
+            "X-ShieldDesk-Delivery-Id": deliveryId,
+          } : {}),
         },
         body: JSON.stringify({
-          text: `🛡️ *[ShieldDesk SOC]* Real Webhook Verification Dispatch for tenant *${session.tenantId}*`,
+          text: `🛡️ *[ShieldDesk SOC]* Real Webhook Verification Dispatch for tenant *${session.tenantId}* (Delivery ID: ${deliveryId})`,
         }),
         signal: AbortSignal.timeout(5000),
       });
@@ -198,7 +217,12 @@ export async function POST(req: NextRequest) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(signature ? { "X-ShieldDesk-Signature": `sha256=${signature}` } : {}),
+          ...(signature ? {
+            "X-ShieldDesk-Signature": signature,
+            "X-ShieldDesk-Signature-Legacy": legacySig,
+            "X-ShieldDesk-Timestamp": String(nowEpoch),
+            "X-ShieldDesk-Delivery-Id": deliveryId,
+          } : {}),
           "X-ShieldDesk-Event": "test.webhook.verification",
         },
         body: testPayload,
