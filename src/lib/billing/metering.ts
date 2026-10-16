@@ -16,7 +16,7 @@ export interface TenantUsageRecord {
   lastUpdated: string;
 }
 
-export const MOCK_USAGE_STORE: Map<string, TenantUsageRecord> = new Map();
+export const IN_MEMORY_USAGE_STORE: Map<string, TenantUsageRecord> = new Map();
 
 function getPeriodKey(tenantId: string, date = new Date()): string {
   const yyyy = date.getUTCFullYear();
@@ -35,7 +35,7 @@ export function recordUsageMetric(
   const key = getPeriodKey(tenantId);
   const now = new Date().toISOString();
 
-  let record = MOCK_USAGE_STORE.get(key);
+  let record = IN_MEMORY_USAGE_STORE.get(key);
   if (!record) {
     const period = key.split(":")[1];
     record = {
@@ -47,7 +47,7 @@ export function recordUsageMetric(
       aiTokensConsumed: 0,
       lastUpdated: now,
     };
-    MOCK_USAGE_STORE.set(key, record);
+    IN_MEMORY_USAGE_STORE.set(key, record);
   }
 
   switch (metric) {
@@ -77,7 +77,7 @@ export function getTenantUsageReport(
   date = new Date()
 ): TenantUsageRecord {
   const key = getPeriodKey(tenantId, date);
-  const existing = MOCK_USAGE_STORE.get(key);
+  const existing = IN_MEMORY_USAGE_STORE.get(key);
 
   if (existing) {
     return existing;
@@ -99,5 +99,5 @@ export function getTenantUsageReport(
  * Resets usage metrics for testing purposes.
  */
 export function resetUsageMetrics(): void {
-  MOCK_USAGE_STORE.clear();
+  IN_MEMORY_USAGE_STORE.clear();
 }

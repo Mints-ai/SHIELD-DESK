@@ -24,11 +24,11 @@ export default function OnboardingPage() {
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerified, setMfaVerified] = useState(false);
 
-  const mockToken = "sdt_sample_enrollment_token_00000000";
+  const enrollmentToken = "<YOUR_TENANT_ENROLLMENT_TOKEN>";
   const controlPlaneUrl = "https://control.shielddesk.io";
 
-  const windowsCmd = `powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '${controlPlaneUrl}/install-windows.ps1' -OutFile 'install.ps1'; .\\install.ps1 -ControlPlane '${controlPlaneUrl}' -EnrollToken '${mockToken}'"`;
-  const linuxCmd = `curl -sSL ${controlPlaneUrl}/install.sh | sudo bash -s -- --control-plane "${controlPlaneUrl}" --token "${mockToken}"`;
+  const windowsCmd = `powershell -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '${controlPlaneUrl}/install-windows.ps1' -OutFile 'install.ps1'; .\\install.ps1 -ControlPlane '${controlPlaneUrl}' -EnrollToken '${enrollmentToken}'"`;
+  const linuxCmd = `curl -sSL ${controlPlaneUrl}/install.sh | sudo bash -s -- --control-plane "${controlPlaneUrl}" --token "${enrollmentToken}"`;
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);

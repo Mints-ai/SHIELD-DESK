@@ -65,7 +65,8 @@ export interface AgentCommandQueueRecord {
   completed_at?: string | null;
 }
 
-export const MOCK_AGENT_COMMANDS: AgentCommandQueueRecord[] = [];
+export const IN_MEMORY_AGENT_COMMANDS: AgentCommandQueueRecord[] = [];
+export const MOCK_AGENT_COMMANDS = IN_MEMORY_AGENT_COMMANDS;
 
 export interface AgentCommandLogRecord {
   id: string;
@@ -91,12 +92,15 @@ export interface HashChainAuditRecord {
   created_at: string;
 }
 
-// In-memory registry for dynamically connected agents. No mock data is seeded.
-export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] = [];
+// In-memory fallback registries for live-connected agents when PostgreSQL is offline
+export const IN_MEMORY_ENDPOINT_AGENTS: EndpointAgentRecord[] = [];
+export const MOCK_ENDPOINT_AGENTS = IN_MEMORY_ENDPOINT_AGENTS;
 
-export const MOCK_COMMAND_LOGS: AgentCommandLogRecord[] = [];
+export const IN_MEMORY_COMMAND_LOGS: AgentCommandLogRecord[] = [];
+export const MOCK_COMMAND_LOGS = IN_MEMORY_COMMAND_LOGS;
 
-export const MOCK_HASH_CHAINS: HashChainAuditRecord[] = [];
+export const IN_MEMORY_HASH_CHAINS: HashChainAuditRecord[] = [];
+export const MOCK_HASH_CHAINS = IN_MEMORY_HASH_CHAINS;
 
 /**
  * Computes SHA-256 for hash-chaining audit entries.

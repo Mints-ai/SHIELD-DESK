@@ -107,10 +107,17 @@ describe("ShieldDesk Priority 2: Approval Tokens & Layer 4 Governance Suite", ()
   });
 
   it("FR-2: Tenant Isolation — user from Globex cannot view or approve Acme's token (Anti-enumeration 404)", async () => {
-    // globexAnalyst attempts to approve Acme's seeded token
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const created: any = await requestApprovalToken(acmeAnalyst, {
+      taskId: "task-acme-isolation-test",
+      actionType: "isolate_host",
+    });
+    assert.ok(created?.token?.id, "Acme token must be created");
+
+    // globexAnalyst attempts to approve Acme's token
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res: any = await approveActionToken(globexAnalyst, {
-      tokenId: "tok11111-1111-1111-1111-111111111111",
+      tokenId: created.token.id,
     });
 
     assert.ok("error" in res, "Must reject cross-tenant approval");
