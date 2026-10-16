@@ -4,7 +4,6 @@ import { canAccess, getRoleTier } from "@/lib/permissions";
 import { getUserRole } from "@/lib/constants/devUsers";
 import { query } from "@/lib/db";
 import { trackError } from "@/lib/observability/errorTracker";
-import { isDemoModeActive } from "@/lib/config/environment";
 import type { MitigationTaskRecord } from "@/app/api/tasks/route";
 
 export async function GET(
