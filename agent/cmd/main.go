@@ -542,6 +542,17 @@ func dispatch(command, hostname string, handler *handlers.ActionHandler) (string
 		}
 		return "executed", out, ""
 
+	case "unblock_ip":
+		if len(parts) < 2 {
+			return "failed", "missing target IP address", ""
+		}
+		ip := parts[1]
+		out, err := handler.UnblockIP(hostname, ip)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
 	case "kill_process":
 		if len(parts) < 2 {
 			return "failed", "missing target PID", ""

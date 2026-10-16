@@ -61,40 +61,6 @@ export interface TenantSubscription {
   subscriptionId?: string;
 }
 
-// In-memory fallback for subscriptions
-const MOCK_SUBSCRIPTIONS: Record<string, TenantSubscription> = {
-  "mints-global": {
-    tenantId: "mints-global",
-    tier: "enterprise",
-    status: "active",
-    currentPeriodEnd: new Date(Date.now() + 365 * 86400 * 1000).toISOString(),
-    enrolledEndpoints: 0,
-    maxEndpoints: 500,
-    paymentProvider: "manual",
-    subscriptionId: "sub_mints_global_ent_001",
-  },
-  "acme-tenant": {
-    tenantId: "acme-tenant",
-    tier: "professional",
-    status: "active",
-    currentPeriodEnd: new Date(Date.now() + 30 * 86400 * 1000).toISOString(),
-    enrolledEndpoints: 4,
-    maxEndpoints: 100,
-    paymentProvider: "manual",
-    subscriptionId: "sub_acme_pro_001",
-  },
-  "globex-tenant": {
-    tenantId: "globex-tenant",
-    tier: "community",
-    status: "active",
-    currentPeriodEnd: new Date(Date.now() + 14 * 86400 * 1000).toISOString(),
-    enrolledEndpoints: 1,
-    maxEndpoints: 5,
-    paymentProvider: "manual",
-    subscriptionId: "sub_glx_pilot_001",
-  },
-};
-
 /**
  * Returns tenant subscription and entitlement parameters.
  */
@@ -137,11 +103,6 @@ export async function getTenantSubscription(tenantId: string): Promise<TenantSub
       );
     }
     // Database offline mode for non-production unit tests
-  }
-
-  if (!isProd) {
-    const sub = MOCK_SUBSCRIPTIONS[tenantId];
-    if (sub) return sub;
   }
 
   return {
@@ -260,10 +221,6 @@ export async function updateTenantSubscription(
   const isProd =
     process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
 
-  if (!isProd) {
-    MOCK_SUBSCRIPTIONS[tenantId] = updated;
-  }
-
   try {
     await query(
       `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, subscription_id, updated_at)
@@ -311,9 +268,6 @@ export async function setTenantSubscriptionStatus(
     paymentProvider: "stripe",
     subscriptionId: options.subscriptionId || current.subscriptionId,
   };
-  if (!isProd) {
-    MOCK_SUBSCRIPTIONS[tenantId] = updated;
-  }
   try {
     await query(
       `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, subscription_id, updated_at)

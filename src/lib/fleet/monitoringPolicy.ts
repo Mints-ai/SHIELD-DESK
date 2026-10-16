@@ -12,7 +12,7 @@ import {
 } from "./monitoringTypes";
 
 // In-memory policy store for resilience and demo environments
-const MOCK_MONITORING_POLICIES: Record<string, EndpointMonitoringPolicy> = {};
+const IN_MEMORY_MONITORING_POLICIES: Record<string, EndpointMonitoringPolicy> = {};
 
 /**
  * Returns the monitoring policy for an endpoint agent.
@@ -33,8 +33,8 @@ export async function getEndpointMonitoringPolicy(
     // Fall back to memory registry
   }
 
-  if (MOCK_MONITORING_POLICIES[agentId]) {
-    return MOCK_MONITORING_POLICIES[agentId];
+  if (IN_MEMORY_MONITORING_POLICIES[agentId]) {
+    return IN_MEMORY_MONITORING_POLICIES[agentId];
   }
 
   // Default baseline policy (only system_performance enabled, others require approval)
@@ -49,7 +49,7 @@ export async function getEndpointMonitoringPolicy(
     status: "active",
   };
 
-  MOCK_MONITORING_POLICIES[agentId] = defaultPolicy;
+  IN_MEMORY_MONITORING_POLICIES[agentId] = defaultPolicy;
   return defaultPolicy;
 }
 
@@ -136,7 +136,7 @@ export async function updateEndpointMonitoringPolicy({
       [policy.agent_id, policy.tenant_id, JSON.stringify(policy.enabled_scopes), policy.approved_by, policy.approval_token_id, policy.policy_hash, policy.status]
     );
   } catch {
-    MOCK_MONITORING_POLICIES[agentId] = policy;
+    IN_MEMORY_MONITORING_POLICIES[agentId] = policy;
   }
 
   // Cryptographically log the policy change to the tamper-evident hash chain

@@ -30,98 +30,6 @@ import {
 } from "@/lib/alerts/threatAlertStore";
 import { resolveClientIp } from "@/lib/network/clientIp";
 
-const YARA_RULES = [
-  {
-    id: "yara_webshell_c99",
-    name: "Webshell_C99_PHP",
-    category: "Malware / Webshell",
-    severity: "CRITICAL",
-    matches_today: 3,
-    status: "ACTIVE",
-    target: "filesystem / webroot",
-    description: "Detects obfuscated PHP C99/b374k webshell headers, base64_decode, and passthru command execution payloads.",
-  },
-  {
-    id: "yara_ransomware_extensions",
-    name: "Ransomware_LockBit_Indicators",
-    category: "Ransomware",
-    severity: "CRITICAL",
-    matches_today: 0,
-    status: "ACTIVE",
-    target: "filesystem write operations",
-    description: "Detects mass extension renaming (.lockbit, .blackcat) and automated shadow copy deletion commands.",
-  },
-  {
-    id: "yara_cobalt_beacon",
-    name: "Cobalt_Strike_Beacon_Memory",
-    category: "C2 / Post-Exploitation",
-    severity: "HIGH",
-    matches_today: 1,
-    status: "ACTIVE",
-    target: "process memory",
-    description: "Detects known Cobalt Strike malleable C2 reflective DLL loader memory patterns.",
-  },
-];
-
-const SIGMA_RULES = [
-  {
-    id: "sigma_encoded_powershell",
-    title: "Suspicious Encoded PowerShell Execution",
-    logsource: "windows: process_creation",
-    severity: "HIGH",
-    matches_today: 4,
-    status: "ACTIVE",
-    detection_logic: "CommandLine matches -enc / -EncodedCommand with bypass execution policy.",
-  },
-  {
-    id: "sigma_ssh_bruteforce",
-    title: "SSH Distributed Brute Force Attempt",
-    logsource: "linux: auth.log / sshd",
-    severity: "MEDIUM",
-    matches_today: 28,
-    status: "ACTIVE",
-    detection_logic: "More than 15 failed password authentications from single source IP within 60s window.",
-  },
-  {
-    id: "sigma_shadow_copy_deletion",
-    title: "VSS Volume Shadow Copy Deletion",
-    logsource: "windows: vssadmin",
-    severity: "CRITICAL",
-    matches_today: 0,
-    status: "ACTIVE",
-    detection_logic: "vssadmin.exe delete shadows /all /quiet or wmic shadowcopy delete.",
-  },
-];
-
-const ANOMALY_BASELINES = [
-  {
-    metric: "Failed Authentications / Min",
-    mean: 4.2,
-    stdDev: 2.1,
-    threshold_3sigma: 10.5,
-    current_value: 0.0,
-    is_anomaly: false,
-    unit: "attempts/min",
-  },
-  {
-    metric: "Outbound Network Egress Rate",
-    mean: 145.0,
-    stdDev: 35.0,
-    threshold_2sigma: 215.0,
-    current_value: 0.0,
-    is_anomaly: false,
-    unit: "MB/min",
-  },
-  {
-    metric: "Sudo Execution Frequency",
-    mean: 1.1,
-    stdDev: 0.8,
-    threshold_3sigma: 3.5,
-    current_value: 0.0,
-    is_anomaly: false,
-    unit: "cmds/min",
-  },
-];
 
 const BASELINE_INGEST_POLICY = {
   agent_handshake_protocol: "mTLS v1.3 with X.509 cert (gRPC :50051)",
@@ -284,33 +192,35 @@ export async function GET(req: NextRequest) {
     const liveSudoRate = Math.max(getLiveSudoRatePerMin(), liveSudoDbCount);
     const liveEgress = getLiveEgressRateMBPerMin();
 
-    const anomalyBaselines = ANOMALY_BASELINES.map((b) => {
-      if (b.metric === "Failed Authentications / Min") {
-        const threshold = b.threshold_3sigma ?? 10.5;
-        return {
-          ...b,
-          current_value: Number(liveFailureRate.toFixed(1)),
-          is_anomaly: liveFailureRate > threshold,
-        };
-      }
-      if (b.metric === "Outbound Network Egress Rate") {
-        const threshold = b.threshold_2sigma ?? 215.0;
-        return {
-          ...b,
-          current_value: Number(liveEgress.current_value.toFixed(1)),
-          is_anomaly: liveEgress.is_anomaly,
-        };
-      }
-      if (b.metric === "Sudo Execution Frequency") {
-        const threshold = b.threshold_3sigma ?? 3.5;
-        return {
-          ...b,
-          current_value: Number(liveSudoRate.toFixed(1)),
-          is_anomaly: liveSudoRate > threshold,
-        };
-      }
-      return b;
-    });
+    const anomalyBaselines = [
+      {
+        metric: "Failed Authentications / Min",
+        mean: 4.2,
+        stdDev: 2.1,
+        threshold_3sigma: 10.5,
+        current_value: Number(liveFailureRate.toFixed(1)),
+        is_anomaly: liveFailureRate > 10.5,
+        unit: "attempts/min",
+      },
+      {
+        metric: "Outbound Network Egress Rate",
+        mean: 145.0,
+        stdDev: 35.0,
+        threshold_2sigma: 215.0,
+        current_value: Number(liveEgress.current_value.toFixed(1)),
+        is_anomaly: liveEgress.is_anomaly,
+        unit: "MB/min",
+      },
+      {
+        metric: "Sudo Execution Frequency",
+        mean: 1.1,
+        stdDev: 0.8,
+        threshold_3sigma: 3.5,
+        current_value: Number(liveSudoRate.toFixed(1)),
+        is_anomaly: liveSudoRate > 3.5,
+        unit: "cmds/min",
+      },
+    ];
 
     // Query Go Threat Service if online (port 8003)
     const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
@@ -432,7 +342,7 @@ export async function GET(req: NextRequest) {
       events_per_minute: liveEventRate,
     };
 
-    let liveYaraRules = YARA_RULES;
+    let liveYaraRules: any[] = [];
     try {
       const dynamicYara = await getYaraRules(session.tenantId);
       if (dynamicYara && dynamicYara.length > 0) {
@@ -464,8 +374,8 @@ export async function GET(req: NextRequest) {
         : null,
       tenantId: session.tenantId,
       detection_rules: engineRules,
-      yara_rules: liveYaraRules.length > 0 ? liveYaraRules : (goThreatState?.yara_rules || YARA_RULES),
-      sigma_rules: goThreatState?.sigma_rules || SIGMA_RULES,
+      yara_rules: liveYaraRules.length > 0 ? liveYaraRules : (goThreatState?.yara_rules || []),
+      sigma_rules: goThreatState?.sigma_rules || [],
       anomaly_baselines: goThreatState?.anomaly_baselines || anomalyBaselines,
       ingest_telemetry: mergedTelemetry,
       can_view_auth_alerts: canViewAuthAlerts,
@@ -722,11 +632,35 @@ export async function POST(req: NextRequest) {
         // Go service offline fallback
       }
 
-      const nominalBaselines = ANOMALY_BASELINES.map((b) => ({
-        ...b,
-        current_value: 0.0,
-        is_anomaly: false,
-      }));
+      const nominalBaselines = [
+        {
+          metric: "Failed Authentications / Min",
+          mean: 4.2,
+          stdDev: 2.1,
+          threshold_3sigma: 10.5,
+          current_value: 0.0,
+          is_anomaly: false,
+          unit: "attempts/min",
+        },
+        {
+          metric: "Outbound Network Egress Rate",
+          mean: 145.0,
+          stdDev: 35.0,
+          threshold_2sigma: 215.0,
+          current_value: 0.0,
+          is_anomaly: false,
+          unit: "MB/min",
+        },
+        {
+          metric: "Sudo Execution Frequency",
+          mean: 1.1,
+          stdDev: 0.8,
+          threshold_3sigma: 3.5,
+          current_value: 0.0,
+          is_anomaly: false,
+          unit: "cmds/min",
+        },
+      ];
 
       return NextResponse.json({
         success: true,

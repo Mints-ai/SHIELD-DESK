@@ -29,9 +29,6 @@ interface ChatMessage {
 const DEFAULT_SUGGESTIONS = [
   "Run a full Trivy vulnerability scan",
   "Show me todays critical incidents",
-  "Investigate INC-1042",
-  "Generate automated remediation runbook",
-  "Check for leaked secrets and exposed tokens",
 ];
 
 export function ChatWidget() {

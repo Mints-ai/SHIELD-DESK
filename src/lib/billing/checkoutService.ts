@@ -43,7 +43,7 @@ export interface CheckoutAttemptRecord {
 }
 
 // In-memory fallback for unit testing in air-gapped test runners
-const MOCK_CHECKOUT_ATTEMPTS = new Map<string, CheckoutAttemptRecord>();
+const IN_MEMORY_CHECKOUT_ATTEMPTS = new Map<string, CheckoutAttemptRecord>();
 
 /**
  * Validates that redirect URLs conform to strict protocol and host allow-list.
@@ -211,7 +211,7 @@ export class CheckoutService {
       expiresAt,
     };
 
-    MOCK_CHECKOUT_ATTEMPTS.set(activeAttemptId, attemptRecord);
+    IN_MEMORY_CHECKOUT_ATTEMPTS.set(activeAttemptId, attemptRecord);
 
     // 6. Resolve Stripe Customer
     const stripeCustomerId = await getOrCreateStripeCustomer({ tenantId });
@@ -357,8 +357,8 @@ export class CheckoutService {
 
     let attempt: CheckoutAttemptRecord | undefined;
 
-    if (!isProd && attemptId && MOCK_CHECKOUT_ATTEMPTS.has(attemptId)) {
-      const candidate = MOCK_CHECKOUT_ATTEMPTS.get(attemptId);
+    if (!isProd && attemptId && IN_MEMORY_CHECKOUT_ATTEMPTS.has(attemptId)) {
+      const candidate = IN_MEMORY_CHECKOUT_ATTEMPTS.get(attemptId);
       if (candidate && candidate.tenantId === tenantId) {
         attempt = candidate;
       } else if (candidate && candidate.tenantId !== tenantId) {

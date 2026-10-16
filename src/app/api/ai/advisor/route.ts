@@ -66,9 +66,9 @@ export async function POST(req: NextRequest) {
         // Fallback
       }
 
-      const runbookMarkdown = `Recovery Runbook: ${cve_id || "CVE-2024-6387"} (Incident ${incident_id || "INC-1042"})
+      const runbookMarkdown = `Recovery Runbook: ${cve_id || "General Vulnerability"} ${incident_id ? `(Incident ${incident_id})` : ""}
 
-Target Host: ${host_id || "srv-prod-api-01"}
+Target Host: ${host_id || "Target Host"}
 Classification: Tier 2 Action (Requires Human Sign-off or Pre-approved Token)
 
 Step 1: Pre-flight Safety Snapshot
@@ -97,8 +97,8 @@ sudo systemctl status sshd --no-pager`;
 
       return NextResponse.json({
         success: true,
-        incident_id: incident_id || "INC-1042",
-        cve_id: cve_id || "CVE-2024-6387",
+        incident_id: incident_id || null,
+        cve_id: cve_id || "N/A",
         runbook: runbookMarkdown,
         generated_by: "Claude 3.5 Sonnet RAG Agent (pgvector + MITRE ATT&CK)",
       });

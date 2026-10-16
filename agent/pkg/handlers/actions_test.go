@@ -67,6 +67,31 @@ func TestActionHandler_BlockIP_Validation(t *testing.T) {
 	}
 }
 
+func TestActionHandler_UnblockIP_Validation(t *testing.T) {
+	handler := NewActionHandler()
+
+	// 1. Empty IP
+	_, err := handler.UnblockIP("TEST-HOST-01", "")
+	if err == nil {
+		t.Error("Expected error when unblocking empty IP, got nil")
+	}
+
+	// 2. Invalid IP
+	_, err = handler.UnblockIP("TEST-HOST-01", "not-an-ip")
+	if err == nil {
+		t.Error("Expected error when unblocking malformed IP, got nil")
+	}
+
+	// 3. Valid IP (should not return error even if rules don't exist yet)
+	msg, err := handler.UnblockIP("TEST-HOST-01", "203.0.113.15")
+	if err != nil {
+		t.Errorf("Expected success when unblocking valid IP, got err: %v", err)
+	}
+	if !strings.Contains(msg, "Traffic restored") {
+		t.Errorf("Expected confirmation message with 'Traffic restored', got: %s", msg)
+	}
+}
+
 func TestActionHandler_KillProcess_SafetyGuardrails(t *testing.T) {
 	handler := NewActionHandler()
 

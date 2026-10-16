@@ -86,7 +86,6 @@ export default function SOCTaskBoardPage() {
     return false;
   };
 
-  const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);
   const [filterHorizon, setFilterHorizon] = useState<string>("all");
   const [filterTier, setFilterTier] = useState<string>("all");
@@ -141,7 +140,6 @@ export default function SOCTaskBoardPage() {
       if (resTasks.ok) {
         const data = await resTasks.json();
         setTasks(data.tasks || []);
-        setIsSampleData(data._source === "demo_fallback");
       }
       if (resPlans.ok) {
         const plansData = await resPlans.json();
@@ -544,8 +542,6 @@ export default function SOCTaskBoardPage() {
       <TopNavBar />
 
       <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
-        {isSampleData && <p className="sd-sample-label w-fit">Sample tasks · Local fallback data</p>}
-
         {/* Execution Banner Notice */}
         {executionNotice && (
           <div
@@ -1176,7 +1172,7 @@ export default function SOCTaskBoardPage() {
                   <ShieldAlert className="h-4 w-4 text-[var(--sd-wheat)] shrink-0" />
                   <div className="min-w-0">
                     <span className="text-xs font-semibold text-[var(--sd-text)] truncate block">
-                      Incident {detailData?.task.incident_code || (availablePlans[0]?.incident_code ?? "INC-4223")}: {detailData?.task.incident_title || (availablePlans[0]?.incident_title ?? "Active Incident Remediation")}
+                      Incident {detailData?.task.incident_code || (availablePlans[0]?.incident_code ?? "—")}: {detailData?.task.incident_title || (availablePlans[0]?.incident_title ?? "General Remediation Sequence")}
                     </span>
                     <span className="text-[10.5px] text-[var(--sd-text-muted)] font-mono block">
                       Plan Version {detailData?.task.plan_version || 1} · Severity: {detailData?.task.incident_severity || "Routine"}

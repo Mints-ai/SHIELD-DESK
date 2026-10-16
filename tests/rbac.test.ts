@@ -7,6 +7,7 @@ import {
   generateMitigationPlan,
   simulateBlastRadius,
   getMitigationPlan,
+  seedInMemoryPlanForTesting,
 } from "@/lib/tools";
 import type { ChatSession } from "@/lib/tools";
 import { canAccess, canExecuteTool } from "@/lib/permissions";
@@ -129,6 +130,34 @@ describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
   });
 
   it("Priority 1: getMitigationPlan enforces tenant isolation with anti-enumeration 404", async () => {
+    seedInMemoryPlanForTesting(
+      {
+        id: "p1111111-1111-1111-1111-111111111111",
+        incident_code: "INC-1042",
+        incident_title: "Suspicious lateral movement on FIN-WS-042",
+        incident_severity: "critical",
+        tenant_id: "acme-tenant",
+        version: 1,
+        status: "active",
+        summary: "Multi-horizon containment and vulnerability remediation for lateral movement breach",
+        created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+      },
+      [
+        {
+          id: "t1111111-1111-1111-1111-111111111111",
+          plan_id: "p1111111-1111-1111-1111-111111111111",
+          horizon: "immediate",
+          title: "Isolate affected host FIN-WS-042",
+          description: "Quarantine endpoint network interface",
+          tier: "Tier 2",
+          status: "pending",
+          blast_radius: "Single Workstation (FIN-WS-042)",
+          cve_id: null,
+          created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+        },
+      ]
+    );
+
     // Acme analyst queries seeded Acme plan
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const acmeRes: any = await getMitigationPlan(acmeAnalyst, {

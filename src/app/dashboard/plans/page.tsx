@@ -39,58 +39,11 @@ interface PlanSummary {
 
 export default function PlansIndexPage() {
   const { activeUserId, openChatWithPrompt } = useChat();
-  const [isSampleData, setIsSampleData] = useState(false);
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSeverity, setSelectedSeverity] = useState("all");
   const [statusTab, setStatusTab] = useState<"all" | "active" | "completed">("all");
   const [isLoading, setIsLoading] = useState(true);
-
-  // Fallback demo plans matching seed data
-  const fallbackPlans: PlanSummary[] = [
-    {
-      id: "p1111111-1111-1111-1111-111111111111",
-      incident_id: "i1111111-1111-1111-1111-111111111111",
-      incident_code: "INC-1042",
-      incident_title: "Active Exploitation of Edge VPN Gateway (CVE-2024-3400)",
-      incident_severity: "critical",
-      status: "in_progress",
-      version: 1,
-      summary:
-        "Emergency containment protocol for PAN-OS GlobalProtect command injection. Isolates VPN gateway, revokes active sessions, and applies hotfix hotfix-panos-10.2.9-h1.",
-      task_count: 5,
-      completed_task_count: 2,
-      created_at: "2026-09-23T20:00:00Z",
-    },
-    {
-      id: "p2222222-2222-2222-2222-222222222222",
-      incident_id: "i2222222-2222-2222-2222-222222222222",
-      incident_code: "INC-1043",
-      incident_title: "Privilege Escalation on Finance Workstation WS-FIN-08",
-      incident_severity: "high",
-      status: "approved",
-      version: 1,
-      summary:
-        "Containment and forensic capture for pass-the-hash lateral movement attempt. Freezes active workstation session and rotates local administrator credentials.",
-      task_count: 4,
-      completed_task_count: 1,
-      created_at: "2026-09-23T21:15:00Z",
-    },
-    {
-      id: "p3333333-3333-3333-3333-333333333333",
-      incident_id: "i3333333-3333-3333-3333-333333333333",
-      incident_code: "INC-1044",
-      incident_title: "Suspicious PowerShell Execution via Macro Attachment",
-      incident_severity: "medium",
-      status: "completed",
-      version: 2,
-      summary:
-        "Phishing triage and payload detonation analysis. Quarantined malicious macro template and blocked domain telemetry at firewall perimeter.",
-      task_count: 3,
-      completed_task_count: 3,
-      created_at: "2026-09-23T18:30:00Z",
-    },
-  ];
 
   useEffect(() => {
     let isMounted = true;
@@ -104,18 +57,15 @@ export default function PlansIndexPage() {
           const data = await res.json();
           if (isMounted) {
             setPlans(data.plans || []);
-            setIsSampleData(data._source === "demo_fallback");
           }
         } else {
           if (isMounted) {
-            setPlans(fallbackPlans);
-            setIsSampleData(true);
+            setPlans([]);
           }
         }
       } catch {
         if (isMounted) {
-          setPlans(fallbackPlans);
-          setIsSampleData(true);
+          setPlans([]);
         }
       } finally {
         if (isMounted) setIsLoading(false);
@@ -193,7 +143,6 @@ export default function PlansIndexPage() {
       <TopNavBar />
       {/* Main Content Area */}
       <main className="sd-dashboard-content min-w-0 max-w-7xl mx-auto px-6 py-6 flex flex-col gap-6">
-        {isSampleData && <p className="sd-sample-label w-fit">Sample plans · Local fallback data</p>}
 
         {/* ── Page Header Card ── */}
         <div className="rounded-2xl border border-[var(--sd-border)] sd-surface shadow-xs px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

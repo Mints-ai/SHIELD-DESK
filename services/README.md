@@ -1,15 +1,12 @@
-# ShieldDesk Legacy Microservices Directory
+# ShieldDesk Backend Services Directory
 
-> **DEPRECATION NOTICE:**
-> The microservices contained in this directory (`services/iam`, `services/scan`, `services/ai-advisor`, `services/webhooks`) were created during initial multi-container prototyping.
-> 
-> In the current production architecture, all core capabilities have been consolidated natively into the **Next.js App Router core** under `src/app/api/` and `src/lib/`:
-> 
-> | Legacy Microservice | Native App Router Path | Notes |
-> |---|---|---|
-> | `services/iam/` | `src/app/api/auth/*`, `src/lib/auth/*` | Native session cookies, Supabase auth, and TOTP MFA. |
-> | `services/scan/` | `src/app/api/scans/*`, `src/lib/detection/*` | Native CVE intelligence and Sigma rules engine. |
-> | `services/webhooks/` | `src/app/api/webhooks/*`, `src/lib/notifications/*` | Native HMAC-SHA256 notification dispatcher. |
-> | `services/ai-advisor/` | `src/app/api/chat/*`, `src/lib/tools/*` | Native OpenAI / Ollama tool-calling pipeline. |
-> 
-> This directory is preserved for reference or for standalone Docker container deployment if running decoupled microservice clusters.
+This directory contains standalone high-performance Go backend daemon services used for real-time telemetry streaming and threat matching alongside the native **Next.js App Router core** (`src/app/api/` and `src/lib/`):
+
+| Active Service | Primary Language / Port | Purpose | Startup Script |
+|---|---|---|---|
+| `services/threat/` | Go / Port `8003` | Real-time Sigma rules & YARA threat detection engine. | `start.ps1` (`GoThreat`) |
+| `services/ingest/` | Go / Port `8004` | High-throughput telemetry ingestion & PII redaction pipeline. | `start.ps1` (`GoIngest`) |
+| `services/webhooks/` | Go / Port `8080` | High-throughput outbound notification webhook dispatcher. | `start.ps1` (`GoWebhook`) |
+
+> **Architecture Note:**
+> Early multi-container prototype services (`services/iam`, `services/scan`, `services/ai-advisor`, and 11 stub directories) have been completely removed. Auth, scanning, remediation, and AI capabilities operate directly within the Next.js control plane in `src/`.

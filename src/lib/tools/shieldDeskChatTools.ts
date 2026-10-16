@@ -157,18 +157,6 @@ export const CHAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
-const MOCK_CVE_RECORDS: Record<string, Record<string, unknown>> = {
-  "CVE-2024-3400": {
-    cve_id: "CVE-2024-3400",
-    cvss_score: 10.0,
-    severity: "CRITICAL",
-    cisa_kev: true,
-    remediation_tier: "IMMEDIATE_ACTION",
-    description: "Command injection vulnerability in PAN-OS GlobalProtect feature allows an unauthenticated attacker to execute arbitrary code with root privileges.",
-    recommended_mitigation: "Apply vendor hotfixes immediately. Disable device telemetry as temporary workaround if hotfix cannot be immediately deployed.",
-  },
-};
-
 // ---------------------------------------------------------------------------
 // Tool: getIncidents
 // Always scoped to the caller's tenant unless they hold VIEW_CROSS_TENANT.
@@ -296,22 +284,9 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
     }
   }
 
-  // Dev fallback:
-  const cveUpper = args.cveId.toUpperCase();
-  if (MOCK_CVE_RECORDS[cveUpper]) {
-    return { record: MOCK_CVE_RECORDS[cveUpper] };
-  }
-
   return {
-    record: {
-      cve_id: cveUpper,
-      cvss_score: 8.8,
-      severity: "HIGH",
-      cisa_kev: false,
-      remediation_tier: "SCHEDULED_PATCH",
-      description: `Threat intelligence analysis for ${cveUpper}.`,
-      recommended_mitigation: `Apply vendor patches for ${cveUpper}, enforce boundary firewalls, and monitor endpoint logs.`,
-    },
+    error: "cve_service_unavailable",
+    message: `CVE threat intelligence service is unreachable or offline for ${args.cveId}.`,
   };
 }
 
@@ -328,80 +303,18 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
 // "not_found" in the trained knowledge base, or the engine being
 // unreachable) are noted rather than failing the whole plan.
 // ---------------------------------------------------------------------------
-// In-memory plan storage for development / offline mode.
-// Pre-seeded test fixtures are isolated strictly to test runner executions (NODE_ENV === "test").
-const MOCK_STORED_PLANS: Record<string, Record<string, unknown>> =
-  process.env.NODE_ENV === "test"
-    ? {
-        "p1111111-1111-1111-1111-111111111111": {
-          id: "p1111111-1111-1111-1111-111111111111",
-          incident_code: "INC-1042",
-          incident_title: "Suspicious lateral movement on FIN-WS-042",
-          incident_severity: "critical",
-          tenant_id: "acme-tenant",
-          version: 1,
-          status: "active",
-          summary: "Multi-horizon containment and vulnerability remediation for lateral movement breach",
-          created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-        },
-      }
-    : {};
+// In-memory plan storage for development / offline fallback.
+export const IN_MEMORY_STORED_PLANS: Record<string, Record<string, unknown>> = {};
+export const IN_MEMORY_STORED_TASKS: Record<string, Array<Record<string, unknown>>> = {};
 
-const MOCK_STORED_TASKS: Record<string, Array<Record<string, unknown>>> =
-  process.env.NODE_ENV === "test"
-    ? {
-        "p1111111-1111-1111-1111-111111111111": [
-          {
-            id: "t1111111-1111-1111-1111-111111111111",
-            plan_id: "p1111111-1111-1111-1111-111111111111",
-            horizon: "immediate",
-            title: "Isolate affected host FIN-WS-042",
-            description: "Quarantine endpoint network interface to halt lateral movement toward database server",
-            tier: "Tier 2",
-            status: "pending",
-            blast_radius: "Single Workstation (FIN-WS-042)",
-            cve_id: null,
-            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          },
-          {
-            id: "t2222222-2222-2222-2222-222222222222",
-            plan_id: "p1111111-1111-1111-1111-111111111111",
-            horizon: "immediate",
-            title: "Revoke exposed user and administrative credentials",
-            description: "Terminate active session tokens for compromised user accounts",
-            tier: "Tier 1",
-            status: "completed",
-            blast_radius: "User Sessions",
-            cve_id: null,
-            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          },
-          {
-            id: "t3333333-3333-3333-3333-333333333333",
-            plan_id: "p1111111-1111-1111-1111-111111111111",
-            horizon: "short_term",
-            title: "Deploy vendor patch for CVE-2020-6240",
-            description: "Apply SAP Security Notes to resolve NetWeaver DoS vulnerability",
-            tier: "Tier 2",
-            status: "pending",
-            blast_radius: "Finance Subnet Application Servers",
-            cve_id: "CVE-2020-6240",
-            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          },
-          {
-            id: "t4444444-4444-4444-4444-444444444444",
-            plan_id: "p1111111-1111-1111-1111-111111111111",
-            horizon: "long_term",
-            title: "Implement zero-trust microsegmentation",
-            description: "Enforce strict firewall ACLs between general workstations and financial database tier",
-            tier: "Tier 2",
-            status: "pending",
-            blast_radius: "Entire Finance Zone",
-            cve_id: null,
-            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          },
-        ],
-      }
-    : {};
+export function seedInMemoryPlanForTesting(
+  plan: Record<string, unknown>,
+  tasks: Array<Record<string, unknown>>
+): void {
+  const planId = String(plan.id);
+  IN_MEMORY_STORED_PLANS[planId] = plan;
+  IN_MEMORY_STORED_TASKS[planId] = tasks;
+}
 
 // ---------------------------------------------------------------------------
 // Tool: generateMitigationPlan
@@ -610,8 +523,8 @@ export async function generateMitigationPlan(
     planId = transactionResult.id;
     storedTasks = transactionResult.tasks;
   } catch {
-    // Dev fallback if database is offline: save in mock store
-    const existingMockPlan = Object.values(MOCK_STORED_PLANS).find(
+    // Fallback if database is offline: save in memory store
+    const existingMockPlan = Object.values(IN_MEMORY_STORED_PLANS).find(
       (plan) =>
         plan.tenant_id === session.tenantId &&
         plan.incident_code === investigation.incident.incidentCode &&
@@ -619,9 +532,9 @@ export async function generateMitigationPlan(
     );
     if (existingMockPlan) {
       planId = String(existingMockPlan.id);
-      storedTasks = MOCK_STORED_TASKS[planId] || [];
+      storedTasks = IN_MEMORY_STORED_TASKS[planId] || [];
     } else {
-      MOCK_STORED_PLANS[planId] = {
+      IN_MEMORY_STORED_PLANS[planId] = {
         id: planId,
         incident_code: investigation.incident.incidentCode,
         incident_title: investigation.incident.title,
@@ -632,7 +545,7 @@ export async function generateMitigationPlan(
         summary: `Automated mitigation plan for ${args.incidentId}`,
         created_at: new Date().toISOString(),
       };
-      MOCK_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
+      IN_MEMORY_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
         id: `task-${idx}-${Date.now()}`,
         plan_id: planId,
         horizon: t.horizon,
@@ -727,14 +640,14 @@ export async function getMitigationPlan(
       tasks: tasksResult.rows,
     };
   } catch {
-    // Dev fallback if database is offline: check mock stored plans
-    const plan = MOCK_STORED_PLANS[args.planId];
+    // Fallback if database is offline: check in-memory stored plans
+    const plan = IN_MEMORY_STORED_PLANS[args.planId];
     if (!plan) return { error: "not_found" };
     if (!canAccess(session.role, "VIEW_CROSS_TENANT") && plan.tenant_id !== session.tenantId) {
       return { error: "not_found" }; // anti-enumeration 404
     }
 
-    const tasks = MOCK_STORED_TASKS[args.planId] || [];
+    const tasks = IN_MEMORY_STORED_TASKS[args.planId] || [];
     return {
       plan,
       tasks,
