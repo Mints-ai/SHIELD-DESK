@@ -37,21 +37,28 @@ import {
   Shield,
   Zap,
   Search,
+  Clock,
+  ArrowRight,
 } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { validateIpAddress } from "@/lib/utils/ipValidation";
 import { CORE_FUNCTION_SCOPES, type CoreFunctionScope } from "@/lib/fleet/monitoringTypes";
 import { ConnectEndpointModal } from "@/components/fleet/ConnectEndpointModal";
+import { ApprovalModal } from "@/components/governance/ApprovalModal";
+import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 interface CommandLogEntry {
   id: string;
   time: string;
   command: string;
   tier: string;
-  status: "succeeded" | "failed" | "executing";
+  status: "succeeded" | "failed" | "executing" | "pending";
   output: string;
   agentId?: string;
   executedAt?: string;
+  taskId?: string;
+  tokenId?: string;
 }
 
 // Maps each command value to its required autonomy tier
@@ -103,9 +110,41 @@ export default function FleetPage() {
   }, []);
 
   const [dispatchFeedback, setDispatchFeedback] = useState<{
-    type: "success" | "error";
+    type: "success" | "error" | "pending";
     message: string;
+    taskId?: string;
+    tokenId?: string;
   } | null>(null);
+
+  const [fleetModalToken, setFleetModalToken] = useState<ApprovalTokenRecord | null>(null);
+  const [isFleetModalOpen, setIsFleetModalOpen] = useState(false);
+
+  const canUserSignOffTask = (tier: string) => {
+    if (activeUser.role === "system_admin" || activeUser.role === "super_admin") {
+      return true;
+    }
+    if (activeUser.role === "responder") {
+      return tier === "Tier 1" || tier === "Tier 2";
+    }
+    return false;
+  };
+
+  const handleOpenApprovalFromFleet = async (tokenId?: string, taskId?: string) => {
+    try {
+      const url = taskId
+        ? `/api/approvals?taskId=${encodeURIComponent(taskId)}&status=pending`
+        : `/api/approvals?status=pending`;
+      const res = await fetch(url, { headers: { "X-ShieldDesk-User": activeUserId } });
+      const data = await res.json();
+      const token = data.tokens?.find((t: ApprovalTokenRecord) => (tokenId ? t.id === tokenId : t.status === "pending")) || data.tokens?.[0];
+      if (token) {
+        setFleetModalToken(token);
+        setIsFleetModalOpen(true);
+      }
+    } catch (err) {
+      console.error("Failed to load approval token:", err);
+    }
+  };
 
   // Connect endpoint modal state
   const [showConnectModal, setShowConnectModal] = useState(false);
@@ -253,13 +292,15 @@ export default function FleetPage() {
         if (!pollInterval) {
           pollInterval = setInterval(() => {
             fetchFleet();
-          }, 5000);
+            fetchLogs();
+          }, 4000);
         }
       };
     } catch {
       pollInterval = setInterval(() => {
         fetchFleet();
-      }, 5000);
+        fetchLogs();
+      }, 4000);
     }
 
     return () => {
@@ -272,6 +313,31 @@ export default function FleetPage() {
       }
     };
   }, [activeUserId, isStreaming, fetchFleet, fetchLogs]);
+
+  // Synchronize governance approvals and execution updates across views
+  useEffect(() => {
+    const handleApprovalsChanged = () => {
+      fetchFleet(true);
+      fetchLogs();
+      setDispatchFeedback((prev) => {
+        if (prev?.type === "pending") {
+          return {
+            type: "success",
+            message: "Governance action authorized and completed. Telemetry updated.",
+          };
+        }
+        return prev;
+      });
+      setTokenIdInput("");
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("shielddesk:approvals-changed", handleApprovalsChanged);
+      return () => {
+        window.removeEventListener("shielddesk:approvals-changed", handleApprovalsChanged);
+      };
+    }
+  }, [fetchFleet, fetchLogs]);
 
   // Handle Emergency Kill Switch
   const handleToggleKillSwitch = async () => {
@@ -386,6 +452,18 @@ export default function FleetPage() {
         prev.map((log) => {
           if (log.id !== newLogId) return log;
           if (res.ok && data.success) {
+            if (data.pendingApproval) {
+              return {
+                ...log,
+                id: data.commandId || log.id,
+                status: "pending",
+                output:
+                  data.message ||
+                  `Action requires authorization (${data.tier || selectedTier}). Mitigation Task #${data.taskId?.slice(0, 8)} created on Task Board awaiting Super Admin sign-off.`,
+                taskId: data.taskId,
+                tokenId: data.tokenId,
+              };
+            }
             return {
               ...log,
               id: data.commandId || log.id,
@@ -395,38 +473,60 @@ export default function FleetPage() {
                 "Instruction executed with status SUCCESS. Telemetry updated.",
             };
           } else {
+            const errText = data.error || data.message || "Execution rejected by security policy.";
+            const detailText = data.message && data.message !== data.error ? `: ${data.message}` : "";
             return {
               ...log,
+              id: data.commandId || log.id,
               status: "failed",
-              output: `Execution rejected (${data.error || "Policy violation"}): ${data.message || ""}`,
+              output: `${errText}${detailText}`,
             };
           }
         })
       );
 
       if (res.ok && data.success) {
-        setDispatchFeedback({
-          type: "success",
-          message: `Successfully executed ${cmd} on ${selectedAgent.hostname}. Live telemetry updated.`,
-        });
-        if (cmd.startsWith("block_ip")) {
-          setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
-          setAgents((prev) =>
-            prev.map((a) =>
-              a.id === selectedAgent.id || a.ip_address === targetIp.trim()
-                ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
-                : a
-            )
-          );
-        } else if (cmd.startsWith("unblock_ip")) {
-          setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
-          setAgents((prev) =>
-            prev.map((a) =>
-              a.id === selectedAgent.id || a.ip_address === targetIp.trim()
-                ? { ...a, status: "connected" }
-                : a
-            )
-          );
+        if (data.pendingApproval) {
+          if (data.tokenId) {
+            setTokenIdInput(data.tokenId);
+          }
+          setDispatchFeedback({
+            type: "pending",
+            message: data.message || `Tier 2 action submitted for governance authorization. Task #${data.taskId?.slice(0, 8)} is now visible on the Task Board awaiting Super Admin sign-off.`,
+            taskId: data.taskId,
+            tokenId: data.tokenId,
+          });
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("shielddesk:approvals-changed", {
+                detail: { action: "pending", tokenId: data.tokenId, taskId: data.taskId },
+              })
+            );
+          }
+        } else {
+          setDispatchFeedback({
+            type: "success",
+            message: `Successfully executed ${cmd} on ${selectedAgent.hostname}. Live telemetry updated.`,
+          });
+          if (cmd.startsWith("block_ip")) {
+            setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.id === selectedAgent.id || a.ip_address === targetIp.trim()
+                  ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
+                  : a
+              )
+            );
+          } else if (cmd.startsWith("unblock_ip")) {
+            setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.id === selectedAgent.id || a.ip_address === targetIp.trim()
+                  ? { ...a, status: "connected" }
+                  : a
+              )
+            );
+          }
         }
       } else {
         setDispatchFeedback({
@@ -1385,15 +1485,42 @@ export default function FleetPage() {
                     "p-3 rounded-xl border text-[12px] font-mono flex items-start gap-2",
                     dispatchFeedback.type === "success"
                       ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                      : "bg-red-500/10 border-red-500/30 text-red-300"
+                      : dispatchFeedback.type === "pending"
+                        ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                        : "bg-red-500/10 border-red-500/30 text-red-300"
                   )}
                 >
                   {dispatchFeedback.type === "success" ? (
                     <CheckCircle2 className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
+                  ) : dispatchFeedback.type === "pending" ? (
+                    <Clock className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
                   ) : (
                     <AlertTriangle className="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
                   )}
-                  <span>{dispatchFeedback.message}</span>
+                  <div className="flex-1 flex flex-wrap items-center justify-between gap-2">
+                    <span>{dispatchFeedback.message}</span>
+                    {dispatchFeedback.taskId && (
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href="/dashboard/tasks"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[11px] font-semibold transition"
+                        >
+                          <span>Task Board</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                        {canUserSignOffTask(selectedTier) && dispatchFeedback.tokenId && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenApprovalFromFleet(dispatchFeedback.tokenId, dispatchFeedback.taskId)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#D8C49A]/20 hover:bg-[#D8C49A]/30 border border-[#D8C49A]/50 text-[#F2EFE9] text-[11px] font-semibold transition cursor-pointer"
+                          >
+                            <Lock className="h-3 w-3 text-[#D8C49A]" />
+                            <span>Sign Off Now</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1594,10 +1721,22 @@ export default function FleetPage() {
                   }
                   className="sd-button sd-button-primary w-full py-2.5 px-4 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Play className="h-3.5 w-3.5 fill-current text-[var(--sd-on-accent)]" />
-                  <span>
-                    {isExecuting ? "Executing Instruction..." : "Dispatch Instruction to Agent"}
-                  </span>
+                  {isExecuting ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-[var(--sd-on-accent)]" />
+                      <span>Executing Instruction...</span>
+                    </>
+                  ) : selectedTier === "Tier 2" && !tokenIdInput ? (
+                    <>
+                      <Lock className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
+                      <span>Request Tier 2 Authorization</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-3.5 w-3.5 fill-current text-[var(--sd-on-accent)]" />
+                      <span>Dispatch Instruction to Agent</span>
+                    </>
+                  )}
                 </button>
               </form>
             </div>
@@ -1665,7 +1804,9 @@ export default function FleetPage() {
                             log.status === "failed" &&
                               "text-red-400 border-red-500/30 bg-red-500/10",
                             log.status === "executing" &&
-                              "text-amber-400 border-amber-500/30 bg-amber-500/10 animate-pulse"
+                              "text-amber-400 border-amber-500/30 bg-amber-500/10 animate-pulse",
+                            log.status === "pending" &&
+                              "text-amber-400 border-amber-500/30 bg-amber-500/10"
                           )}
                         >
                           {log.status}
@@ -1675,7 +1816,15 @@ export default function FleetPage() {
                         {log.output}
                       </div>
                       <div className="text-[10px] text-[var(--sd-text-dim)] flex items-center justify-between pt-1 border-t border-[var(--sd-border)]/30">
-                        <span className="text-[var(--sd-wheat)]">{log.tier}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[var(--sd-wheat)]">{log.tier}</span>
+                          {log.status === "pending" && (
+                            <Link href="/dashboard/tasks" className="text-amber-400 hover:text-amber-300 underline font-sans flex items-center gap-0.5">
+                              <span>Task Board</span>
+                              <ExternalLink className="h-2.5 w-2.5" />
+                            </Link>
+                          )}
+                        </div>
                         <span>{log.time}</span>
                       </div>
                     </div>
@@ -3315,6 +3464,30 @@ export default function FleetPage() {
           }}
         />
       )}
+
+      {/* Fleet Governance Approval Modal */}
+      <ApprovalModal
+        isOpen={isFleetModalOpen}
+        onClose={() => setIsFleetModalOpen(false)}
+        token={fleetModalToken}
+        onDecisionSuccess={(updatedToken) => {
+          setIsFleetModalOpen(false);
+          setTokenIdInput(updatedToken.id);
+          setDispatchFeedback({
+            type: "success",
+            message: `Token #${updatedToken.id.slice(0, 8)} authorized by ${activeUser.label}. Ready to dispatch!`,
+            tokenId: updatedToken.id,
+          });
+          fetchLogs();
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("shielddesk:approvals-changed", {
+                detail: { action: updatedToken.status, token: updatedToken },
+              })
+            );
+          }
+        }}
+      />
     </div>
   );
 }

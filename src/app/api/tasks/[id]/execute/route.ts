@@ -13,27 +13,52 @@ import {
 import type { MitigationTaskRecord } from "@/app/api/tasks/route";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
-function mapTaskToAgentCommand(task: MitigationTaskRecord): string {
-  const t = ((task.title || "") + " " + (task.description || "")).toLowerCase();
-  if (t.includes("isolate") || t.includes("quarantine endpoint") || t.includes("contain")) {
+function mapTaskToAgentCommand(task: MitigationTaskRecord, token?: ApprovalTokenRecord): string {
+  // 1. If token has an explicit command stored, prioritize that
+  if (token?.command && typeof token.command === "string" && token.command.trim()) {
+    return token.command.trim();
+  }
+
+  // 2. If task.description is directly an agent command, use it
+  const desc = (task.description || "").trim();
+  const knownPrefixes = [
+    "block_ip", "block ip", "unblock_ip", "unblock ip",
+    "isolate_host", "restore_host", "kill_process",
+    "take_safety_snapshot", "rollback_snapshot", "apply_patch"
+  ];
+  for (const prefix of knownPrefixes) {
+    if (desc.toLowerCase().startsWith(prefix)) {
+      return desc;
+    }
+  }
+
+  // 3. Extract target IP if block_ip / unblock_ip is in title or description
+  const fullText = `${task.title || ""} ${desc}`;
+  const ipMatch = fullText.match(/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/);
+
+  if (fullText.toLowerCase().includes("unblock")) {
+    if (ipMatch) return `unblock_ip ${ipMatch[0]}`;
+  }
+  if (fullText.toLowerCase().includes("block") || fullText.toLowerCase().includes("firewall")) {
+    if (ipMatch) return `block_ip ${ipMatch[0]}`;
+  }
+
+  // 4. Extract process PID if kill_process is requested
+  const pidMatch = fullText.match(/\b(?:kill_process|pid|process)\s*[:=]?\s*(\d+)\b/i);
+  if (pidMatch && (fullText.toLowerCase().includes("kill") || fullText.toLowerCase().includes("terminate"))) {
+    return `kill_process ${pidMatch[1]}`;
+  }
+
+  if (fullText.toLowerCase().includes("isolate") || fullText.toLowerCase().includes("quarantine")) {
     return "isolate_host";
   }
-  if (t.includes("block") || t.includes("firewall") || t.includes("arp") || t.includes("ip")) {
-    return "block_ip 198.51.100.4";
-  }
-  if (t.includes("revoke") || t.includes("kill") || t.includes("session") || t.includes("terminate")) {
-    return "kill_process 4812";
-  }
-  if (t.includes("patch") || t.includes("cve") || t.includes("update")) {
-    const cve = task.cve_id || "CVE-2025-38667";
-    return `apply_patch ${cve}`;
-  }
-  if (t.includes("snapshot") || t.includes("backup")) {
-    return "take_safety_snapshot";
-  }
-  if (t.includes("restore")) {
+  if (fullText.toLowerCase().includes("restore")) {
     return "restore_host";
   }
+  if (fullText.toLowerCase().includes("patch") || task.cve_id) {
+    return `apply_patch ${task.cve_id || "CVE-2025-38667"}`;
+  }
+
   return "take_safety_snapshot";
 }
 
@@ -89,6 +114,7 @@ export async function POST(
 
     // 2. Resolve Governance Approval Token (if Tier 2 or Tier 3)
     let tokenId: string | undefined = undefined;
+    let token: ApprovalTokenRecord | undefined = undefined;
     const isTierGated = task.tier === "Tier 2" || task.tier === "Tier 3";
 
     if (isTierGated) {
@@ -98,7 +124,7 @@ export async function POST(
       const tokenParams = isCrossTenant ? [id] : [id, caller.tenant_id];
       const tokenRes = await query<ApprovalTokenRecord>(tokenSql, tokenParams);
 
-      const token = tokenRes.rows[0];
+      token = tokenRes.rows[0];
 
       if (!token) {
         // If task was already marked approved by analyst/admin, generate execution token
@@ -166,10 +192,24 @@ export async function POST(
 
     // 3. Resolve Target Endpoint Agent
     const agents = await listEndpointAgents(caller);
-    let targetAgent: EndpointAgentRecord | null | undefined = agents.find((a) => {
-      const matchString = ((task.blast_radius || "") + " " + task.title).toUpperCase();
-      return matchString.includes(a.hostname.toUpperCase());
-    });
+    let targetAgent: EndpointAgentRecord | null | undefined = null;
+
+    if (token?.target_endpoint_ids && Array.isArray(token.target_endpoint_ids) && token.target_endpoint_ids.length > 0) {
+      targetAgent = agents.find((a) =>
+        token.target_endpoint_ids!.includes(a.id) ||
+        token.target_endpoint_ids!.includes(a.hostname) ||
+        (a.ip_address && token.target_endpoint_ids!.includes(a.ip_address))
+      );
+    }
+
+    if (!targetAgent) {
+      const matchString = ((task.blast_radius || "") + " " + (task.description || "") + " " + task.title).toUpperCase();
+      targetAgent = agents.find((a) =>
+        matchString.includes(a.hostname.toUpperCase()) ||
+        (a.ip_address && matchString.includes(a.ip_address)) ||
+        matchString.includes(a.id.toUpperCase())
+      );
+    }
 
     if (!targetAgent && agents.length > 0) {
       // Fallback to first available agent
@@ -187,8 +227,51 @@ export async function POST(
     await query("UPDATE mitigation_tasks SET status = 'in_progress' WHERE id = $1", [id]);
 
     // 5. Map & Execute Command
-    const command = mapTaskToAgentCommand(task);
+    const command = mapTaskToAgentCommand(task, token);
     const executionTier = task.tier === "Tier 0" ? "Tier 1" : (task.tier as "Tier 1" | "Tier 2" | "Tier 3");
+
+    if (
+      command.startsWith("block_ip") ||
+      command.startsWith("block ip") ||
+      command.startsWith("unblock_ip") ||
+      command.startsWith("unblock ip")
+    ) {
+      const isUnblock = command.startsWith("unblock_ip") || command.startsWith("unblock ip");
+      const targetIp = (
+        command.startsWith("block ip")
+          ? command.replace(/^block ip\s+/i, "")
+          : command.startsWith("block_ip")
+            ? command.replace(/^block_ip\s+/i, "")
+            : command.startsWith("unblock ip")
+              ? command.replace(/^unblock ip\s+/i, "")
+              : command.replace(/^unblock_ip\s+/i, "")
+      ).trim();
+
+      const { checkIsIpCurrentlyBlocked } = await import("@/lib/fleet/fleet");
+      const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(targetIp, caller.tenant_id);
+
+      if (isUnblock && !isCurrentlyBlocked) {
+        await query("UPDATE mitigation_tasks SET status = 'failed' WHERE id = $1", [id]).catch(() => {});
+        if (tokenId) {
+          await query("UPDATE agent_command_logs SET status = 'failed', output = $1 WHERE token_id::text = $2", [`The IP address ${targetIp} is not blocked.`, tokenId]).catch(() => {});
+        }
+        return NextResponse.json(
+          { error: `The IP address ${targetIp} is not blocked.` },
+          { status: 400 }
+        );
+      }
+
+      if (!isUnblock && isCurrentlyBlocked) {
+        await query("UPDATE mitigation_tasks SET status = 'failed' WHERE id = $1", [id]).catch(() => {});
+        if (tokenId) {
+          await query("UPDATE agent_command_logs SET status = 'failed', output = $1 WHERE token_id::text = $2", [`The IP address ${targetIp} is already blocked.`, tokenId]).catch(() => {});
+        }
+        return NextResponse.json(
+          { error: `The IP address ${targetIp} is already blocked.` },
+          { status: 400 }
+        );
+      }
+    }
 
     const execResult = await executeAgentCommand({
       agentId: targetAgent.id,
@@ -197,6 +280,51 @@ export async function POST(
       tokenId,
       caller,
     });
+
+    // Update real-time fleet state based on executed command
+    if (command.startsWith("isolate_host")) {
+      const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+      await setLiveAgentStatus(targetAgent.id, "isolated", execResult.snapshotId);
+    } else if (command.startsWith("restore_host")) {
+      const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+      await setLiveAgentStatus(targetAgent.id, "connected");
+    } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
+      const targetIp = (
+        command.startsWith("block ip")
+          ? command.replace(/^block ip\s+/i, "")
+          : command.replace(/^block_ip\s+/i, "")
+      ).trim();
+      if (targetIp) {
+        const { blockIp } = await import("@/lib/alerts/threatAlertStore");
+        const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+        blockIp(targetIp, `Fleet containment task #${id} executed by ${caller.email || caller.id}`, 1, caller.tenant_id);
+        await query(
+          `UPDATE endpoint_agents
+           SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+           WHERE ip_address = $1 OR id = $2;`,
+          [targetIp, targetAgent.id]
+        ).catch(() => {});
+        await setLiveAgentStatus(targetAgent.id, "disconnected", execResult.snapshotId);
+      }
+    } else if (command.startsWith("unblock_ip") || command.startsWith("unblock ip")) {
+      const targetIp = (
+        command.startsWith("unblock ip")
+          ? command.replace(/^unblock ip\s+/i, "")
+          : command.replace(/^unblock_ip\s+/i, "")
+      ).trim();
+      if (targetIp) {
+        const { unblockIp } = await import("@/lib/alerts/threatAlertStore");
+        const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+        unblockIp(targetIp, caller.tenant_id);
+        await query(
+          `UPDATE endpoint_agents
+           SET status = 'connected', last_seen_at = now()
+           WHERE id = $1;`,
+          [targetAgent.id]
+        ).catch(() => {});
+        await setLiveAgentStatus(targetAgent.id, "connected");
+      }
+    }
 
     // 6. Mark Task 'completed'
     const updatedTaskRes = await query<MitigationTaskRecord>(

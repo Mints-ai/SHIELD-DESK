@@ -1,20 +1,65 @@
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
 
-// Fallback in-memory RSA keypair for development and test execution
-let fallbackPrivateKey: string | null = null;
-let fallbackPublicKey: string | null = null;
+declare global {
+  // eslint-disable-next-line no-var
+  var __shieldDeskControlPlanePrivateKey: string | undefined;
+  // eslint-disable-next-line no-var
+  var __shieldDeskControlPlanePublicKey: string | undefined;
+}
+
+const CANDIDATE_KEY_PATHS = [
+  path.join(process.cwd(), "control-plane-key.pem"),
+  path.join(process.cwd(), ".control-plane-dev-key.pem"),
+];
+
+const CANDIDATE_PUB_PATHS = [
+  path.join(process.cwd(), "control-plane-pub.pem"),
+  path.join(process.cwd(), ".control-plane-dev-pub.pem"),
+];
 
 function getFallbackKeys(): { privateKey: string; publicKey: string } {
-  if (!fallbackPrivateKey || !fallbackPublicKey) {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", {
-      modulusLength: 2048,
-      publicKeyEncoding: { type: "spki", format: "pem" },
-      privateKeyEncoding: { type: "pkcs8", format: "pem" },
-    });
-    fallbackPrivateKey = privateKey;
-    fallbackPublicKey = publicKey;
+  if (global.__shieldDeskControlPlanePrivateKey && global.__shieldDeskControlPlanePublicKey) {
+    return {
+      privateKey: global.__shieldDeskControlPlanePrivateKey,
+      publicKey: global.__shieldDeskControlPlanePublicKey,
+    };
   }
-  return { privateKey: fallbackPrivateKey, publicKey: fallbackPublicKey };
+
+  // Load from disk if present
+  for (let i = 0; i < CANDIDATE_KEY_PATHS.length; i++) {
+    try {
+      const kPath = CANDIDATE_KEY_PATHS[i];
+      const pPath = CANDIDATE_PUB_PATHS[i];
+      if (fs.existsSync(kPath) && fs.existsSync(pPath)) {
+        const priv = fs.readFileSync(kPath, "utf8");
+        const pub = fs.readFileSync(pPath, "utf8");
+        if (priv && pub && priv.includes("BEGIN") && pub.includes("BEGIN")) {
+          global.__shieldDeskControlPlanePrivateKey = priv;
+          global.__shieldDeskControlPlanePublicKey = pub;
+          return { privateKey: priv, publicKey: pub };
+        }
+      }
+    } catch {}
+  }
+
+  // Fallback generation if no disk keys exist
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  });
+
+  global.__shieldDeskControlPlanePrivateKey = privateKey;
+  global.__shieldDeskControlPlanePublicKey = publicKey;
+
+  try {
+    fs.writeFileSync(CANDIDATE_KEY_PATHS[0], privateKey, "utf8");
+    fs.writeFileSync(CANDIDATE_PUB_PATHS[0], publicKey, "utf8");
+  } catch {}
+
+  return { privateKey, publicKey };
 }
 
 /**

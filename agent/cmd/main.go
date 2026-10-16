@@ -372,7 +372,27 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 		}
 
 		// 3. Cryptographically verify RSA-SHA256 signature
-		if err := verifyCommandSignature(controlPlanePubKey, targetAgentID, cmd.Command, nonce, cmd.Tier, cmd.Signature); err != nil {
+		err := verifyCommandSignature(controlPlanePubKey, targetAgentID, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+		if err != nil && targetAgentID != agentID && agentID != "" {
+			err = verifyCommandSignature(controlPlanePubKey, agentID, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+		}
+		if err != nil && targetAgentID != hostname && hostname != "" {
+			err = verifyCommandSignature(controlPlanePubKey, hostname, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+		}
+		// If verification failed, refresh control plane public key once (handles server restart/key rotation)
+		if err != nil {
+			if freshKey, refErr := loadControlPlanePublicKey(client, controlURL, *publicKeyFlag); refErr == nil && freshKey != nil {
+				controlPlanePubKey = freshKey
+				err = verifyCommandSignature(controlPlanePubKey, targetAgentID, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+				if err != nil && targetAgentID != agentID && agentID != "" {
+					err = verifyCommandSignature(controlPlanePubKey, agentID, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+				}
+				if err != nil && targetAgentID != hostname && hostname != "" {
+					err = verifyCommandSignature(controlPlanePubKey, hostname, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+				}
+			}
+		}
+		if err != nil {
 			log.Printf("[Security Alert] REJECTED: Cryptographic signature verification failed for command %s: %v", cmd.ID, err)
 			reportResult(client, controlURL, cmd.ID, "failed", fmt.Sprintf("cryptographic signature verification failed: %v", err), "")
 			continue
@@ -447,7 +467,6 @@ func parseRSAPublicKeyPEM(pemBytes []byte) (*rsa.PublicKey, error) {
 	return rsaPub, nil
 }
 
-// loadControlPlanePublicKey attempts loading the public key from flag/PEM, file, environment, or control-plane HTTP API
 func loadControlPlanePublicKey(client *http.Client, controlURL, pathOrPEM string) (*rsa.PublicKey, error) {
 	// 1. Direct PEM string passed via flag
 	if strings.Contains(pathOrPEM, "-----BEGIN PUBLIC KEY-----") {
@@ -472,7 +491,16 @@ func loadControlPlanePublicKey(client *http.Client, controlURL, pathOrPEM string
 		}
 	}
 
-	// 4. On-demand fetch from control plane endpoint (/api/fleet/public-key)
+	// 4. Local PEM file in working directory
+	for _, localCandidate := range []string{"control-plane-pub.pem", ".control-plane-dev-pub.pem"} {
+		if data, err := os.ReadFile(localCandidate); err == nil && len(data) > 0 {
+			if pub, parseErr := parseRSAPublicKeyPEM(data); parseErr == nil && pub != nil {
+				return pub, nil
+			}
+		}
+	}
+
+	// 5. On-demand fetch from control plane endpoint (/api/fleet/public-key)
 	fetchURL := fmt.Sprintf("%s/api/fleet/public-key", controlURL)
 	req, err := http.NewRequest("GET", fetchURL, nil)
 	if err != nil {

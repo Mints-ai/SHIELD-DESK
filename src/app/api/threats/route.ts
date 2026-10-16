@@ -433,6 +433,9 @@ export async function POST(req: NextRequest) {
       if (!body.ip) {
         return NextResponse.json({ error: "Missing target IP to unblock" }, { status: 400 });
       }
+      if (!isIpBlocked(body.ip)) {
+        return NextResponse.json({ error: `The IP address ${body.ip} is not blocked.` }, { status: 400 });
+      }
       const unblocked = unblockIp(body.ip);
 
       // Sync with Go Threat Service if online
@@ -466,6 +469,9 @@ export async function POST(req: NextRequest) {
       }
       if (!body.ip) {
         return NextResponse.json({ error: "Missing target IP to block" }, { status: 400 });
+      }
+      if (isIpBlocked(body.ip)) {
+        return NextResponse.json({ error: `The IP address ${body.ip} is already blocked.` }, { status: 400 });
       }
       blockIp(body.ip, body.reason || "Manual SOC IP containment");
 
