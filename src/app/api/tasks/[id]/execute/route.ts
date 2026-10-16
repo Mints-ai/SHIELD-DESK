@@ -177,11 +177,6 @@ export async function POST(
     }
 
     if (!targetAgent) {
-      // Check for baseline test host in DB
-      targetAgent = await getEndpointAgent("FIN-WS-042", caller);
-    }
-
-    if (!targetAgent) {
       return NextResponse.json(
         { error: "NO_ACTIVE_AGENT: No reachable endpoint agents found for this tenant." },
         { status: 404 }
