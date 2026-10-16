@@ -122,14 +122,25 @@ export default function ThreatsDashboardPage() {
   const [testingRule, setTestingRule] = useState<{ id: string; name?: string; raw_content?: string } | null>(null);
   const [yaraFilter, setYaraFilter] = useState("");
 
-  // System Admin (Company Admin) is the only one who can monitor, block, and unblock login containment.
-  // Globex Analyst is a developer persona and doesn't sync user login alerts (kept blank).
+  // Standardized operator roles for ShieldDesk SOC:
+  // system_admin / super_admin: Admin privileges, baseline simulation & reset
+  // responder: L3 containment operator (unblock/block IP, approve containment)
+  // analyst: L1/L2 investigator (read-only containment, full observability)
   const isSystemAdmin =
     activeUserId === "dev-admin" ||
     activeUser?.role === "system_admin" ||
     activeUser?.role === "super_admin";
 
-  const isAuthorizedForAlerts = isSystemAdmin || canViewAuthAlerts;
+  const isResponder =
+    activeUserId === "dev-responder" ||
+    activeUser?.role === "responder";
+
+  const isAnalyst =
+    activeUserId === "dev-analyst" ||
+    activeUser?.role === "analyst";
+
+  const canManageContainment = isSystemAdmin || isResponder;
+  const isAuthorizedForAlerts = isSystemAdmin || isResponder || isAnalyst || canViewAuthAlerts;
 
   // Auto-switch to anomaly tab if active persona is not authorized for alerts
   useEffect(() => {
@@ -158,13 +169,8 @@ export default function ThreatsDashboardPage() {
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
       if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
-      if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
-      else setBlockedIps([]);
-      if (data.security_alerts && isSystemAdmin) {
-        setSecurityAlerts(data.security_alerts);
-      } else {
-        setSecurityAlerts([]);
-      }
+      if (data.blocked_ips) setBlockedIps(data.blocked_ips);
+      if (data.security_alerts) setSecurityAlerts(data.security_alerts);
       setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
 
     } catch (err) {
@@ -190,13 +196,8 @@ export default function ThreatsDashboardPage() {
         if (data.sigma_rules) setSigmaRules(data.sigma_rules);
         if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
         if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
-        if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
-        else setBlockedIps([]);
-        if (data.security_alerts && isSystemAdmin) {
-          setSecurityAlerts(data.security_alerts);
-        } else {
-          setSecurityAlerts([]);
-        }
+        if (data.blocked_ips) setBlockedIps(data.blocked_ips);
+        if (data.security_alerts) setSecurityAlerts(data.security_alerts);
         setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
 
       } catch (err) {
@@ -212,7 +213,7 @@ export default function ThreatsDashboardPage() {
       mounted = false;
       clearInterval(interval);
     };
-  }, [activeUserId, isSystemAdmin, activeUser?.tenantId]);
+  }, [activeUserId, isSystemAdmin, isResponder, isAnalyst, activeUser?.tenantId]);
 
   const triggerAnomalySimulation = async () => {
     setLoading(true);
@@ -1036,58 +1037,46 @@ export default function ThreatsDashboardPage() {
 
         {/* Tab 5: Alerts (Real-time Authentication Failures & Threats) */}
         {activeTab === "alerts" && (
-          !isSystemAdmin ? (
-            <div className="p-8 rounded-xl border border-[var(--sd-border)] sd-surface text-center space-y-3">
-              <div className="inline-flex p-3 rounded-full bg-[var(--sd-warning-dim)] text-[var(--sd-warning)]">
-                <Lock className="h-6 w-6" />
+          <div className="space-y-4">
+            {/* Feedback toast */}
+            {unblockFeedback && (
+              <div className="p-3 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs font-medium flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>{unblockFeedback}</span>
               </div>
-              <h4 className="text-sm font-medium text-[var(--sd-text)]">
-                Access Restricted: Security Alerts
-              </h4>
-              <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
-                User login alerts and autonomous IP containment are restricted to Company System Administrators. Globex Analyst (Developer persona) has a blank view and does not monitor company user logins.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Feedback toast */}
-              {unblockFeedback && (
-                <div className="p-3 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs font-medium flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  <span>{unblockFeedback}</span>
-                </div>
-              )}
+            )}
 
-              {/* Autonomous IP Containment Active Banner */}
-              {blockedIps.length > 0 && (
-                <div className="p-4 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] space-y-3 shadow-xs">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-lg bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
-                        <Ban className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-medium text-[var(--sd-danger)] uppercase tracking-wider font-mono flex items-center gap-2">
-                          <span>Autonomous IP Containment Active</span>
-                          <span className="px-2 py-0.2 rounded-full bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] text-[10px]">
-                            {blockedIps.length} Blocked
-                          </span>
-                        </h4>
-                        <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">
-                          IPs attempting login more than 5 times with invalid credentials are automatically blocked from authenticating.
-                        </p>
-                      </div>
+            {/* Autonomous IP Containment Active Banner */}
+            {blockedIps.length > 0 && (
+              <div className="p-4 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] space-y-3 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
+                      <Ban className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-medium text-[var(--sd-danger)] uppercase tracking-wider font-mono flex items-center gap-2">
+                        <span>Autonomous IP Containment Active</span>
+                        <span className="px-2 py-0.2 rounded-full bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] text-[10px]">
+                          {blockedIps.length} Blocked
+                        </span>
+                      </h4>
+                      <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">
+                        IPs attempting login more than 5 times with invalid credentials are automatically blocked from authenticating.
+                      </p>
                     </div>
                   </div>
+                </div>
 
-                  <div className="flex items-center gap-2 flex-wrap pt-1">
-                    {blockedIps.map((b) => (
-                      <div
-                        key={b.ip}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--sd-panel)] border border-[var(--sd-danger-border)] text-xs font-mono shadow-xs"
-                      >
-                        <span className="text-[var(--sd-danger)] font-medium">{b.ip}</span>
-                        <span className="text-[10px] text-[var(--sd-text-muted)]">({b.attempts} attempts)</span>
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  {blockedIps.map((b) => (
+                    <div
+                      key={b.ip}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--sd-panel)] border border-[var(--sd-danger-border)] text-xs font-mono shadow-xs"
+                    >
+                      <span className="text-[var(--sd-danger)] font-medium">{b.ip}</span>
+                      <span className="text-[10px] text-[var(--sd-text-muted)]">({b.attempts} attempts)</span>
+                      {canManageContainment ? (
                         <button
                           onClick={() => handleUnblockIp(b.ip)}
                           className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded bg-[var(--sd-success-dim)] hover:bg-[var(--sd-success-border)] text-[var(--sd-success)] text-[11px] font-sans font-medium cursor-pointer transition"
@@ -1095,11 +1084,17 @@ export default function ThreatsDashboardPage() {
                           <Unlock className="h-3 w-3" />
                           <span>Unblock</span>
                         </button>
-                      </div>
-                    ))}
-                  </div>
+                      ) : (
+                        <span className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] text-[10px] font-sans">
+                          <Lock className="h-2.5 w-2.5" />
+                          <span>View Only</span>
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              )}
+              </div>
+            )}
 
               <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-1 shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1127,7 +1122,7 @@ export default function ThreatsDashboardPage() {
                       <span>Refresh</span>
                     </button>
 
-                    {securityAlerts.length > 0 && (
+                    {canManageContainment && securityAlerts.length > 0 && (
                       <button
                         onClick={() => {
                           fetch("/api/threats", {
@@ -1276,7 +1271,7 @@ export default function ThreatsDashboardPage() {
                         </div>
 
                         <div className="flex items-center justify-end gap-2.5 pt-1 flex-wrap">
-                          {isSystemAdmin && (
+                          {canManageContainment ? (
                             isIpCurrentlyBlocked ? (
                               <button
                                 onClick={() => handleUnblockIp(alert.clientIp)}
@@ -1294,14 +1289,21 @@ export default function ThreatsDashboardPage() {
                                 <span>Block IP</span>
                               </button>
                             )
+                          ) : (
+                            <span className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] text-[var(--sd-text-muted)] text-xs font-medium shadow-xs">
+                              <Lock className="h-3.5 w-3.5" />
+                              <span>View Only · Requires Responder to Unblock</span>
+                            </span>
                           )}
 
-                          <button
-                            onClick={() => handleAcknowledgeAlert(alert.id)}
-                            className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
-                          >
-                            Acknowledge Alert
-                          </button>
+                          {canManageContainment && (
+                            <button
+                              onClick={() => handleAcknowledgeAlert(alert.id)}
+                              className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+                            >
+                              Acknowledge Alert
+                            </button>
+                          )}
 
                           <button
                             onClick={() => handleInvestigateInChat(alert)}
@@ -1329,7 +1331,6 @@ export default function ThreatsDashboardPage() {
                 </div>
               )}
             </div>
-          )
         )}
 
         {/* YARA Interactive Modals */}
