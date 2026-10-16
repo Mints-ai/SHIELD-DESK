@@ -116,6 +116,161 @@ func isNonRetryableStatusCode(statusCode int) bool {
 		statusCode == http.StatusUnprocessableEntity
 }
 
+func isDiscordWebhook(targetURL string) bool {
+	u := strings.ToLower(targetURL)
+	return strings.Contains(u, "discord.com/api/webhooks") || strings.Contains(u, "discordapp.com/api/webhooks")
+}
+
+func isSlackWebhook(targetURL string) bool {
+	u := strings.ToLower(targetURL)
+	return strings.Contains(u, "hooks.slack.com")
+}
+
+func formatDiscordPayload(payload *WebhookPayload) []byte {
+	title := payload.Event
+	description := "Autonomous security event dispatched from ShieldDesk."
+	severity := "standard"
+	host := ""
+	threat := ""
+	actionURL := "https://shielddesk.io"
+
+	if payload.Data != nil {
+		if t, ok := payload.Data["title"].(string); ok && t != "" {
+			title = t
+		} else if r, ok := payload.Data["rule_name"].(string); ok && r != "" {
+			title = r
+		} else if th, ok := payload.Data["threat"].(string); ok && th != "" {
+			title = th
+		}
+
+		if d, ok := payload.Data["description"].(string); ok && d != "" {
+			description = d
+		} else if m, ok := payload.Data["message"].(string); ok && m != "" {
+			description = m
+		}
+
+		if s, ok := payload.Data["severity"].(string); ok && s != "" {
+			severity = s
+		}
+
+		if h, ok := payload.Data["host"].(string); ok && h != "" {
+			host = h
+		} else if hn, ok := payload.Data["hostname"].(string); ok && hn != "" {
+			host = hn
+		}
+
+		if th, ok := payload.Data["threat"].(string); ok && th != "" {
+			threat = th
+		}
+
+		if u, ok := payload.Data["action_url"].(string); ok && u != "" {
+			actionURL = u
+		}
+	}
+
+	color := 0x10B981 // Emerald green
+	switch strings.ToLower(severity) {
+	case "critical":
+		color = 0xDC2626 // Red
+	case "high":
+		color = 0xEA580C // Orange
+	case "medium":
+		color = 0xD97706 // Amber
+	}
+
+	fields := []map[string]interface{}{
+		{"name": "Tenant", "value": payload.TenantID, "inline": true},
+		{"name": "Severity", "value": strings.ToUpper(severity), "inline": true},
+	}
+	if host != "" {
+		fields = append(fields, map[string]interface{}{"name": "Host", "value": host, "inline": true})
+	}
+	if threat != "" {
+		fields = append(fields, map[string]interface{}{"name": "Threat", "value": threat, "inline": true})
+	}
+	if payload.ID != "" {
+		fields = append(fields, map[string]interface{}{"name": "Delivery ID", "value": payload.ID, "inline": false})
+	}
+
+	discordMsg := map[string]interface{}{
+		"content": "🛡️ **[ShieldDesk SOC Alert]**",
+		"embeds": []map[string]interface{}{
+			{
+				"title":       fmt.Sprintf("ShieldDesk SOC: %s", title),
+				"url":         actionURL,
+				"description": description,
+				"color":       color,
+				"fields":      fields,
+				"footer": map[string]string{
+					"text": "ShieldDesk Autonomous SOC Platform",
+				},
+				"timestamp": payload.Timestamp,
+			},
+		},
+	}
+
+	b, _ := json.Marshal(discordMsg)
+	return b
+}
+
+func formatSlackPayload(payload *WebhookPayload) []byte {
+	title := payload.Event
+	description := "Autonomous security event dispatched from ShieldDesk."
+	severity := "standard"
+	host := ""
+
+	if payload.Data != nil {
+		if t, ok := payload.Data["title"].(string); ok && t != "" {
+			title = t
+		}
+		if d, ok := payload.Data["description"].(string); ok && d != "" {
+			description = d
+		}
+		if s, ok := payload.Data["severity"].(string); ok && s != "" {
+			severity = s
+		}
+		if h, ok := payload.Data["host"].(string); ok && h != "" {
+			host = h
+		} else if hn, ok := payload.Data["hostname"].(string); ok && hn != "" {
+			host = hn
+		}
+	}
+
+	color := "#10b981"
+	switch strings.ToLower(severity) {
+	case "critical":
+		color = "#dc2626"
+	case "high":
+		color = "#ea580c"
+	case "medium":
+		color = "#d97706"
+	}
+
+	fields := []map[string]interface{}{
+		{"title": "Tenant", "value": payload.TenantID, "short": true},
+		{"title": "Severity", "value": strings.ToUpper(severity), "short": true},
+	}
+	if host != "" {
+		fields = append(fields, map[string]interface{}{"title": "Host", "value": host, "short": true})
+	}
+
+	slackMsg := map[string]interface{}{
+		"text": fmt.Sprintf("🛡️ *[ShieldDesk SOC Alert]* %s", title),
+		"attachments": []map[string]interface{}{
+			{
+				"color":  color,
+				"title":  title,
+				"text":   description,
+				"fields": fields,
+				"footer": "ShieldDesk Autonomous SOC Platform",
+			},
+		},
+	}
+
+	b, _ := json.Marshal(slackMsg)
+	return b
+}
+
 // DispatchWithRetry sends signed payload to destination URL with up to 3 attempts and exponential backoff
 func (d *WebhookDispatcher) DispatchWithRetry(ctx context.Context, targetURL, secretKey string, payload *WebhookPayload) error {
 	// 1. SSRF Guard
@@ -136,9 +291,20 @@ func (d *WebhookDispatcher) DispatchWithRetry(ctx context.Context, targetURL, se
 
 	// Strip existing signature from payload body to avoid circular hashing
 	payload.Signature = ""
-	rawBytes, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
+
+	var rawBytes []byte
+	var err error
+
+	// Select appropriate payload serializer based on target platform
+	if isDiscordWebhook(targetURL) {
+		rawBytes = formatDiscordPayload(payload)
+	} else if isSlackWebhook(targetURL) {
+		rawBytes = formatSlackPayload(payload)
+	} else {
+		rawBytes, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("failed to marshal payload: %w", err)
+		}
 	}
 
 	// 3. Compute HMAC-SHA256 timestamped signature

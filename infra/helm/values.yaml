@@ -85,6 +85,7 @@ services:
   webhooks:
     name: shielddesk-webhooks
     image: ghcr.io/mints-ai/shielddesk-webhooks:latest
+    port: 8080
     replicas: 2
     minReplicas: 2
     maxReplicas: 6
