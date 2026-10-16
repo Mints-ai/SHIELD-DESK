@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
     else {
       title = body.title || body.name || body.activity_name || "Autonomous Telemetry Alert";
       description = body.description || body.message || JSON.stringify(body);
-      hostname = body.hostname || body.host || body.machine || "FIN-WS-042";
+      hostname = body.hostname || body.host || body.machine || "UNKNOWN-HOST";
       const rawSev = String(body.severity || "").toLowerCase();
       if (rawSev.includes("crit")) severity = "critical";
       else if (rawSev.includes("med")) severity = "medium";
