@@ -38,12 +38,6 @@ export async function GET(req: NextRequest) {
             { status: 423 }
           );
         }
-        if (rows[0].ip_address && isIpBlocked(rows[0].ip_address)) {
-          return NextResponse.json(
-            { error: "IP_BLOCKED: Host IP is blocked by SOC security policy." },
-            { status: 403 }
-          );
-        }
       }
     } catch {
       // Mock / offline check
@@ -63,12 +57,6 @@ export async function GET(req: NextRequest) {
         return NextResponse.json(
           { error: "KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch." },
           { status: 423 }
-        );
-      }
-      if (mockAgent.ip_address && isIpBlocked(mockAgent.ip_address)) {
-        return NextResponse.json(
-          { error: "IP_BLOCKED: Host IP is blocked by SOC security policy." },
-          { status: 403 }
         );
       }
     }

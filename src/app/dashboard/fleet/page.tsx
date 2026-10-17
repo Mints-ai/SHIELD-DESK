@@ -61,6 +61,20 @@ interface CommandLogEntry {
   tokenId?: string;
 }
 
+interface BlockedIpItem {
+  id: string;
+  tenant_id: string;
+  ip_address: string;
+  agent_id?: string | null;
+  hostname?: string | null;
+  reason?: string | null;
+  tier: string;
+  blocked_by: string;
+  blocked_at: string;
+  unblocked_at?: string | null;
+  status: "blocked" | "unblocked";
+}
+
 // Maps each command value to its required autonomy tier
 const COMMAND_TIERS: Record<string, "Tier 1" | "Tier 2"> = {
   take_safety_snapshot: "Tier 1",
@@ -93,6 +107,8 @@ export default function FleetPage() {
   const [selectedTier, setSelectedTier] = useState<"Tier 1" | "Tier 2">("Tier 1");
   const [tokenIdInput, setTokenIdInput] = useState("");
   const [commandLogs, setCommandLogs] = useState<CommandLogEntry[]>([]);
+  const [blockedIps, setBlockedIps] = useState<BlockedIpItem[]>([]);
+  const [unblockingIp, setUnblockingIp] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [killSwitchEngaged, setKillSwitchEngaged] = useState(false);
   const [filterAgentId, setFilterAgentId] = useState<string>("all");
@@ -248,10 +264,72 @@ export default function FleetPage() {
     }
   }, [activeUserId]);
 
+  // Fetch active blocked IPs registry
+  const fetchBlockedIps = useCallback(async () => {
+    try {
+      const res = await fetch("/api/fleet/blocked-ips", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.blockedIps)) {
+        setBlockedIps(data.blockedIps);
+      }
+    } catch (err) {
+      console.error("Failed to load blocked IPs:", err);
+    }
+  }, [activeUserId]);
+
+  // One-click unblock action for active containment rules
+  const handleDirectUnblockIp = async (ipToUnblock: string, hostAgentId?: string | null) => {
+    setUnblockingIp(ipToUnblock);
+    try {
+      const effectiveAgent = hostAgentId
+        ? agents.find((a) => a.id === hostAgentId || a.hostname === hostAgentId) || selectedAgent
+        : selectedAgent;
+
+      const res = await fetch("/api/fleet/blocked-ips", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({
+          action: "unblock_ip",
+          ip: ipToUnblock,
+          agentId: effectiveAgent?.id,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDispatchFeedback({
+          type: "success",
+          message: data.message || `Firewall drop rule for ${ipToUnblock} lifted. Host connectivity restored.`,
+        });
+        await fetchBlockedIps();
+        await fetchFleet();
+        await fetchLogs();
+      } else {
+        setDispatchFeedback({
+          type: "error",
+          message: data.error || `Failed to unblock IP ${ipToUnblock}.`,
+        });
+      }
+    } catch (err) {
+      console.error("Unblock failed:", err);
+      setDispatchFeedback({
+        type: "error",
+        message: `Network error unblocking IP ${ipToUnblock}.`,
+      });
+    } finally {
+      setUnblockingIp(null);
+    }
+  };
+
   // Real-Time Server-Sent Events (SSE) Stream
   useEffect(() => {
     fetchFleet();
     fetchLogs();
+    fetchBlockedIps();
 
     if (!isStreaming) return;
 
@@ -293,6 +371,7 @@ export default function FleetPage() {
           pollInterval = setInterval(() => {
             fetchFleet();
             fetchLogs();
+            fetchBlockedIps();
           }, 4000);
         }
       };
@@ -300,6 +379,7 @@ export default function FleetPage() {
       pollInterval = setInterval(() => {
         fetchFleet();
         fetchLogs();
+        fetchBlockedIps();
       }, 4000);
     }
 
@@ -509,19 +589,22 @@ export default function FleetPage() {
             message: `Successfully executed ${cmd} on ${selectedAgent.hostname}. Live telemetry updated.`,
           });
           if (cmd.startsWith("block_ip")) {
-            setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
-            setAgents((prev) =>
-              prev.map((a) =>
-                a.id === selectedAgent.id || a.ip_address === targetIp.trim()
-                  ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
-                  : a
-              )
-            );
+            const isSelfHost = selectedAgent.ip_address === targetIp.trim();
+            if (isSelfHost) {
+              setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
+              setAgents((prev) =>
+                prev.map((a) =>
+                  a.ip_address === targetIp.trim()
+                    ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
+                    : a
+                )
+              );
+            }
           } else if (cmd.startsWith("unblock_ip")) {
             setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
             setAgents((prev) =>
               prev.map((a) =>
-                a.id === selectedAgent.id || a.ip_address === targetIp.trim()
+                a.ip_address === targetIp.trim()
                   ? { ...a, status: "connected" }
                   : a
               )
@@ -537,6 +620,7 @@ export default function FleetPage() {
 
       fetchFleet();
       fetchLogs();
+      fetchBlockedIps();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Network failure";
       setCommandLogs((prev) =>
@@ -1464,7 +1548,8 @@ export default function FleetPage() {
             </div>
 
             {activeConsoleTab === "console" ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Terminal Command Dispatcher */}
                 <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
                   <div className="flex items-center justify-between">
@@ -1573,6 +1658,8 @@ export default function FleetPage() {
                   const isValid = ipVal && ipVal.valid;
                   const isUnblock = selectedAction === "unblock_ip";
 
+                  const isCurrentlyInBlockedList = blockedIps.some((b) => b.ip_address === targetIp.trim());
+
                   return (
                     <div className="space-y-2 p-3.5 rounded-xl bg-[var(--sd-panel-raised)]/80 border border-[var(--sd-border)]">
                       <div className="flex items-center justify-between">
@@ -1617,7 +1704,61 @@ export default function FleetPage() {
                           <span>Valid {ipVal.isIpv6 ? "IPv6" : "IPv4"} Address{ipVal.isCidr ? " (CIDR Range)" : ""}</span>
                         </p>
                       )}
-                      <div className="flex items-center justify-between text-[11px] text-[var(--sd-text-muted)] pt-0.5">
+
+                      {/* Unblock IP Selection Chips */}
+                      {isUnblock && (
+                        <div className="pt-1.5">
+                          <div className="text-[11px] font-mono text-[var(--sd-text-muted)] mb-1.5 flex items-center justify-between">
+                            <span>Select active blocked IP:</span>
+                            <span className="text-[10px] text-amber-300 font-semibold">{blockedIps.length} actively contained</span>
+                          </div>
+                          {blockedIps.length === 0 ? (
+                            <p className="text-[11px] font-mono text-[var(--sd-text-dim)] bg-[var(--sd-panel)] p-2 rounded-lg border border-[var(--sd-border)]">
+                              No IPs currently recorded as blocked in fleet. Enter an IP above to remove a host-level drop rule.
+                            </p>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-[var(--sd-panel)] border border-[var(--sd-border)] max-h-28 overflow-y-auto">
+                              {blockedIps.map((b) => (
+                                <button
+                                  key={b.id || b.ip_address}
+                                  type="button"
+                                  onClick={() => setTargetIp(b.ip_address)}
+                                  className={cn(
+                                    "text-[11px] font-mono px-2 py-0.5 rounded border transition cursor-pointer flex items-center gap-1",
+                                    targetIp.trim() === b.ip_address
+                                      ? "bg-emerald-500/25 border-emerald-500/60 text-emerald-200 shadow-xs"
+                                      : "bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-raised)]/80 border-[var(--sd-border)] text-amber-300"
+                                  )}
+                                  title={`Blocked on ${b.hostname || "Fleet"}: ${b.reason || "Containment"}`}
+                                >
+                                  <ShieldAlert className="h-3 w-3 text-amber-400" />
+                                  <span>{b.ip_address}</span>
+                                  {b.hostname && <span className="text-[9px] text-[var(--sd-text-dim)]">({b.hostname})</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Duplicate Block Warning */}
+                      {!isUnblock && hasInput && isValid && isCurrentlyInBlockedList && (
+                        <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] font-mono flex items-center justify-between gap-2 mt-1">
+                          <span className="flex items-center gap-1.5">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                            <span>This IP ({targetIp.trim()}) is already recorded as blocked.</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAction("unblock_ip")}
+                            className="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[10px] font-semibold cursor-pointer shrink-0 transition"
+                          >
+                            Switch to Unblock
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between text-[11px] text-[var(--sd-text-muted)] pt-1">
                         <span>Command to dispatch:</span>
                         <code
                           className={cn(
@@ -1833,7 +1974,102 @@ export default function FleetPage() {
               </div>
             </div>
           </div>
-        ) : (
+
+          {/* Active Blocked IPs & Containment Rules Ledger */}
+          <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-amber-400" />
+                <h3 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                  Active Blocked IPs &amp; Host Containment Rules
+                </h3>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                  {blockedIps.length} Active {blockedIps.length === 1 ? "Rule" : "Rules"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fetchBlockedIps()}
+                  className="text-[11px] font-mono text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] transition flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  <span>Refresh Containment</span>
+                </button>
+              </div>
+            </div>
+
+            {blockedIps.length === 0 ? (
+              <div className="p-6 text-center border border-dashed border-[var(--sd-border)] rounded-xl text-[var(--sd-text-muted)] font-mono text-[12px] space-y-1">
+                <ShieldCheck className="h-6 w-6 text-emerald-400 mx-auto opacity-70 mb-2" />
+                <p className="text-[var(--sd-text)] font-semibold">No Active IP Containment Rules</p>
+                <p className="text-[11px] text-[var(--sd-text-dim)]">
+                  All inbound and outbound host traffic is running normally. To block an IP, select &quot;block_ip&quot; above.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)]">
+                <table className="w-full text-left text-[12px] font-mono">
+                  <thead>
+                    <tr className="border-b border-[var(--sd-border)] bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] uppercase">
+                      <th className="py-2.5 px-3.5 font-medium">Blocked Target IP</th>
+                      <th className="py-2.5 px-3.5 font-medium">Contained Host</th>
+                      <th className="py-2.5 px-3.5 font-medium">Autonomy Tier</th>
+                      <th className="py-2.5 px-3.5 font-medium">Containment Reason</th>
+                      <th className="py-2.5 px-3.5 font-medium">Timestamp</th>
+                      <th className="py-2.5 px-3.5 font-medium text-right">Containment Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--sd-border)]/40">
+                    {blockedIps.map((record) => (
+                      <tr key={record.id || record.ip_address} className="hover:bg-[var(--sd-panel)]/40 transition">
+                        <td className="py-2.5 px-3.5 text-amber-300 font-semibold flex items-center gap-1.5">
+                          <ShieldAlert className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                          <span>{record.ip_address}</span>
+                        </td>
+                        <td className="py-2.5 px-3.5 text-[var(--sd-text)]">
+                          {record.hostname || selectedAgent.hostname || "Fleet-wide"}
+                        </td>
+                        <td className="py-2.5 px-3.5">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[var(--sd-panel)] border border-[var(--sd-border)] text-[var(--sd-wheat)]">
+                            {record.tier || "Tier 1"}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3.5 text-[var(--sd-text-muted)] max-w-xs truncate" title={record.reason || "Firewall rule"}>
+                          {record.reason || "Manual containment"}
+                        </td>
+                        <td className="py-2.5 px-3.5 text-[var(--sd-text-dim)] text-[11px]">
+                          {new Date(record.blocked_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td className="py-2.5 px-3.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDirectUnblockIp(record.ip_address, record.agent_id)}
+                            disabled={unblockingIp === record.ip_address}
+                            className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold transition cursor-pointer disabled:opacity-50"
+                          >
+                            {unblockingIp === record.ip_address ? (
+                              <>
+                                <RefreshCw className="h-3 w-3 animate-spin text-emerald-400" />
+                                <span>Unblocking...</span>
+                              </>
+                            ) : (
+                              <>
+                                <RotateCcw className="h-3 w-3 text-emerald-400" />
+                                <span>Unblock IP</span>
+                              </>
+                            )}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
           <div className="space-y-6">
                 {/* Header Banner */}
                 <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">

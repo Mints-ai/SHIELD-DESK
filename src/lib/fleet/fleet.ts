@@ -637,11 +637,23 @@ export class SimulationExecutor {
  * 2. Database command audit log (agent_command_logs) for the latest block/unblock state.
  * 3. In-memory command logs fallback.
  */
-export async function checkIsIpCurrentlyBlocked(ip: string, tenantId?: string): Promise<boolean> {
+export async function checkIsIpCurrentlyBlocked(
+  ip: string,
+  tenantId?: string,
+  excludeTokenId?: string
+): Promise<boolean> {
   const cleanIp = (ip || "").trim();
   if (!cleanIp) return false;
 
-  // 1. In-memory threat alert store
+  // 1. Check persistent fleet blocked IPs table
+  try {
+    const { isIpBlockedInFleet } = await import("./blockedIps");
+    if (await isIpBlockedInFleet(cleanIp, tenantId)) {
+      return true;
+    }
+  } catch {}
+
+  // 2. In-memory threat alert store
   try {
     const { isIpBlocked } = await import("@/lib/alerts/threatAlertStore");
     if (isIpBlocked(cleanIp)) {
@@ -649,10 +661,10 @@ export async function checkIsIpCurrentlyBlocked(ip: string, tenantId?: string): 
     }
   } catch {}
 
-  // 2. Database command history check: what was the latest decisive containment action for this IP?
+  // 3. Database command history check: what was the latest decisive containment action for this IP?
   try {
-    const res = await query<{ command: string; status: string; output: string }>(
-      `SELECT command, status, output FROM agent_command_logs 
+    const res = await query<{ id: string; command: string; status: string; output: string; token_id?: string }>(
+      `SELECT id, command, status, output, token_id FROM agent_command_logs 
        WHERE (
          command ILIKE $1 OR command ILIKE $2 OR 
          command ILIKE $3 OR command ILIKE $4
@@ -671,6 +683,11 @@ export async function checkIsIpCurrentlyBlocked(ip: string, tenantId?: string): 
 
     if (res.rows.length > 0) {
       for (const row of res.rows) {
+        // Skip records associated with this specific execution's approval token
+        if (excludeTokenId && row.token_id && String(row.token_id) === String(excludeTokenId)) {
+          continue;
+        }
+
         const cmd = row.command.toLowerCase().trim();
         const isBlock = cmd.startsWith("block_ip") || cmd.startsWith("block ip");
         const out = (row.output || "").toLowerCase();
@@ -680,14 +697,19 @@ export async function checkIsIpCurrentlyBlocked(ip: string, tenantId?: string): 
           continue;
         }
 
+        // A pending authorization request is awaiting human sign-off; it is NOT yet an active block
+        if (row.status === "pending") {
+          continue;
+        }
+
         if (isBlock) {
-          // If a block action succeeded, or is actively pending/executing, it is considered blocked
-          if (row.status !== "failed") {
+          // Only a decisive succeeded or verified block action means the IP is actively blocked
+          if (row.status === "succeeded" || row.status === "verified") {
             return true;
           }
         } else {
-          // An unblock action: if it was dispatched/succeeded/verified, or is actively pending, IP is not blocked
-          if (row.status === "succeeded" || row.status === "verified" || row.status === "executing" || row.status === "pending") {
+          // An unblock action succeeded, verified, or actively executing means the IP is unblocked
+          if (row.status === "succeeded" || row.status === "verified" || row.status === "executing") {
             return false;
           }
         }
@@ -697,10 +719,11 @@ export async function checkIsIpCurrentlyBlocked(ip: string, tenantId?: string): 
     console.warn("[checkIsIpCurrentlyBlocked] DB lookup warning:", err);
   }
 
-  // 3. Fallback: check MOCK_COMMAND_LOGS
+  // 4. Fallback: check MOCK_COMMAND_LOGS
   try {
     const matching = MOCK_COMMAND_LOGS
       .filter((l) => {
+        if (excludeTokenId && l.tokenId && String(l.tokenId) === String(excludeTokenId)) return false;
         const cmd = l.command.toLowerCase().trim();
         return (
           (cmd.startsWith(`block_ip ${cleanIp.toLowerCase()}`) ||
@@ -714,14 +737,15 @@ export async function checkIsIpCurrentlyBlocked(ip: string, tenantId?: string): 
 
     if (matching.length > 0) {
       for (const row of matching) {
+        if (row.status === "pending") continue;
         const cmd = row.command.toLowerCase().trim();
         const isBlock = cmd.startsWith("block_ip") || cmd.startsWith("block ip");
         const out = (row.output || "").toLowerCase();
         if (out.includes("is not blocked") || out.includes("is already blocked")) continue;
         if (isBlock) {
-          if (row.status !== "failed") return true;
+          if (row.status === "succeeded" || row.status === "verified") return true;
         } else {
-          if (row.status === "succeeded" || row.status === "verified" || row.status === "executing" || row.status === "pending") {
+          if (row.status === "succeeded" || row.status === "verified" || row.status === "executing") {
             return false;
           }
         }
@@ -819,7 +843,7 @@ export async function executeAgentCommand({
       throw new Error(`INVALID_IP_ADDRESS: ${val.error}`);
     }
 
-    const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(rawIp, caller.tenant_id);
+    const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(rawIp, caller.tenant_id, tokenId);
     if (isUnblock && !isCurrentlyBlocked) {
       throw new Error(`The IP address ${rawIp} is not blocked.`);
     }

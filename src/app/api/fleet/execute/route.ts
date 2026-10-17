@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
       } catch {}
 
       const { checkIsIpCurrentlyBlocked, isUnblockPendingForIp } = await import("@/lib/fleet/fleet");
-      const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(targetIp, caller.tenant_id);
+      const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(targetIp, caller.tenant_id, approvalTokenId);
 
       if (isUnblock) {
         const pendingCheck = await isUnblockPendingForIp(targetIp, caller.tenant_id);
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      if (!isUnblock && isCurrentlyBlocked) {
+      if (!isUnblock && isCurrentlyBlocked && !approvalTokenId) {
         const rejId = crypto.randomUUID();
         const rejMsg = `The IP address ${targetIp} is already blocked.`;
         await query(
@@ -308,39 +308,53 @@ export async function POST(req: NextRequest) {
       ).trim();
 
       if (targetIp) {
-        // 1. Enforce IP containment in threatAlertStore
-        blockIp(targetIp, `Fleet containment executed by ${caller.email || caller.id} on agent ${agentId}`, 1, caller.tenant_id);
+        const { recordBlockedIp } = await import("@/lib/fleet/blockedIps");
+        const { getEndpointAgent } = await import("@/lib/fleet/fleet");
+        const agent = await getEndpointAgent(agentId, caller);
 
-        // 2. Disconnect matching endpoints immediately in PostgreSQL
-        await query(
-          `UPDATE endpoint_agents
-           SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
-           WHERE ip_address = $1 OR id = $2;`,
-          [targetIp, agentId]
-        ).catch(() => {});
+        // 1. Enforce IP containment and record in persistent registry
+        await recordBlockedIp({
+          tenantId: caller.tenant_id,
+          ip: targetIp,
+          agentId,
+          hostname: agent?.hostname || agentId,
+          reason: `Fleet containment executed by ${caller.email || caller.id} on host ${agent?.hostname || agentId}`,
+          tier,
+          blockedBy: caller.email || caller.id,
+        });
 
-        // 3. Mark live agent status as disconnected
-        await setLiveAgentStatus(agentId, "disconnected", result.snapshotId);
+        // 2. Only disconnect the endpoint if the target IP is the agent's OWN registered IP address
+        const isTargetHostItself = agent?.ip_address === targetIp;
+        if (isTargetHostItself) {
+          await query(
+            `UPDATE endpoint_agents
+             SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+             WHERE id = $1;`,
+            [agentId]
+          ).catch(() => {});
 
-        // 4. Update in-memory fallback store
-        const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
-        for (const a of MOCK_ENDPOINT_AGENTS) {
-          if (a.ip_address === targetIp || a.id === agentId) {
-            a.status = "disconnected";
-            a.cpu_usage = 0;
-            a.memory_usage = 0;
-            a.eps = 0;
+          await setLiveAgentStatus(agentId, "disconnected", result.snapshotId);
+
+          const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+          for (const a of MOCK_ENDPOINT_AGENTS) {
+            if (a.id === agentId) {
+              a.status = "disconnected";
+              a.cpu_usage = 0;
+              a.memory_usage = 0;
+              a.eps = 0;
+            }
           }
         }
 
-        // 5. Provide clear, actionable operator instructions in output
+        // 3. Clear, actionable operator instructions in output
         result.output =
-          `[CONTAINMENT ACTIVE] Local firewall rule inserted: DROP all traffic to/from ${targetIp}. Safety snapshot ${result.snapshotId || "registered"} saved.\n` +
-          `Endpoint ${agentId} is now DISCONNECTED from the fleet.\n\n` +
+          `[CONTAINMENT ACTIVE] Local firewall rule inserted: DROP all traffic to/from ${targetIp}. Safety snapshot ${result.snapshotId || "registered"} saved on host ${agent?.hostname || agentId}.\n` +
+          (isTargetHostItself
+            ? `Endpoint ${agent?.hostname || agentId} is now contained and disconnected from the fleet.\n\n`
+            : `Host ${agent?.hostname || agentId} firewall active. IP ${targetIp} is blocked.\n\n`) +
           `WHAT TO DO NEXT:\n` +
-          `• The endpoint is blocked from sending heartbeats, streaming telemetry, or receiving commands.\n` +
-          `• To inspect security telemetry or check for threats, navigate to Threat Engine or Incident Queue.\n` +
-          `• To restore connectivity, select 'unblock_ip' in the Command Console or dispatch:\n` +
+          `• IP ${targetIp} is recorded in the Fleet Blocked IPs ledger.\n` +
+          `• To restore connectivity, click 'Unblock' in the Blocked IPs panel or dispatch:\n` +
           `  unblock_ip ${targetIp}`;
       }
     } else if (command.startsWith("unblock_ip") || command.startsWith("unblock ip")) {
@@ -351,15 +365,23 @@ export async function POST(req: NextRequest) {
       ).trim();
 
       if (targetIp) {
-        // 1. Lift IP containment in threatAlertStore
-        unblockIp(targetIp, caller.tenant_id);
+        const { recordUnblockedIp } = await import("@/lib/fleet/blockedIps");
+        const { getEndpointAgent } = await import("@/lib/fleet/fleet");
+        const agent = await getEndpointAgent(agentId, caller);
+
+        // 1. Lift IP containment from persistent registry & threatAlertStore
+        await recordUnblockedIp({
+          tenantId: caller.tenant_id,
+          ip: targetIp,
+          unblockedBy: caller.email || caller.id,
+        });
 
         // 2. Restore connected status in PostgreSQL for target agent
         await query(
           `UPDATE endpoint_agents
            SET status = 'connected', last_seen_at = now()
-           WHERE id = $1;`,
-          [agentId]
+           WHERE id = $1 OR ip_address = $2;`,
+          [agentId, targetIp]
         ).catch(() => {});
 
         // 3. Mark live agent status as connected
@@ -368,7 +390,7 @@ export async function POST(req: NextRequest) {
         // 4. Update in-memory fallback store
         const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
         for (const a of MOCK_ENDPOINT_AGENTS) {
-          if (a.id === agentId) {
+          if (a.id === agentId || a.ip_address === targetIp) {
             a.status = "connected";
           }
         }
@@ -376,11 +398,9 @@ export async function POST(req: NextRequest) {
         // 5. Provide clear instructions in output
         result.output =
           `[CONTAINMENT LIFTED] Firewall drop rule removed for IP ${targetIp}.\n` +
-          `Endpoint ${agentId} connectivity restored.\n\n` +
-          `WHAT TO DO NEXT:\n` +
-          `• Host network communication is re-enabled.\n` +
-          `• The endpoint agent will resume live telemetry streaming automatically on its next heartbeat (within 3 seconds).\n` +
-          `• No manual restart of the agent daemon is required.`;
+          `Host ${agent?.hostname || agentId} connectivity restored.\n\n` +
+          `IP ${targetIp} has been marked as unblocked in the Fleet Containment Ledger.\n` +
+          `Endpoint agent will resume live telemetry streaming automatically on its next heartbeat.`;
       }
     }
 
