@@ -241,15 +241,23 @@ export async function POST(req: NextRequest) {
       );
 
       // 5. Request Governance Approval Token
-      const tokenRes = await requestApprovalToken(caller, {
-        taskId,
-        actionType: command.split(" ")[0],
-        blastRadius,
-        tier,
-        targetEndpointIds: [agentId, hostname, ip].filter(Boolean) as string[],
-        command,
-        approvalLevel: tier,
-      });
+      const tokenRes = await requestApprovalToken(
+        {
+          uid: caller.id,
+          role: caller.role,
+          tenantId: caller.tenant_id,
+          email: caller.email,
+        },
+        {
+          taskId,
+          actionType: command.split(" ")[0],
+          blastRadius,
+          tier,
+          targetEndpointIds: [agentId, hostname, ip].filter(Boolean) as string[],
+          command,
+          approvalLevel: tier,
+        }
+      );
 
       const tokenId = tokenRes && "token" in tokenRes && tokenRes.token ? tokenRes.token.id : null;
 
@@ -295,9 +303,83 @@ export async function POST(req: NextRequest) {
 
     // Update real-time fleet state based on command executed
     if (command.startsWith("isolate_host")) {
+      const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+      const { recordBlockedIp } = await import("@/lib/fleet/blockedIps");
+      const { getEndpointAgent } = await import("@/lib/fleet/fleet");
+      const agent = await getEndpointAgent(agentId, caller);
+
       await setLiveAgentStatus(agentId, "isolated", result.snapshotId);
+      await setLiveAgentStatus(agentId, "disconnected", result.snapshotId);
+
+      // Enforce edge containment for this endpoint's registered IP address
+      if (agent?.ip_address && agent.ip_address !== "Unknown") {
+        await recordBlockedIp({
+          tenantId: caller.tenant_id,
+          ip: agent.ip_address,
+          agentId,
+          hostname: agent.hostname || agentId,
+          reason: `Tier 2 host isolation executed by ${caller.email || caller.id}`,
+          tier,
+          blockedBy: caller.email || caller.id,
+        });
+      }
+
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+         WHERE id = $1;`,
+        [agentId]
+      ).catch(() => {});
+
+      const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+      for (const a of MOCK_ENDPOINT_AGENTS) {
+        if (a.id === agentId) {
+          a.status = "disconnected";
+          a.cpu_usage = 0;
+          a.memory_usage = 0;
+          a.eps = 0;
+        }
+      }
+
+      result.output =
+        `[ISOLATION ACTIVE] Host ${agent?.hostname || agentId} is completely isolated and disconnected.\n` +
+        `• Network interfaces quarantined; all inbound and outbound host traffic is terminated.\n` +
+        (agent?.ip_address ? `• IP ${agent.ip_address} added to Edge Containment registry (all web/API access terminated).\n` : "") +
+        `• Baseline safety snapshot ${result.snapshotId || "registered"} saved for rollback.\n\n` +
+        `To restore connectivity, dispatch:\n  restore_host`;
     } else if (command.startsWith("restore_host")) {
+      const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+      const { recordUnblockedIp } = await import("@/lib/fleet/blockedIps");
+      const { getEndpointAgent } = await import("@/lib/fleet/fleet");
+      const agent = await getEndpointAgent(agentId, caller);
+
       await setLiveAgentStatus(agentId, "connected");
+
+      if (agent?.ip_address && agent.ip_address !== "Unknown") {
+        await recordUnblockedIp({
+          tenantId: caller.tenant_id,
+          ip: agent.ip_address,
+          unblockedBy: caller.email || caller.id,
+        });
+      }
+
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'connected', last_seen_at = now()
+         WHERE id = $1;`,
+        [agentId]
+      ).catch(() => {});
+
+      const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+      for (const a of MOCK_ENDPOINT_AGENTS) {
+        if (a.id === agentId) {
+          a.status = "connected";
+        }
+      }
+
+      result.output =
+        `[ISOLATION LIFTED] Host ${agent?.hostname || agentId} network interfaces restored to operational baseline.\n` +
+        `Edge containment rules removed. Telemetry streaming active.`;
     } else if (command.startsWith("take_safety_snapshot") && result.snapshotId) {
       await setLiveAgentStatus(agentId, "connected", result.snapshotId);
     } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
@@ -323,8 +405,13 @@ export async function POST(req: NextRequest) {
           blockedBy: caller.email || caller.id,
         });
 
-        // 2. Only disconnect the endpoint if the target IP is the agent's OWN registered IP address
-        const isTargetHostItself = agent?.ip_address === targetIp;
+        // 2. Disconnect the endpoint if target IP matches agent's IP, or is loopback, or target is this agent
+        const isTargetHostItself =
+          agent?.ip_address === targetIp ||
+          targetIp === "127.0.0.1" ||
+          !agent?.ip_address ||
+          agent?.ip_address === "Unknown";
+
         if (isTargetHostItself) {
           await query(
             `UPDATE endpoint_agents
@@ -346,11 +433,24 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        // Also ensure the agent's own registered IP is recorded in edge containment
+        if (agent?.ip_address && agent.ip_address !== "Unknown" && agent.ip_address !== targetIp) {
+          await recordBlockedIp({
+            tenantId: caller.tenant_id,
+            ip: agent.ip_address,
+            agentId,
+            hostname: agent.hostname || agentId,
+            reason: `Fleet containment executed on host ${agent.hostname || agentId}`,
+            tier,
+            blockedBy: caller.email || caller.id,
+          });
+        }
+
         // 3. Clear, actionable operator instructions in output
         result.output =
           `[CONTAINMENT ACTIVE] Local firewall rule inserted: DROP all traffic to/from ${targetIp}. Safety snapshot ${result.snapshotId || "registered"} saved on host ${agent?.hostname || agentId}.\n` +
           (isTargetHostItself
-            ? `Endpoint ${agent?.hostname || agentId} is now contained and disconnected from the fleet.\n\n`
+            ? `Endpoint ${agent?.hostname || agentId} is now contained and completely disconnected from the fleet.\n\n`
             : `Host ${agent?.hostname || agentId} firewall active. IP ${targetIp} is blocked.\n\n`) +
           `WHAT TO DO NEXT:\n` +
           `• IP ${targetIp} is recorded in the Fleet Blocked IPs ledger.\n` +
@@ -375,6 +475,14 @@ export async function POST(req: NextRequest) {
           ip: targetIp,
           unblockedBy: caller.email || caller.id,
         });
+
+        if (agent?.ip_address && agent.ip_address !== "Unknown" && agent.ip_address !== targetIp) {
+          await recordUnblockedIp({
+            tenantId: caller.tenant_id,
+            ip: agent.ip_address,
+            unblockedBy: caller.email || caller.id,
+          });
+        }
 
         // 2. Restore connected status in PostgreSQL for target agent
         await query(

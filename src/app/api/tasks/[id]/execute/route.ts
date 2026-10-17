@@ -281,10 +281,49 @@ export async function POST(
     // Update real-time fleet state based on executed command
     if (command.startsWith("isolate_host")) {
       const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+      const { recordBlockedIp } = await import("@/lib/fleet/blockedIps");
+
       await setLiveAgentStatus(targetAgent.id, "isolated", execResult.snapshotId);
+      await setLiveAgentStatus(targetAgent.id, "disconnected", execResult.snapshotId);
+
+      if (targetAgent.ip_address && targetAgent.ip_address !== "Unknown") {
+        await recordBlockedIp({
+          tenantId: caller.tenant_id,
+          ip: targetAgent.ip_address,
+          agentId: targetAgent.id,
+          hostname: targetAgent.hostname,
+          reason: `Tier 2 host isolation task #${id} executed by ${caller.email || caller.id}`,
+          tier: executionTier,
+          blockedBy: caller.email || caller.id,
+        });
+      }
+
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+         WHERE id = $1;`,
+        [targetAgent.id]
+      ).catch(() => {});
     } else if (command.startsWith("restore_host")) {
       const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+      const { recordUnblockedIp } = await import("@/lib/fleet/blockedIps");
+
       await setLiveAgentStatus(targetAgent.id, "connected");
+
+      if (targetAgent.ip_address && targetAgent.ip_address !== "Unknown") {
+        await recordUnblockedIp({
+          tenantId: caller.tenant_id,
+          ip: targetAgent.ip_address,
+          unblockedBy: caller.email || caller.id,
+        });
+      }
+
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'connected', last_seen_at = now()
+         WHERE id = $1 OR ip_address = $2;`,
+        [targetAgent.id, targetAgent.ip_address]
+      ).catch(() => {});
     } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
       const targetIp = (
         command.startsWith("block ip")
@@ -305,8 +344,13 @@ export async function POST(
           blockedBy: caller.email || caller.id,
         });
 
-        // Only disconnect if target IP is the agent's OWN IP address
-        if (targetAgent.ip_address === targetIp) {
+        const isTargetHostItself =
+          targetAgent.ip_address === targetIp ||
+          targetIp === "127.0.0.1" ||
+          !targetAgent.ip_address ||
+          targetAgent.ip_address === "Unknown";
+
+        if (isTargetHostItself) {
           await query(
             `UPDATE endpoint_agents
              SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
@@ -314,6 +358,18 @@ export async function POST(
             [targetAgent.id]
           ).catch(() => {});
           await setLiveAgentStatus(targetAgent.id, "disconnected", execResult.snapshotId);
+        }
+
+        if (targetAgent.ip_address && targetAgent.ip_address !== "Unknown" && targetAgent.ip_address !== targetIp) {
+          await recordBlockedIp({
+            tenantId: caller.tenant_id,
+            ip: targetAgent.ip_address,
+            agentId: targetAgent.id,
+            hostname: targetAgent.hostname,
+            reason: `Fleet containment task #${id} executed on host ${targetAgent.hostname}`,
+            tier: executionTier,
+            blockedBy: caller.email || caller.id,
+          });
         }
       }
     } else if (command.startsWith("unblock_ip") || command.startsWith("unblock ip")) {
@@ -331,6 +387,14 @@ export async function POST(
           ip: targetIp,
           unblockedBy: caller.email || caller.id,
         });
+
+        if (targetAgent.ip_address && targetAgent.ip_address !== "Unknown" && targetAgent.ip_address !== targetIp) {
+          await recordUnblockedIp({
+            tenantId: caller.tenant_id,
+            ip: targetAgent.ip_address,
+            unblockedBy: caller.email || caller.id,
+          });
+        }
 
         await query(
           `UPDATE endpoint_agents

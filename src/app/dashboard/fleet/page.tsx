@@ -125,6 +125,13 @@ export default function FleetPage() {
     return () => clearInterval(timer);
   }, []);
 
+  // Synchronize targetIp whenever selectedAgent changes
+  useEffect(() => {
+    if (selectedAgent?.ip_address && selectedAgent.ip_address !== "Unknown") {
+      setTargetIp((prev) => (!prev ? selectedAgent.ip_address : prev));
+    }
+  }, [selectedAgent?.id, selectedAgent?.ip_address]);
+
   const [dispatchFeedback, setDispatchFeedback] = useState<{
     type: "success" | "error" | "pending";
     message: string;
@@ -589,22 +596,43 @@ export default function FleetPage() {
             message: `Successfully executed ${cmd} on ${selectedAgent.hostname}. Live telemetry updated.`,
           });
           if (cmd.startsWith("block_ip")) {
-            const isSelfHost = selectedAgent.ip_address === targetIp.trim();
+            const isSelfHost =
+              selectedAgent.ip_address === targetIp.trim() ||
+              targetIp.trim() === "127.0.0.1" ||
+              targetIp.trim() === "localhost";
             if (isSelfHost) {
               setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
               setAgents((prev) =>
                 prev.map((a) =>
-                  a.ip_address === targetIp.trim()
+                  a.id === selectedAgent.id || a.ip_address === targetIp.trim()
                     ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
                     : a
                 )
               );
             }
+          } else if (cmd.startsWith("isolate_host")) {
+            setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.id === selectedAgent.id
+                  ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
+                  : a
+              )
+            );
+          } else if (cmd.startsWith("restore_host")) {
+            setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.id === selectedAgent.id
+                  ? { ...a, status: "connected" }
+                  : a
+              )
+            );
           } else if (cmd.startsWith("unblock_ip")) {
             setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
             setAgents((prev) =>
               prev.map((a) =>
-                a.ip_address === targetIp.trim()
+                a.id === selectedAgent.id || a.ip_address === targetIp.trim()
                   ? { ...a, status: "connected" }
                   : a
               )
@@ -1295,7 +1323,12 @@ export default function FleetPage() {
               return (
                 <div
                   key={agent.id}
-                  onClick={() => setSelectedAgent(agent)}
+                  onClick={() => {
+                    setSelectedAgent(agent);
+                    if (agent.ip_address && agent.ip_address !== "Unknown") {
+                      setTargetIp(agent.ip_address);
+                    }
+                  }}
                   className={cn(
                     "p-4 rounded-2xl border transition-all duration-300 cursor-pointer space-y-3 relative overflow-hidden",
                     isSelected

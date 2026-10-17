@@ -1,7 +1,8 @@
 import { query } from "@/lib/db";
 
 export const THROTTLE_WINDOW_MS = 5 * 60 * 1000;
-export const DEFAULT_TIER1_LIMIT = 5;
+export const DEFAULT_TIER1_LIMIT = 50;
+
 
 export interface ThrottleCheckResult {
   allowed: boolean;

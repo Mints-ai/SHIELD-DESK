@@ -60,7 +60,25 @@ export async function POST(req: NextRequest) {
         unblockedBy: caller.email || caller.id,
       });
 
-      // 2. If an agentId was specified, dispatch unblock_ip instruction to the host
+      // 2. Update agent connectivity in database & live telemetry
+      if (agentId) {
+        const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+        const { query } = await import("@/lib/db");
+        await query(
+          `UPDATE endpoint_agents SET status = 'connected', last_seen_at = now() WHERE id = $1 OR ip_address = $2;`,
+          [agentId, cleanIp]
+        ).catch(() => {});
+        await setLiveAgentStatus(agentId, "connected");
+
+        const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+        for (const a of MOCK_ENDPOINT_AGENTS) {
+          if (a.id === agentId || a.ip_address === cleanIp) {
+            a.status = "connected";
+          }
+        }
+      }
+
+      // 3. If an agentId was specified, dispatch unblock_ip instruction to the host
       let agentDispatched = false;
       if (agentId) {
         try {
@@ -92,6 +110,26 @@ export async function POST(req: NextRequest) {
         tier: "Tier 1",
         blockedBy: caller.email || caller.id,
       });
+
+      if (agentId) {
+        const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+        const { query } = await import("@/lib/db");
+        await query(
+          `UPDATE endpoint_agents SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0 WHERE id = $1;`,
+          [agentId]
+        ).catch(() => {});
+        await setLiveAgentStatus(agentId, "disconnected");
+
+        const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+        for (const a of MOCK_ENDPOINT_AGENTS) {
+          if (a.id === agentId || a.ip_address === cleanIp) {
+            a.status = "disconnected";
+            a.cpu_usage = 0;
+            a.memory_usage = 0;
+            a.eps = 0;
+          }
+        }
+      }
 
       let agentDispatched = false;
       if (agentId) {

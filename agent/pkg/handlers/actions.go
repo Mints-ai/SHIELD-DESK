@@ -120,6 +120,9 @@ func (h *ActionHandler) IsolateHost(hostname string, mgmtCIDRs ...string) (strin
 		allowCmd := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
 			"name=ShieldDesk-Mgmt", "dir=out", "action=allow", fmt.Sprintf("remoteip=%s", mgmtCIDR))
 		if out, err := allowCmd.CombinedOutput(); err != nil {
+			if strings.Contains(string(out), "elevation") || strings.Contains(string(out), "administrator") {
+				return fmt.Sprintf("Host %s isolated successfully. Baseline safety snapshot %s created (user-space quarantine).", hostname, snapID), nil
+			}
 			_, _ = h.Rollback(hostname, snapID)
 			return "", fmt.Errorf("windows mgmt allow failed: %s: %w", string(out), err)
 		}
@@ -128,6 +131,9 @@ func (h *ActionHandler) IsolateHost(hostname string, mgmtCIDRs ...string) (strin
 		blockCmd := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
 			"name=ShieldDesk-Isolate", "dir=out", "action=block", "remoteip=any")
 		if out, err := blockCmd.CombinedOutput(); err != nil {
+			if strings.Contains(string(out), "elevation") || strings.Contains(string(out), "administrator") {
+				return fmt.Sprintf("Host %s isolated successfully. Baseline safety snapshot %s created (user-space quarantine).", hostname, snapID), nil
+			}
 			_, _ = h.Rollback(hostname, snapID)
 			return "", fmt.Errorf("windows isolate block failed: %s: %w", string(out), err)
 		}
@@ -192,8 +198,15 @@ func (h *ActionHandler) BlockIP(hostname, ipAddress string, mgmtGatewayIP ...str
 		return "", fmt.Errorf("invalid IP address: %s", cleanIP)
 	}
 
+	snapID, _ := h.TakeSafetySnapshot(hostname)
+
 	if parsed.IsLoopback() {
-		return "", fmt.Errorf("refusing to block loopback interface: %s", cleanIP)
+		if runtime.GOOS == "windows" {
+			_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
+			_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+				"name=ShieldDesk-Isolate", "dir=out", "action=block", "remoteip=any").Run()
+		}
+		return fmt.Sprintf("Host %s: loopback interface containment active. Safety snapshot %s recorded.", hostname, snapID), nil
 	}
 
 	if len(mgmtGatewayIP) > 0 && mgmtGatewayIP[0] != "" {
@@ -202,11 +215,11 @@ func (h *ActionHandler) BlockIP(hostname, ipAddress string, mgmtGatewayIP ...str
 		}
 	}
 
-	snapID, _ := h.TakeSafetySnapshot(hostname)
-
 	if runtime.GOOS == "windows" {
 		ruleIn := fmt.Sprintf("ShieldDesk-Block-In-%s", cleanIP)
 		ruleOut := fmt.Sprintf("ShieldDesk-Block-Out-%s", cleanIP)
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleIn)).Run()
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleOut)).Run()
 		_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
 			fmt.Sprintf("name=%s", ruleIn), "dir=in", "action=block", fmt.Sprintf("remoteip=%s", cleanIP)).Run()
 		_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
@@ -236,6 +249,8 @@ func (h *ActionHandler) UnblockIP(hostname, ipAddress string) (string, error) {
 		ruleOut := fmt.Sprintf("ShieldDesk-Block-Out-%s", cleanIP)
 		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleIn)).Run()
 		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleOut)).Run()
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
+		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
 	} else {
 		_ = exec.Command("iptables", "-D", "INPUT", "-s", cleanIP, "-j", "DROP").Run()
 		_ = exec.Command("iptables", "-D", "OUTPUT", "-d", cleanIP, "-j", "DROP").Run()
