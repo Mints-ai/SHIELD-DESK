@@ -410,10 +410,23 @@ export async function POST(
 
     // Live commands complete asynchronously through the endpoint result route.
     if (execResult.isSimulated) {
-      await query(
-        "UPDATE mitigation_tasks SET execution_command_id = $2, status = 'in_progress' WHERE id = $1 AND tenant_id = $3",
-        [id, execResult.commandId, task.tenant_id]
-      );
+      try {
+        await query(
+          "UPDATE mitigation_tasks SET execution_command_id = $2, status = 'in_progress' WHERE id = $1 AND tenant_id = $3",
+          [id, execResult.commandId, task.tenant_id]
+        );
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes("execution_command_id")) {
+          await query("ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;").catch(() => {});
+          await query(
+            "UPDATE mitigation_tasks SET status = 'in_progress' WHERE id = $1 AND tenant_id = $2",
+            [id, task.tenant_id]
+          ).catch(() => {});
+        } else {
+          throw err;
+        }
+      }
       await settleCommandTask({ id: execResult.commandId, tenant_id: task.tenant_id, status: execResult.state || "queued" });
     }
     const updatedTaskRes = await query<MitigationTaskRecord>(

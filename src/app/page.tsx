@@ -51,6 +51,7 @@ export default function SOCDashboardPage() {
     activeIncidentId,
     setActiveIncidentId,
     openChatWithPrompt,
+    isIdentityLoading,
   } = useChat();
 
   const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
@@ -62,6 +63,10 @@ export default function SOCDashboardPage() {
 
   // Fetch incidents list whenever active persona or severity filter changes
   useEffect(() => {
+    if (isIdentityLoading || !activeUserId) {
+      return;
+    }
+
     let isMounted = true;
     setIsLoadingList(true);
 
@@ -74,7 +79,10 @@ export default function SOCDashboardPage() {
       headers: { "X-ShieldDesk-User": activeUserId },
     })
       .then(async (res) => {
-        if (!res.ok) throw new Error("Failed to fetch incidents");
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData?.error || "Failed to fetch incidents");
+        }
         return res.json();
       })
       .then((data) => {
@@ -98,10 +106,10 @@ export default function SOCDashboardPage() {
         }
       })
       .catch((err) => {
-        console.error("Incidents fetch error:", err);
+        console.warn("Incidents fetch error:", err?.message || err);
         if (isMounted) {
           setIncidents([]);
-          setIncidentListError("Incident data is currently unavailable. Please try again.");
+          setIncidentListError(err?.message || "Incident data is currently unavailable. Please try again.");
         }
       })
       .finally(() => {
@@ -111,12 +119,12 @@ export default function SOCDashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, [activeUserId, filterSeverity]);
+  }, [activeUserId, filterSeverity, isIdentityLoading]);
 
   // Fetch incident detail when activeIncidentId changes
   useEffect(() => {
-    if (!activeIncidentId) {
-      setSelectedIncident(null);
+    if (!activeIncidentId || isIdentityLoading || !activeUserId) {
+      if (!activeIncidentId) setSelectedIncident(null);
       return;
     }
 
@@ -145,7 +153,7 @@ export default function SOCDashboardPage() {
     return () => {
       isMounted = false;
     };
-  }, [activeIncidentId, activeUserId]);
+  }, [activeIncidentId, activeUserId, isIdentityLoading]);
 
   const getSeverityBadge = (severity: string) => {
     const s = severity.toUpperCase();

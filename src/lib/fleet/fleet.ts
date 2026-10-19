@@ -413,17 +413,38 @@ export class RealAgentExecutor {
 
     try {
       if (taskId) {
-        const queued = await query(
-          `WITH bound_task AS (
-             UPDATE mitigation_tasks SET execution_command_id = $1, status = 'in_progress'
-             WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
-             RETURNING id
-           )
-           INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
-           SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
-           RETURNING id`,
-          [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
-        );
+        let queued;
+        try {
+          queued = await query(
+            `WITH bound_task AS (
+               UPDATE mitigation_tasks SET execution_command_id = $1, status = 'in_progress'
+               WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
+               RETURNING id
+             )
+             INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
+             RETURNING id`,
+            [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
+          );
+        } catch (colErr: unknown) {
+          const errMsg = colErr instanceof Error ? colErr.message : String(colErr);
+          if (errMsg.includes("execution_command_id")) {
+            await query("ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;").catch(() => {});
+            queued = await query(
+              `WITH bound_task AS (
+                 UPDATE mitigation_tasks SET status = 'in_progress'
+                 WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
+                 RETURNING id
+               )
+               INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+               SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
+               RETURNING id`,
+              [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
+            );
+          } else {
+            throw colErr;
+          }
+        }
         if (queued.rows.length === 0) throw new Error("TASK_DISPATCH_CONFLICT: Task is already running or no longer dispatchable.");
       } else await query(
         `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)

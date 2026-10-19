@@ -3,6 +3,7 @@ import type OpenAI from "openai";
 import { query, withTenantContext } from "@/lib/db";
 import { canAccess } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
+import { isDemoMode } from "@/lib/config/environment";
 
 export type { ChatSession } from "@/lib/auth/session";
 
@@ -157,6 +158,64 @@ export const CHAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
+interface IncidentDbRow {
+  id: string;
+  incident_code: string;
+  severity: string;
+  status: string;
+  title: string;
+  description: string;
+  created_at: string;
+}
+
+interface IncidentSummaryRow {
+  incident_code: string;
+  severity: string;
+  status: string;
+  title: string;
+  created_at: string;
+}
+
+interface IncidentEventRow {
+  occurred_at: string;
+  description: string;
+}
+
+interface IncidentAssetRow {
+  hostname: string;
+  asset_type: string;
+}
+
+export const DEMO_FALLBACK_INCIDENTS: IncidentDbRow[] = [
+  {
+    id: "00000000-0000-0000-0000-000000001042",
+    incident_code: "INC-1042",
+    severity: "critical",
+    status: "open",
+    title: "Unauthorized Lateral Movement via SSH & Suspicious RCE Probe",
+    description: "Detected multi-stage intrusion attempt targeting internal production cluster. Exploit payload observed attempting CVE-2024-6387 OpenSSH race condition with subsequent privileged credential dumping.",
+    created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
+  },
+  {
+    id: "00000000-0000-0000-0000-000000002045",
+    incident_code: "INC-2045",
+    severity: "high",
+    status: "investigating",
+    title: "Anomalous Outbound C2 Beaconing to High-Risk IP",
+    description: "Endpoint agent reported unexpected HTTPS connection to known malicious threat group infrastructure with recurring 60s jitter interval.",
+    created_at: new Date(Date.now() - 3600000 * 6).toISOString(),
+  },
+  {
+    id: "00000000-0000-0000-0000-000000003089",
+    incident_code: "INC-3089",
+    severity: "medium",
+    status: "open",
+    title: "Repeated Failed Administrative Logins (Brute Force)",
+    description: "Multiple failed authentication attempts across 14 workstations originating from subnet 10.0.4.0/24 within a 5-minute window.",
+    created_at: new Date(Date.now() - 3600000 * 12).toISOString(),
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Tool: getIncidents
 // Always scoped to the caller's tenant unless they hold VIEW_CROSS_TENANT.
@@ -187,15 +246,32 @@ export async function getIncidents(
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   params.push(limit);
 
-  const result = await query(
-    `SELECT incident_code, severity, status, title, created_at
-     FROM incidents
-     ${where}
-     ORDER BY created_at DESC
-     LIMIT $${params.length}`,
-    params
-  );
-  return { incidents: result.rows };
+  try {
+    const result = await query<IncidentSummaryRow>(
+      `SELECT incident_code, severity, status, title, created_at
+       FROM incidents
+       ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+    if (result.rows.length > 0 || !isDemoMode()) {
+      return { incidents: result.rows };
+    }
+  } catch (err) {
+    if (!isDemoMode()) {
+      throw err;
+    }
+    console.warn("[getIncidents] Database query error in demo mode, returning fallback incidents:", err);
+  }
+
+  const filtered = DEMO_FALLBACK_INCIDENTS.filter((inc) => {
+    if (args.severity && inc.severity.toLowerCase() !== args.severity.toLowerCase()) return false;
+    if (args.status && inc.status.toLowerCase() !== args.status.toLowerCase()) return false;
+    return true;
+  }).slice(0, limit);
+
+  return { incidents: filtered };
 }
 
 // ---------------------------------------------------------------------------
@@ -214,29 +290,67 @@ export async function investigateIncident(
     ? [args.incidentId]
     : [args.incidentId, session.tenantId];
 
-  const incidentResult = await query(
-    `SELECT id, incident_code, severity, status, title, description, created_at
-     FROM incidents WHERE incident_code = $1 ${tenantScope}
-     LIMIT 1`,
-    params
-  );
+  let incident: IncidentDbRow | undefined = undefined;
+  let eventsRows: IncidentEventRow[] = [];
+  let assetsRows: IncidentAssetRow[] = [];
 
-  const incident = incidentResult.rows[0];
-  if (!incident) return { error: "not_found" };
+  try {
+    const incidentResult = await query<IncidentDbRow>(
+      `SELECT id, incident_code, severity, status, title, description, created_at
+       FROM incidents WHERE incident_code = $1 ${tenantScope}
+       LIMIT 1`,
+      params
+    );
+    incident = incidentResult.rows[0];
 
-  const [events, assets] = await Promise.all([
-    query(
-      `SELECT occurred_at, description FROM incident_events
-       WHERE incident_id = $1 ORDER BY occurred_at ASC`,
-      [incident.id]
-    ),
-    query(
-      `SELECT a.hostname, a.asset_type FROM assets a
-       JOIN incident_assets ia ON ia.asset_id = a.id
-       WHERE ia.incident_id = $1`,
-      [incident.id]
-    ),
-  ]);
+    if (incident?.id) {
+      const targetId = incident.id;
+      const [events, assets] = await Promise.all([
+        query<IncidentEventRow>(
+          `SELECT occurred_at, description FROM incident_events
+           WHERE incident_id = $1 ORDER BY occurred_at ASC`,
+          [targetId]
+        ),
+        query<IncidentAssetRow>(
+          `SELECT a.hostname, a.asset_type FROM assets a
+           JOIN incident_assets ia ON ia.asset_id = a.id
+           WHERE ia.incident_id = $1`,
+          [targetId]
+        ),
+      ]);
+      eventsRows = events.rows;
+      assetsRows = assets.rows;
+    }
+  } catch (err) {
+    if (!isDemoMode()) throw err;
+    console.warn("[investigateIncident] Database query error in demo mode, returning fallback detail:", err);
+  }
+
+  if (!incident) {
+    if (isDemoMode()) {
+      const demo = DEMO_FALLBACK_INCIDENTS.find(i => i.incident_code === args.incidentId) || DEMO_FALLBACK_INCIDENTS[0]!;
+      return {
+        incident: {
+          incidentCode: demo.incident_code,
+          severity: demo.severity,
+          status: demo.status,
+          title: demo.title,
+          description: demo.description,
+          createdAt: demo.created_at,
+        },
+        events: [
+          { occurred_at: demo.created_at, description: "Initial threat detection event triggered by endpoint heuristic sensor" },
+          { occurred_at: new Date(Date.now() - 1800000).toISOString(), description: "Suspicious child process spawned under elevated privileges" },
+          { occurred_at: new Date(Date.now() - 900000).toISOString(), description: "Threat containment alert dispatched to SOC team" },
+        ],
+        affectedAssets: [
+          { hostname: "prod-db-cluster-01", asset_type: "database_server" },
+          { hostname: "sec-ops-jumpbox", asset_type: "bastion_host" },
+        ],
+      };
+    }
+    return { error: "not_found" };
+  }
 
   return {
     incident: {
@@ -247,8 +361,8 @@ export async function investigateIncident(
       description: incident.description,
       createdAt: incident.created_at,
     },
-    events: events.rows,
-    affectedAssets: assets.rows,
+    events: eventsRows,
+    affectedAssets: assetsRows,
   };
 }
 
