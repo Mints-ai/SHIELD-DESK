@@ -87,6 +87,15 @@ export async function POST(req: NextRequest) {
 
     const effectiveTenantId = agentRecord?.tenant_id || "acme-tenant";
 
+    // 1.5. Check Emergency Admin Kill Switch FIRST (SD-025: returns 423 Locked)
+    if (agentRecord?.kill_switch_active) {
+      MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "kill_switch" });
+      return NextResponse.json(
+        { error: "KILL_SWITCH_ACTIVE", killSwitchActive: true },
+        { status: 423 }
+      );
+    }
+
     // 2. Comprehensive IP & Endpoint containment check across all registries
     let isBlocked = false;
     const candidateIps = Array.from(
@@ -175,13 +184,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Check if operator explicitly disconnected this specific agent or it is marked disconnected in DB
+    // 3. Check if operator explicitly disconnected this specific agent (via adminDisconnectedAgents)
     const isExplicitlyDisconnected =
       adminDisconnectedAgents.has(agentId) ||
       (agentRecord !== null && (
         adminDisconnectedAgents.has(agentRecord.id) ||
-        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname)) ||
-        agentRecord.status === "disconnected"
+        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname))
       ));
 
     if (isExplicitlyDisconnected) {
