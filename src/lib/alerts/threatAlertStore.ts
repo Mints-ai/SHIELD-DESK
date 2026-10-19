@@ -107,13 +107,55 @@ const sudoTimestamps = global.__shieldDeskSudoTimestamps!;
 const egressBursts = global.__shieldDeskEgressBursts!;
 const piiMetricsStore = global.__shieldDeskPIIMetrics!;
 
-// Clear any stale local loopback containment from prior test iterations
-if (blockedIpsStore.has("127.0.0.1")) {
-  blockedIpsStore.delete("127.0.0.1");
+import fs from "fs";
+import path from "path";
+
+function getPersistentBlockedIpsFile(): string {
+  try {
+    const dir = path.join(process.cwd(), "scratch");
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    return path.join(dir, "active_blocked_ips.json");
+  } catch {
+    return "";
+  }
 }
-if (ipFailureTracker.has("127.0.0.1")) {
-  ipFailureTracker.delete("127.0.0.1");
+
+function syncBlockedIpsToFile(): void {
+  try {
+    const filePath = getPersistentBlockedIpsFile();
+    if (!filePath) return;
+    const records: Record<string, BlockedIpRecord> = {};
+    for (const [k, v] of blockedIpsStore.entries()) {
+      records[k] = v;
+    }
+    fs.writeFileSync(filePath, JSON.stringify(records, null, 2), "utf-8");
+  } catch {
+    // Non-blocking file sync
+  }
 }
+
+function loadBlockedIpsFromFile(): void {
+  try {
+    const filePath = getPersistentBlockedIpsFile();
+    if (!filePath || !fs.existsSync(filePath)) return;
+    const content = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === "object") {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (!blockedIpsStore.has(k)) {
+          blockedIpsStore.set(k, v as BlockedIpRecord);
+        }
+      }
+    }
+  } catch {
+    // Non-blocking file read
+  }
+}
+
+// Initial load
+loadBlockedIpsFromFile();
 
 /**
  * Maximum allowed login failures before automatic IP containment kicks in
@@ -136,7 +178,22 @@ export function isIpBlocked(ip?: string | null): boolean {
   if (!ip) return false;
   const cleanIp = sanitizeIp(ip);
   if (!cleanIp) return false;
-  return blockedIpsStore.has(cleanIp);
+  if (blockedIpsStore.has(cleanIp)) return true;
+  if (
+    (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") &&
+    (blockedIpsStore.has("127.0.0.1") || blockedIpsStore.has("::1") || blockedIpsStore.has("localhost"))
+  ) {
+    return true;
+  }
+  loadBlockedIpsFromFile();
+  if (blockedIpsStore.has(cleanIp)) return true;
+  if (
+    (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") &&
+    (blockedIpsStore.has("127.0.0.1") || blockedIpsStore.has("::1") || blockedIpsStore.has("localhost"))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -151,6 +208,13 @@ export function blockIp(ip: string, reason: string = "Exceeded 5 failed login at
     reason,
     attempts,
   });
+
+  if (cleanIp === "127.0.0.1") {
+    blockedIpsStore.set("::1", { ip: "::1", blockedAt: new Date().toISOString(), reason, attempts });
+    blockedIpsStore.set("localhost", { ip: "localhost", blockedAt: new Date().toISOString(), reason, attempts });
+  }
+
+  syncBlockedIpsToFile();
 
   // Sync to Go Threat Microservice asynchronously
   const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
@@ -174,6 +238,15 @@ export function unblockIp(ip: string, tenantId: string = "mints-global"): boolea
   const cleanIp = sanitizeIp(ip);
   if (!cleanIp) return false;
   const deleted = blockedIpsStore.delete(cleanIp);
+  if (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") {
+    blockedIpsStore.delete("127.0.0.1");
+    blockedIpsStore.delete("::1");
+    blockedIpsStore.delete("localhost");
+    ipFailureTracker.delete("127.0.0.1");
+    ipFailureTracker.delete("::1");
+    ipFailureTracker.delete("localhost");
+  }
+  syncBlockedIpsToFile();
   ipFailureTracker.delete(cleanIp);
   resetRateLimit(`login:${cleanIp}`);
   for (const key of failureTracker.keys()) {
@@ -183,7 +256,7 @@ export function unblockIp(ip: string, tenantId: string = "mints-global"): boolea
   }
   // Update any existing active alert for this IP
   for (const alert of alertsStore) {
-    if (alert.clientIp === cleanIp) {
+    if (alert.clientIp === cleanIp || (cleanIp === "127.0.0.1" && alert.clientIp === "::1")) {
       alert.isBlocked = false;
     }
   }
@@ -553,6 +626,7 @@ export function resetThreatAlerts(tenantId: string = "mints-global"): void {
   failureTracker.clear();
   ipFailureTracker.clear();
   blockedIpsStore.clear();
+  syncBlockedIpsToFile();
   failureTimestamps.length = 0;
   sudoTimestamps.length = 0;
   egressBursts.length = 0;

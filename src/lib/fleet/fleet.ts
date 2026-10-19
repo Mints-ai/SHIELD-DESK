@@ -9,6 +9,7 @@ import { validateCapabilitySupport, getCapability } from "./capabilities";
 import { validateIpAddress } from "@/lib/utils/ipValidation";
 import crypto from "crypto";
 import os from "os";
+import { settleCommandTask } from "./taskCompletion";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
 export type OsType = "linux" | "windows" | "darwin";
@@ -363,6 +364,7 @@ export interface CommandExecutionParams {
   signature: string;
   nonce: string;
   snapshotId?: string;
+  taskId?: string;
 }
 
 export interface CommandExecutionResult {
@@ -382,10 +384,23 @@ export interface CommandExecutionResult {
  */
 export class RealAgentExecutor {
   async execute(params: CommandExecutionParams): Promise<CommandExecutionResult> {
-    const { agent, command, tier, tokenId, caller, commandLogId, signature, nonce, snapshotId } = params;
+    const { agent, command, tier, tokenId, caller, commandLogId, signature, nonce, snapshotId, taskId } = params;
+
+    let effectiveLogId = commandLogId;
+    if (tokenId) {
+      try {
+        const existingPending = await query<{ id: string }>(
+          `SELECT id FROM agent_command_logs WHERE token_id::text = $1 AND status = 'pending' LIMIT 1`,
+          [tokenId]
+        );
+        if (existingPending.rows.length > 0) {
+          effectiveLogId = existingPending.rows[0].id;
+        }
+      } catch { }
+    }
 
     const queueRecord: AgentCommandQueueRecord = {
-      id: commandLogId,
+      id: effectiveLogId,
       agent_id: agent.id,
       tenant_id: caller.tenant_id,
       command,
@@ -399,12 +414,27 @@ export class RealAgentExecutor {
     };
 
     try {
-      await query(
+      if (taskId) {
+        const queued = await query(
+          `WITH bound_task AS (
+             UPDATE mitigation_tasks SET execution_command_id = $1, status = 'in_progress'
+             WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
+             RETURNING id
+           )
+           INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+           SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
+           RETURNING id`,
+          [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
+        );
+        if (queued.rows.length === 0) throw new Error("TASK_DISPATCH_CONFLICT: Task is already running or no longer dispatchable.");
+      } else await query(
         `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now());`,
         [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id]
       );
-    } catch {
+    } catch (error) {
+      // Never discard the durable task/command binding or acknowledge a lost live dispatch.
+      if (taskId || isProduction()) throw error;
       try {
         await query(
           `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, status, snapshot_id, created_at)
@@ -428,23 +458,23 @@ export class RealAgentExecutor {
         command,
         tier,
         tokenId: tokenId || null,
-        commandId: commandLogId,
+        commandId: effectiveLogId,
         signature,
         nonce,
       },
     });
 
-    let output = `Command '${command}' cryptographically signed (Tier: ${tier}, Nonce: ${nonce.substring(0, 8)}...) and enqueued for agent delivery. Awaiting signed host execution report.`;
+    const initialOutput = `Queued ${tier} instruction for ${agent.hostname}. Awaiting endpoint execution report.`;
 
     const logRecord: AgentCommandLogRecord = {
-      id: commandLogId,
+      id: effectiveLogId,
       agent_id: agent.id,
       tenant_id: caller.tenant_id,
       command,
       tier,
       token_id: tokenId || null,
-      status: "pending",
-      output,
+      status: "executing",
+      output: initialOutput,
       executed_by: caller.id,
       executed_at: new Date().toISOString(),
     };
@@ -452,7 +482,8 @@ export class RealAgentExecutor {
     try {
       await query(
         `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by, executed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+         ON CONFLICT (id) DO UPDATE SET status = $7, output = $8, executed_at = now();`,
         [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
       );
     } catch {
@@ -461,8 +492,8 @@ export class RealAgentExecutor {
 
     return {
       success: true,
-      commandId: commandLogId,
-      output,
+      commandId: effectiveLogId,
+      output: initialOutput,
       snapshotId,
       tier,
       state: "queued",
@@ -617,6 +648,161 @@ export class SimulationExecutor {
 }
 
 /**
+ * Checks whether an IP address is currently blocked.
+ * Queries:
+ * 1. Live threat containment store (threatAlertStore.isIpBlocked).
+ * 2. Database command audit log (agent_command_logs) for the latest block/unblock state.
+ * 3. In-memory command logs fallback.
+ */
+export async function checkIsIpCurrentlyBlocked(
+  ip: string,
+  tenantId?: string,
+  excludeTokenId?: string
+): Promise<boolean> {
+  const cleanIp = (ip || "").trim();
+  if (!cleanIp) return false;
+
+  // 1. Check persistent fleet blocked IPs table
+  try {
+    const { isIpBlockedInFleet } = await import("./blockedIps");
+    if (await isIpBlockedInFleet(cleanIp, tenantId)) {
+      return true;
+    }
+  } catch { }
+
+  // 2. In-memory threat alert store
+  try {
+    const { isIpBlocked } = await import("@/lib/alerts/threatAlertStore");
+    if (isIpBlocked(cleanIp)) {
+      return true;
+    }
+  } catch { }
+
+  // 3. Database command history check: what was the latest decisive containment action for this IP?
+  try {
+    const res = await query<{ id: string; command: string; status: string; output: string; token_id?: string }>(
+      `SELECT id, command, status, output, token_id FROM agent_command_logs 
+       WHERE (
+         command ILIKE $1 OR command ILIKE $2 OR 
+         command ILIKE $3 OR command ILIKE $4
+       )
+       AND ($5::text IS NULL OR tenant_id = $5)
+       ORDER BY executed_at DESC 
+       LIMIT 10`,
+      [
+        `block_ip ${cleanIp}%`,
+        `block ip ${cleanIp}%`,
+        `unblock_ip ${cleanIp}%`,
+        `unblock ip ${cleanIp}%`,
+        tenantId || null,
+      ]
+    );
+
+    if (res.rows.length > 0) {
+      for (const row of res.rows) {
+        // Skip records associated with this specific execution's approval token
+        if (excludeTokenId && row.token_id && String(row.token_id) === String(excludeTokenId)) {
+          continue;
+        }
+
+        const cmd = row.command.toLowerCase().trim();
+        const isBlock = cmd.startsWith("block_ip") || cmd.startsWith("block ip");
+        const out = (row.output || "").toLowerCase();
+
+        // Skip records that were pre-flight rejection notices
+        if (out.includes("is not blocked") || out.includes("is already blocked")) {
+          continue;
+        }
+
+        // A pending authorization request is awaiting human sign-off; it is NOT yet an active block
+        if (row.status === "pending") {
+          continue;
+        }
+
+        if (isBlock) {
+          // Only a decisive succeeded or verified block action means the IP is actively blocked
+          if (row.status === "succeeded" || row.status === "verified") {
+            return true;
+          }
+        } else {
+          // An unblock action succeeded, verified, or actively executing means the IP is unblocked
+          if (row.status === "succeeded" || row.status === "verified" || row.status === "executing") {
+            return false;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[checkIsIpCurrentlyBlocked] DB lookup warning:", err);
+  }
+
+  // 4. Fallback: check MOCK_COMMAND_LOGS
+  try {
+    const matching = MOCK_COMMAND_LOGS
+      .filter((l) => {
+        if (excludeTokenId && l.token_id && String(l.token_id) === String(excludeTokenId)) return false;
+        const cmd = l.command.toLowerCase().trim();
+        return (
+          (cmd.startsWith(`block_ip ${cleanIp.toLowerCase()}`) ||
+            cmd.startsWith(`block ip ${cleanIp.toLowerCase()}`) ||
+            cmd.startsWith(`unblock_ip ${cleanIp.toLowerCase()}`) ||
+            cmd.startsWith(`unblock ip ${cleanIp.toLowerCase()}`)) &&
+          (!tenantId || l.tenant_id === tenantId)
+        );
+      })
+      .sort((a, b) => new Date(b.executed_at).getTime() - new Date(a.executed_at).getTime());
+
+    if (matching.length > 0) {
+      for (const row of matching) {
+        if (row.status === "pending") continue;
+        const cmd = row.command.toLowerCase().trim();
+        const isBlock = cmd.startsWith("block_ip") || cmd.startsWith("block ip");
+        const out = (row.output || "").toLowerCase();
+        if (out.includes("is not blocked") || out.includes("is already blocked")) continue;
+        if (isBlock) {
+          if (row.status === "succeeded" || row.status === "verified") return true;
+        } else {
+          if (row.status === "succeeded" || row.status === "verified" || row.status === "executing") {
+            return false;
+          }
+        }
+      }
+    }
+  } catch { }
+
+  return false;
+}
+
+/**
+ * Checks if an unblock action is already pending human authorization for this IP.
+ */
+export async function isUnblockPendingForIp(
+  ip: string,
+  tenantId?: string
+): Promise<{ pending: boolean; taskId?: string }> {
+  const cleanIp = (ip || "").trim();
+  if (!cleanIp) return { pending: false };
+
+  try {
+    const res = await query<{ id: string; output: string }>(
+      `SELECT id, output FROM agent_command_logs
+       WHERE (command ILIKE $1 OR command ILIKE $2)
+         AND ($3::text IS NULL OR tenant_id = $3)
+         AND status = 'pending'
+       ORDER BY executed_at DESC LIMIT 1`,
+      [`unblock_ip ${cleanIp}%`, `unblock ip ${cleanIp}%`, tenantId || null]
+    );
+
+    if (res.rows.length > 0) {
+      const match = res.rows[0].output.match(/#([a-f0-9]+)/i);
+      return { pending: true, taskId: match ? match[1] : undefined };
+    }
+  } catch { }
+
+  return { pending: false };
+}
+
+/**
  * Executes a command on an endpoint agent.
  * Enforces Layer 4 Rulebook: Tier 1 executes automatically with safety snapshot;
  * Tier 2/3 requires a pre-existing approved ApprovalToken.
@@ -628,12 +814,14 @@ export async function executeAgentCommand({
   tier,
   tokenId,
   caller,
+  taskId,
 }: {
   agentId: string;
   command: string;
   tier: "Tier 1" | "Tier 2" | "Tier 3";
   tokenId?: string;
   caller: SessionUser;
+  taskId?: string;
 }): Promise<{
   success: boolean;
   commandId: string;
@@ -659,6 +847,7 @@ export async function executeAgentCommand({
     command.startsWith("unblock_ip") ||
     command.startsWith("unblock ip")
   ) {
+    const isUnblock = command.startsWith("unblock_ip") || command.startsWith("unblock ip");
     const rawIp = (
       command.startsWith("block ip")
         ? command.replace(/^block ip\s+/i, "")
@@ -671,6 +860,14 @@ export async function executeAgentCommand({
     const val = validateIpAddress(rawIp);
     if (!val.valid) {
       throw new Error(`INVALID_IP_ADDRESS: ${val.error}`);
+    }
+
+    const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(rawIp, caller.tenant_id, tokenId);
+    if (isUnblock && !isCurrentlyBlocked) {
+      throw new Error(`The IP address ${rawIp} is not blocked.`);
+    }
+    if (!isUnblock && isCurrentlyBlocked) {
+      throw new Error(`The IP address ${rawIp} is already blocked.`);
     }
   } else if (command.startsWith("kill_process")) {
     const rawPid = command.replace(/^kill_process\s+/i, "").trim();
@@ -808,6 +1005,7 @@ export async function executeAgentCommand({
     signature,
     nonce,
     snapshotId,
+    taskId,
   });
 
   // Mark approval token consumed immediately after successful command enqueuing (Audit Section 45)
@@ -831,7 +1029,7 @@ export async function getQueuedCommandsForAgent(agentId: string): Promise<AgentC
     if (aRows.length > 0) {
       targetAgentUuid = aRows[0].id;
     }
-  } catch {}
+  } catch { }
 
   try {
     const { rows } = await query<AgentCommandQueueRecord>(
@@ -839,7 +1037,7 @@ export async function getQueuedCommandsForAgent(agentId: string): Promise<AgentC
        SET status = 'delivered', delivered_at = now()
        WHERE id IN (
          SELECT id FROM agent_commands
-         WHERE (agent_id = $1::uuid OR agent_id = $2::uuid) AND status = 'queued'
+         WHERE (agent_id::text = $1::text OR agent_id::text = $2::text) AND status = 'queued'
          ORDER BY created_at ASC
          LIMIT 10
        )
@@ -879,8 +1077,12 @@ export async function recordCommandResult({
   agentId?: string;
   verified?: boolean;
 }): Promise<{ success: boolean; notFound?: boolean; unauthorized?: boolean }> {
-  const effectiveStatus = (status === "executed" && verified) ? "verified" : status;
-  const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded" : effectiveStatus;
+  let effectiveStatus = (status === "executed" && verified) ? "verified" : status;
+  let effectiveOutput = output;
+  const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded"
+    : effectiveStatus === "rolled_back" ? "rolled_back"
+    : ["failed", "cancelled", "expired", "delivery_failed", "execution_failed", "verification_failed"].includes(effectiveStatus) ? "failed" : "executing";
+
   try {
     // If agentId specified, verify ownership
     if (agentId) {
@@ -893,13 +1095,15 @@ export async function recordCommandResult({
         if (aRows.length > 0) {
           resolvedCallerUuid = aRows[0].id;
         }
-      } catch {}
+      } catch { }
 
       const existing = await query<AgentCommandQueueRecord>(
-        `SELECT id, agent_id, tenant_id FROM agent_commands WHERE id::text = $1 LIMIT 1`,
+        `SELECT id, agent_id, tenant_id, command FROM agent_commands WHERE id::text = $1 LIMIT 1`,
         [commandId]
       );
+
       if (
+        agentId &&
         existing.rows.length > 0 &&
         existing.rows[0].agent_id !== resolvedCallerUuid &&
         existing.rows[0].agent_id !== agentId
@@ -910,10 +1114,10 @@ export async function recordCommandResult({
 
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
-       SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = now()
+       SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = CASE WHEN $1 IN ('executed', 'verified', 'failed', 'rolled_back', 'cancelled', 'expired', 'delivery_failed', 'execution_failed', 'verification_failed') THEN now() ELSE completed_at END
        WHERE id::text = $4
        RETURNING *;`,
-      [effectiveStatus, JSON.stringify({ output }), snapshotId || null, commandId]
+      [effectiveStatus, JSON.stringify({ output: effectiveOutput }), snapshotId || null, commandId]
     );
 
     if (rows.length === 0) {
@@ -926,41 +1130,46 @@ export async function recordCommandResult({
         return { success: false, unauthorized: true };
       }
       cmd.status = effectiveStatus;
-      cmd.result = { output };
+      cmd.result = { output: effectiveOutput };
       if (snapshotId) cmd.snapshot_id = snapshotId;
       cmd.completed_at = new Date().toISOString();
 
       const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
       if (log) {
         log.status = logStatus as "succeeded" | "failed" | "rolled_back" | "verified";
-        log.output = output;
+        log.output = effectiveOutput;
       }
 
       await recordHashChainEvent({
         tenantId: cmd.tenant_id,
         eventType: "AGENT_COMMAND_EXECUTED",
         actorId: `agent:${cmd.agent_id}`,
-        payload: { commandId, status: effectiveStatus, snapshotId, output },
+        payload: { commandId, status: effectiveStatus, snapshotId, output: effectiveOutput },
       });
 
       return { success: true };
     }
 
+    const cmd = rows[0];
+
+    await settleCommandTask(cmd);
+
     // Update command log to reflect true execution status and output
     await query(
       `UPDATE agent_command_logs
        SET status = $1, output = $2
-       WHERE id = $3;`,
-      [logStatus, output, commandId]
+       WHERE id::text = $3
+          OR ($4::text IS NOT NULL AND token_id::text = $4)
+          OR (agent_id = $5 AND command = $6 AND status IN ('pending', 'executing'));`,
+      [logStatus, effectiveOutput, commandId, cmd?.token_id ? String(cmd.token_id) : null, cmd.agent_id, cmd.command]
     );
 
-    const cmd = rows[0];
     if (cmd) {
       await recordHashChainEvent({
         tenantId: cmd.tenant_id,
         eventType: "AGENT_COMMAND_EXECUTED",
         actorId: `agent:${cmd.agent_id}`,
-        payload: { commandId, status: effectiveStatus, snapshotId, output },
+        payload: { commandId, status: effectiveStatus, snapshotId, output: effectiveOutput },
       });
 
       if (cmd.token_id) {
@@ -970,7 +1179,7 @@ export async function recordCommandResult({
             await query(
               `INSERT INTO incident_events (incident_id, occurred_at, description)
                VALUES ($1, now(), $2)`,
-              [token.incident_id, `Endpoint remediation verified: ${cmd.command} executed by agent ${cmd.agent_id}. Status: ${effectiveStatus}. Output: ${output.slice(0, 150)}`]
+              [token.incident_id, `Endpoint remediation verified: ${cmd.command} executed by agent ${cmd.agent_id}. Status: ${effectiveStatus}. Output: ${effectiveOutput.slice(0, 150)}`]
             );
           }
         } catch {
@@ -980,7 +1189,8 @@ export async function recordCommandResult({
     }
 
     return { success: true };
-  } catch {
+  } catch (error) {
+    if (isProduction()) throw error;
     const cmd = MOCK_AGENT_COMMANDS.find((c) => c.id === commandId);
     if (!cmd) {
       return { success: false, notFound: true };
@@ -989,21 +1199,21 @@ export async function recordCommandResult({
       return { success: false, unauthorized: true };
     }
     cmd.status = effectiveStatus;
-    cmd.result = { output };
+    cmd.result = { output: effectiveOutput };
     if (snapshotId) cmd.snapshot_id = snapshotId;
     cmd.completed_at = new Date().toISOString();
 
     const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
     if (log) {
       log.status = logStatus as "succeeded" | "failed" | "rolled_back" | "verified";
-      log.output = output;
+      log.output = effectiveOutput;
     }
 
     await recordHashChainEvent({
       tenantId: cmd.tenant_id,
       eventType: "AGENT_COMMAND_EXECUTED",
       actorId: `agent:${cmd.agent_id}`,
-      payload: { commandId, status: effectiveStatus, snapshotId, output },
+      payload: { commandId, status: effectiveStatus, snapshotId, output: effectiveOutput },
     });
 
     if (cmd.token_id) {
@@ -1024,7 +1234,6 @@ export async function recordCommandResult({
     return { success: true };
   }
 }
-
 
 /**
  * Appends a record to the tamper-proof cryptographic hash chain.
@@ -1069,3 +1278,5 @@ export async function recordHashChainEvent({
 
   return record;
 }
+
+

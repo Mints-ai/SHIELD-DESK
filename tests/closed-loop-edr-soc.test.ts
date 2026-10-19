@@ -1,4 +1,5 @@
 import "./setup";
+import "./fixtures/fleet";
 import test, { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";

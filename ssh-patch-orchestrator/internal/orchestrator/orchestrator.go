@@ -18,12 +18,14 @@ import (
 // Orchestrator executes the complete patch lifecycle for a single job
 // according to the state machine, safety rules, and audit requirements.
 type Orchestrator struct {
-	mu           sync.Mutex
-	job          *models.PatchJob
-	asset        *models.TargetAsset
-	plan         *models.RemediationPlan
-	stateMachine *StateMachine
-	auditWriter  audit.Writer
+	operationMu     sync.Mutex
+	retainSnapshots bool
+	mu              sync.Mutex
+	job             *models.PatchJob
+	asset           *models.TargetAsset
+	plan            *models.RemediationPlan
+	stateMachine    *StateMachine
+	auditWriter     audit.Writer
 
 	precheck   *precheck.PrecheckEngine
 	snapshot   *snapshot.Manager
@@ -97,6 +99,8 @@ func (o *Orchestrator) Job() *models.PatchJob {
 
 // Run executes the complete remediation lifecycle.
 func (o *Orchestrator) Run(ctx context.Context) error {
+	o.operationMu.Lock()
+	defer o.operationMu.Unlock()
 	// 1. Initial State Handling
 	if o.stateMachine.State() == models.StateDetected {
 		if o.plan == nil || len(o.plan.Operations) == 0 {
@@ -231,14 +235,49 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.job.VulnerabilityStatus = models.VulnStatusFixed
 
 	// Clean up snapshots after successful verified remediation
-	_ = o.snapshot.CleanupSnapshots(ctx, o.createdSnapshots)
+	if !o.retainSnapshots {
+		_ = o.snapshot.CleanupSnapshots(ctx, o.createdSnapshots)
+	}
 	return nil
+}
+
+// RetainSnapshots enables later manual rollback for API-managed jobs.
+// Call before Run. CLI jobs retain their original automatic cleanup behavior.
+func (o *Orchestrator) RetainSnapshots() { o.retainSnapshots = true }
+
+// StartManualRollback reserves the job before returning; duplicate or concurrent
+// patch/rollback operations are rejected. Recovery uses the original snapshots.
+func (o *Orchestrator) StartManualRollback(ctx context.Context) (<-chan error, error) {
+	if !o.operationMu.TryLock() {
+		return nil, fmt.Errorf("job is already running")
+	}
+	if !o.retainSnapshots || o.State() != models.StateRemediated || len(o.createdSnapshots) == 0 || o.precheckResult == nil {
+		o.operationMu.Unlock()
+		return nil, fmt.Errorf("manual rollback requires a remediated job with retained snapshots and baseline")
+	}
+	if err := o.snapshot.VerifySnapshots(ctx, o.createdSnapshots); err != nil {
+		o.operationMu.Unlock()
+		return nil, fmt.Errorf("retained snapshot is no longer safe for rollback: %w", err)
+	}
+	if err := o.transition(models.StateRollbackRequired); err != nil {
+		o.operationMu.Unlock()
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() {
+		defer o.operationMu.Unlock()
+		defer close(done)
+		done <- o.executeRollback(ctx, models.RollbackManualRequest)
+	}()
+	return done, nil
 }
 
 // executeRollback executes recovery when patch or validation fails.
 func (o *Orchestrator) executeRollback(ctx context.Context, reason models.RollbackReason) error {
-	if err := o.transition(models.StateRollbackRequired); err != nil {
-		return err
+	if o.State() != models.StateRollbackRequired {
+		if err := o.transition(models.StateRollbackRequired); err != nil {
+			return err
+		}
 	}
 	_ = o.emitAudit(ctx, models.AuditRollbackStarted, models.AuditResultPending, string(reason), "", "")
 

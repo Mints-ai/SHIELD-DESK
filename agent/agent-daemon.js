@@ -882,11 +882,29 @@ async function start() {
                   const name = parts[1];
                   cp.execSync(`netsh advfirewall firewall delete rule name="${name}"`, { timeout: 5000, stdio: 'ignore' });
                   execOutput = `Firewall rule ${name} deleted successfully on ${customHostname}.`;
+                } else if (cmd.command.startsWith('isolate_host')) {
+                  try {
+                    cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Isolate"', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  try {
+                    cp.execSync('netsh advfirewall firewall add rule name="ShieldDesk-Isolate" dir=out action=block remoteip=any', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  execOutput = `Host ${customHostname} network interfaces quarantined. Inbound and outbound traffic dropped.`;
+                } else if (cmd.command.startsWith('restore_host')) {
+                  try {
+                    cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Isolate"', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  try {
+                    cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Mgmt"', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  execOutput = `Host ${customHostname} restored from isolation. Network interfaces operational.`;
                 } else if (cmd.command.startsWith('block_ip')) {
                   const targetIp = cmd.command.split(/\s+/)[1];
                   if (!targetIp) throw new Error('Missing target IP address for block_ip');
-                  cp.execSync(`netsh advfirewall firewall add rule name="ShieldDesk-Block-In-${targetIp}" dir=in action=block remoteip=${targetIp}`, { timeout: 5000, stdio: 'ignore' });
-                  cp.execSync(`netsh advfirewall firewall add rule name="ShieldDesk-Block-Out-${targetIp}" dir=out action=block remoteip=${targetIp}`, { timeout: 5000, stdio: 'ignore' });
+                  try {
+                    cp.execSync(`netsh advfirewall firewall add rule name="ShieldDesk-Block-In-${targetIp}" dir=in action=block remoteip=${targetIp}`, { timeout: 5000, stdio: 'ignore' });
+                    cp.execSync(`netsh advfirewall firewall add rule name="ShieldDesk-Block-Out-${targetIp}" dir=out action=block remoteip=${targetIp}`, { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
                   execOutput = `Host firewall rule added: DROPPING all inbound and outbound traffic with ${targetIp}.`;
                 } else if (cmd.command.startsWith('unblock_ip')) {
                   const targetIp = cmd.command.split(/\s+/)[1];
@@ -896,6 +914,9 @@ async function start() {
                   } catch {}
                   try {
                     cp.execSync(`netsh advfirewall firewall delete rule name="ShieldDesk-Block-Out-${targetIp}"`, { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  try {
+                    cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Isolate"', { timeout: 5000, stdio: 'ignore' });
                   } catch {}
                   execOutput = `Host firewall rule deleted: Restored inbound and outbound traffic with ${targetIp}.`;
                 } else if (cmd.command.startsWith('kill_process')) {

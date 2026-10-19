@@ -137,6 +137,9 @@ export async function PATCH(
     const newStatus = body.status && allowedStatuses.includes(body.status)
       ? body.status
       : currentTask.status;
+    if (newStatus === "completed" && currentTask.status !== "completed" && currentTask.execution_command_id) {
+      return NextResponse.json({ error: "This task must be completed by its endpoint execution report." }, { status: 409 });
+    }
 
     const newTitle = typeof body.title === "string" && body.title.trim()
       ? body.title.trim()

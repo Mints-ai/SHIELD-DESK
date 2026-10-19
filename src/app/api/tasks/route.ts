@@ -15,10 +15,11 @@ export interface MitigationTaskRecord {
   title: string;
   description: string;
   tier: "Tier 0" | "Tier 1" | "Tier 2" | "Tier 3";
-  status: "pending" | "approved" | "rejected" | "in_progress" | "completed";
+  status: "pending" | "approved" | "rejected" | "in_progress" | "completed" | "failed";
   blast_radius?: string | null;
   cve_id?: string | null;
   assigned_to?: string | null;
+  execution_command_id?: string | null;
   incident_code?: string;
   created_at: string;
 }

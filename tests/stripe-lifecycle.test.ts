@@ -1,4 +1,6 @@
 import "./setup";
+import { useSubscriptionFixture } from "./fixtures/subscriptions";
+useSubscriptionFixture();
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";

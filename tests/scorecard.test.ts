@@ -1,4 +1,5 @@
 import "./setup";
+import "./fixtures/fleet";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { getExecutiveRiskScorecard } from "../src/lib/reporting/scorecard";

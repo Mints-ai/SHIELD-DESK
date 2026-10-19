@@ -1,4 +1,5 @@
 import "./setup";
+import "./fixtures/fleet";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -11,7 +12,7 @@ import {
   MOCK_HASH_CHAINS,
 } from "../src/lib/fleet/fleet";
 import { requestApprovalToken, approveActionToken } from "../src/lib/governance/approvalTokens";
-import { resetMockThrottle } from "../src/lib/governance/blastRadiusThrottle";
+import { resetMockThrottle, DEFAULT_TIER1_LIMIT } from "../src/lib/governance/blastRadiusThrottle";
 import { signCommand, verifyCommandSignature } from "../src/lib/fleet/commandSigning";
 import {
   getObservedEndpointIp,
@@ -200,7 +201,7 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
     resetMockThrottle();
 
     // Fire 5 Tier 1 commands (all 5 must succeed)
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < DEFAULT_TIER1_LIMIT; i++) {
       const res = await executeAgentCommand({
         agentId: "FIN-WS-042",
         command: `block_ip 198.51.100.${10 + i}`,

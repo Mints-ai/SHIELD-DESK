@@ -220,7 +220,7 @@ export async function getLiveCommandLogs(
     tenantId: string;
     command: string;
     tier: string;
-    status: "succeeded" | "failed" | "executing";
+    status: "succeeded" | "failed" | "executing" | "pending";
     output: string;
     time: string;
     executedAt: string;
@@ -257,6 +257,39 @@ export async function getLiveCommandLogs(
       : [caller.tenant_id];
 
   try {
+    // Reconcile and synchronize any pending logs with their corresponding task and command outcomes
+    await query(
+      `UPDATE agent_command_logs acl
+       SET status = CASE 
+         WHEN ac.status IN ('executed', 'verified') THEN 'succeeded'
+         WHEN ac.status = 'failed' THEN 'failed'
+         WHEN mt.status = 'completed' THEN 'succeeded'
+         WHEN mt.status = 'rejected' OR at.status = 'rejected' THEN 'failed'
+         ELSE acl.status
+       END,
+       output = COALESCE(
+         ac.result->>'output',
+         CASE 
+           WHEN at.status = 'rejected' THEN 'Action rejected by security governance.'
+           WHEN mt.status = 'completed' THEN 'Action authorized and completed on Task Board.'
+           ELSE acl.output
+         END
+       )
+       FROM approval_tokens at
+       LEFT JOIN mitigation_tasks mt ON mt.id = at.task_id
+       LEFT JOIN agent_commands ac ON (ac.id = acl.id OR ac.token_id = at.id)
+       WHERE acl.token_id = at.id
+         AND acl.status = 'pending'
+         AND (at.status IN ('consumed', 'rejected') OR mt.status IN ('completed', 'rejected') OR ac.status IN ('executed', 'failed', 'verified'));`
+    ).catch(() => {});
+
+    await query(
+      `UPDATE agent_command_logs
+       SET status = 'failed', output = 'Authorization expired or cancelled.'
+       WHERE status = 'pending'
+         AND executed_at < now() - INTERVAL '15 minutes';`
+    ).catch(() => {});
+
     const { rows } = await query<Record<string, unknown>>(sql, params);
     return rows.map((r) => ({
       id: String(r.id),
@@ -264,7 +297,7 @@ export async function getLiveCommandLogs(
       tenantId: String(r.tenant_id),
       command: String(r.command),
       tier: String(r.tier),
-      status: (r.status || "succeeded") as "succeeded" | "failed" | "executing",
+      status: (r.status || "succeeded") as "succeeded" | "failed" | "executing" | "pending",
       output: String(r.output || ""),
       time: new Date(r.executed_at as string).toLocaleTimeString(),
       executedAt: new Date(r.executed_at as string).toISOString(),

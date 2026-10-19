@@ -37,21 +37,42 @@ import {
   Shield,
   Zap,
   Search,
+  Clock,
+  ArrowRight,
 } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { validateIpAddress } from "@/lib/utils/ipValidation";
 import { CORE_FUNCTION_SCOPES, type CoreFunctionScope } from "@/lib/fleet/monitoringTypes";
 import { ConnectEndpointModal } from "@/components/fleet/ConnectEndpointModal";
+import { ApprovalModal } from "@/components/governance/ApprovalModal";
+import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 interface CommandLogEntry {
   id: string;
   time: string;
   command: string;
   tier: string;
-  status: "succeeded" | "failed" | "executing";
+  status: "succeeded" | "failed" | "executing" | "pending";
   output: string;
   agentId?: string;
   executedAt?: string;
+  taskId?: string;
+  tokenId?: string;
+}
+
+interface BlockedIpItem {
+  id: string;
+  tenant_id: string;
+  ip_address: string;
+  agent_id?: string | null;
+  hostname?: string | null;
+  reason?: string | null;
+  tier: string;
+  blocked_by: string;
+  blocked_at: string;
+  unblocked_at?: string | null;
+  status: "blocked" | "unblocked";
 }
 
 // Maps each command value to its required autonomy tier
@@ -86,6 +107,8 @@ export default function FleetPage() {
   const [selectedTier, setSelectedTier] = useState<"Tier 1" | "Tier 2">("Tier 1");
   const [tokenIdInput, setTokenIdInput] = useState("");
   const [commandLogs, setCommandLogs] = useState<CommandLogEntry[]>([]);
+  const [blockedIps, setBlockedIps] = useState<BlockedIpItem[]>([]);
+  const [unblockingIp, setUnblockingIp] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [killSwitchEngaged, setKillSwitchEngaged] = useState(false);
   const [filterAgentId, setFilterAgentId] = useState<string>("all");
@@ -102,10 +125,49 @@ export default function FleetPage() {
     return () => clearInterval(timer);
   }, []);
 
+  // Synchronize targetIp whenever selectedAgent changes
+  useEffect(() => {
+    if (selectedAgent?.ip_address && selectedAgent.ip_address !== "Unknown") {
+      setTargetIp((prev) => (!prev ? selectedAgent.ip_address : prev));
+    }
+  }, [selectedAgent?.id, selectedAgent?.ip_address]);
+
   const [dispatchFeedback, setDispatchFeedback] = useState<{
-    type: "success" | "error";
+    type: "success" | "error" | "pending";
     message: string;
+    taskId?: string;
+    tokenId?: string;
   } | null>(null);
+
+  const [fleetModalToken, setFleetModalToken] = useState<ApprovalTokenRecord | null>(null);
+  const [isFleetModalOpen, setIsFleetModalOpen] = useState(false);
+
+  const canUserSignOffTask = (tier: string) => {
+    if (activeUser.role === "system_admin" || activeUser.role === "super_admin") {
+      return true;
+    }
+    if (activeUser.role === "responder") {
+      return tier === "Tier 1" || tier === "Tier 2";
+    }
+    return false;
+  };
+
+  const handleOpenApprovalFromFleet = async (tokenId?: string, taskId?: string) => {
+    try {
+      const url = taskId
+        ? `/api/approvals?taskId=${encodeURIComponent(taskId)}&status=pending`
+        : `/api/approvals?status=pending`;
+      const res = await fetch(url, { headers: { "X-ShieldDesk-User": activeUserId } });
+      const data = await res.json();
+      const token = data.tokens?.find((t: ApprovalTokenRecord) => (tokenId ? t.id === tokenId : t.status === "pending")) || data.tokens?.[0];
+      if (token) {
+        setFleetModalToken(token);
+        setIsFleetModalOpen(true);
+      }
+    } catch (err) {
+      console.error("Failed to load approval token:", err);
+    }
+  };
 
   // Connect endpoint modal state
   const [showConnectModal, setShowConnectModal] = useState(false);
@@ -209,10 +271,72 @@ export default function FleetPage() {
     }
   }, [activeUserId]);
 
+  // Fetch active blocked IPs registry
+  const fetchBlockedIps = useCallback(async () => {
+    try {
+      const res = await fetch("/api/fleet/blocked-ips", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
+      const data = await res.json();
+      if (data.success && Array.isArray(data.blockedIps)) {
+        setBlockedIps(data.blockedIps);
+      }
+    } catch (err) {
+      console.error("Failed to load blocked IPs:", err);
+    }
+  }, [activeUserId]);
+
+  // One-click unblock action for active containment rules
+  const handleDirectUnblockIp = async (ipToUnblock: string, hostAgentId?: string | null) => {
+    setUnblockingIp(ipToUnblock);
+    try {
+      const effectiveAgent = hostAgentId
+        ? agents.find((a) => a.id === hostAgentId || a.hostname === hostAgentId) || selectedAgent
+        : selectedAgent;
+
+      const res = await fetch("/api/fleet/blocked-ips", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({
+          action: "unblock_ip",
+          ip: ipToUnblock,
+          agentId: effectiveAgent?.id,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDispatchFeedback({
+          type: "success",
+          message: data.message || `Firewall drop rule for ${ipToUnblock} lifted. Host connectivity restored.`,
+        });
+        await fetchBlockedIps();
+        await fetchFleet();
+        await fetchLogs();
+      } else {
+        setDispatchFeedback({
+          type: "error",
+          message: data.error || `Failed to unblock IP ${ipToUnblock}.`,
+        });
+      }
+    } catch (err) {
+      console.error("Unblock failed:", err);
+      setDispatchFeedback({
+        type: "error",
+        message: `Network error unblocking IP ${ipToUnblock}.`,
+      });
+    } finally {
+      setUnblockingIp(null);
+    }
+  };
+
   // Real-Time Server-Sent Events (SSE) Stream
   useEffect(() => {
     fetchFleet();
     fetchLogs();
+    fetchBlockedIps();
 
     if (!isStreaming) return;
 
@@ -253,13 +377,17 @@ export default function FleetPage() {
         if (!pollInterval) {
           pollInterval = setInterval(() => {
             fetchFleet();
-          }, 5000);
+            fetchLogs();
+            fetchBlockedIps();
+          }, 4000);
         }
       };
     } catch {
       pollInterval = setInterval(() => {
         fetchFleet();
-      }, 5000);
+        fetchLogs();
+        fetchBlockedIps();
+      }, 4000);
     }
 
     return () => {
@@ -272,6 +400,31 @@ export default function FleetPage() {
       }
     };
   }, [activeUserId, isStreaming, fetchFleet, fetchLogs]);
+
+  // Synchronize governance approvals and execution updates across views
+  useEffect(() => {
+    const handleApprovalsChanged = () => {
+      fetchFleet(true);
+      fetchLogs();
+      setDispatchFeedback((prev) => {
+        if (prev?.type === "pending") {
+          return {
+            type: "success",
+            message: "Governance action authorized and completed. Telemetry updated.",
+          };
+        }
+        return prev;
+      });
+      setTokenIdInput("");
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("shielddesk:approvals-changed", handleApprovalsChanged);
+      return () => {
+        window.removeEventListener("shielddesk:approvals-changed", handleApprovalsChanged);
+      };
+    }
+  }, [fetchFleet, fetchLogs]);
 
   // Handle Emergency Kill Switch
   const handleToggleKillSwitch = async () => {
@@ -386,6 +539,18 @@ export default function FleetPage() {
         prev.map((log) => {
           if (log.id !== newLogId) return log;
           if (res.ok && data.success) {
+            if (data.pendingApproval) {
+              return {
+                ...log,
+                id: data.commandId || log.id,
+                status: "pending",
+                output:
+                  data.message ||
+                  `Action requires authorization (${data.tier || selectedTier}). Mitigation Task #${data.taskId?.slice(0, 8)} created on Task Board awaiting Super Admin sign-off.`,
+                taskId: data.taskId,
+                tokenId: data.tokenId,
+              };
+            }
             return {
               ...log,
               id: data.commandId || log.id,
@@ -395,38 +560,84 @@ export default function FleetPage() {
                 "Instruction executed with status SUCCESS. Telemetry updated.",
             };
           } else {
+            const errText = data.error || data.message || "Execution rejected by security policy.";
+            const detailText = data.message && data.message !== data.error ? `: ${data.message}` : "";
             return {
               ...log,
+              id: data.commandId || log.id,
               status: "failed",
-              output: `Execution rejected (${data.error || "Policy violation"}): ${data.message || ""}`,
+              output: `${errText}${detailText}`,
             };
           }
         })
       );
 
       if (res.ok && data.success) {
-        setDispatchFeedback({
-          type: "success",
-          message: `Successfully executed ${cmd} on ${selectedAgent.hostname}. Live telemetry updated.`,
-        });
-        if (cmd.startsWith("block_ip")) {
-          setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
-          setAgents((prev) =>
-            prev.map((a) =>
-              a.id === selectedAgent.id || a.ip_address === targetIp.trim()
-                ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
-                : a
-            )
-          );
-        } else if (cmd.startsWith("unblock_ip")) {
-          setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
-          setAgents((prev) =>
-            prev.map((a) =>
-              a.id === selectedAgent.id || a.ip_address === targetIp.trim()
-                ? { ...a, status: "connected" }
-                : a
-            )
-          );
+        if (data.pendingApproval) {
+          if (data.tokenId) {
+            setTokenIdInput(data.tokenId);
+          }
+          setDispatchFeedback({
+            type: "pending",
+            message: data.message || `Tier 2 action submitted for governance authorization. Task #${data.taskId?.slice(0, 8)} is now visible on the Task Board awaiting Super Admin sign-off.`,
+            taskId: data.taskId,
+            tokenId: data.tokenId,
+          });
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("shielddesk:approvals-changed", {
+                detail: { action: "pending", tokenId: data.tokenId, taskId: data.taskId },
+              })
+            );
+          }
+        } else {
+          setDispatchFeedback({
+            type: "success",
+            message: `Successfully executed ${cmd} on ${selectedAgent.hostname}. Live telemetry updated.`,
+          });
+          if (cmd.startsWith("block_ip")) {
+            const isSelfHost =
+              selectedAgent.ip_address === targetIp.trim() ||
+              targetIp.trim() === "127.0.0.1" ||
+              targetIp.trim() === "localhost";
+            if (isSelfHost) {
+              setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
+              setAgents((prev) =>
+                prev.map((a) =>
+                  a.id === selectedAgent.id || a.ip_address === targetIp.trim()
+                    ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
+                    : a
+                )
+              );
+            }
+          } else if (cmd.startsWith("isolate_host")) {
+            setSelectedAgent((prev) => (prev ? { ...prev, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 } : null));
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.id === selectedAgent.id
+                  ? { ...a, status: "disconnected", cpu_usage: 0, memory_usage: 0, eps: 0 }
+                  : a
+              )
+            );
+          } else if (cmd.startsWith("restore_host")) {
+            setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.id === selectedAgent.id
+                  ? { ...a, status: "connected" }
+                  : a
+              )
+            );
+          } else if (cmd.startsWith("unblock_ip")) {
+            setSelectedAgent((prev) => (prev ? { ...prev, status: "connected" } : null));
+            setAgents((prev) =>
+              prev.map((a) =>
+                a.id === selectedAgent.id || a.ip_address === targetIp.trim()
+                  ? { ...a, status: "connected" }
+                  : a
+              )
+            );
+          }
         }
       } else {
         setDispatchFeedback({
@@ -437,6 +648,7 @@ export default function FleetPage() {
 
       fetchFleet();
       fetchLogs();
+      fetchBlockedIps();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Network failure";
       setCommandLogs((prev) =>
@@ -1111,7 +1323,12 @@ export default function FleetPage() {
               return (
                 <div
                   key={agent.id}
-                  onClick={() => setSelectedAgent(agent)}
+                  onClick={() => {
+                    setSelectedAgent(agent);
+                    if (agent.ip_address && agent.ip_address !== "Unknown") {
+                      setTargetIp(agent.ip_address);
+                    }
+                  }}
                   className={cn(
                     "p-4 rounded-2xl border transition-all duration-300 cursor-pointer space-y-3 relative overflow-hidden",
                     isSelected
@@ -1364,7 +1581,8 @@ export default function FleetPage() {
             </div>
 
             {activeConsoleTab === "console" ? (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Terminal Command Dispatcher */}
                 <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
                   <div className="flex items-center justify-between">
@@ -1385,15 +1603,42 @@ export default function FleetPage() {
                     "p-3 rounded-xl border text-[12px] font-mono flex items-start gap-2",
                     dispatchFeedback.type === "success"
                       ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                      : "bg-red-500/10 border-red-500/30 text-red-300"
+                      : dispatchFeedback.type === "pending"
+                        ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                        : "bg-red-500/10 border-red-500/30 text-red-300"
                   )}
                 >
                   {dispatchFeedback.type === "success" ? (
                     <CheckCircle2 className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
+                  ) : dispatchFeedback.type === "pending" ? (
+                    <Clock className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
                   ) : (
                     <AlertTriangle className="h-4 w-4 text-red-400 mt-0.5 shrink-0" />
                   )}
-                  <span>{dispatchFeedback.message}</span>
+                  <div className="flex-1 flex flex-wrap items-center justify-between gap-2">
+                    <span>{dispatchFeedback.message}</span>
+                    {dispatchFeedback.taskId && (
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href="/dashboard/tasks"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 text-[11px] font-semibold transition"
+                        >
+                          <span>Task Board</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                        {canUserSignOffTask(selectedTier) && dispatchFeedback.tokenId && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenApprovalFromFleet(dispatchFeedback.tokenId, dispatchFeedback.taskId)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#D8C49A]/20 hover:bg-[#D8C49A]/30 border border-[#D8C49A]/50 text-[#F2EFE9] text-[11px] font-semibold transition cursor-pointer"
+                          >
+                            <Lock className="h-3 w-3 text-[#D8C49A]" />
+                            <span>Sign Off Now</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1446,6 +1691,8 @@ export default function FleetPage() {
                   const isValid = ipVal && ipVal.valid;
                   const isUnblock = selectedAction === "unblock_ip";
 
+                  const isCurrentlyInBlockedList = blockedIps.some((b) => b.ip_address === targetIp.trim());
+
                   return (
                     <div className="space-y-2 p-3.5 rounded-xl bg-[var(--sd-panel-raised)]/80 border border-[var(--sd-border)]">
                       <div className="flex items-center justify-between">
@@ -1490,7 +1737,61 @@ export default function FleetPage() {
                           <span>Valid {ipVal.isIpv6 ? "IPv6" : "IPv4"} Address{ipVal.isCidr ? " (CIDR Range)" : ""}</span>
                         </p>
                       )}
-                      <div className="flex items-center justify-between text-[11px] text-[var(--sd-text-muted)] pt-0.5">
+
+                      {/* Unblock IP Selection Chips */}
+                      {isUnblock && (
+                        <div className="pt-1.5">
+                          <div className="text-[11px] font-mono text-[var(--sd-text-muted)] mb-1.5 flex items-center justify-between">
+                            <span>Select active blocked IP:</span>
+                            <span className="text-[10px] text-amber-300 font-semibold">{blockedIps.length} actively contained</span>
+                          </div>
+                          {blockedIps.length === 0 ? (
+                            <p className="text-[11px] font-mono text-[var(--sd-text-dim)] bg-[var(--sd-panel)] p-2 rounded-lg border border-[var(--sd-border)]">
+                              No IPs currently recorded as blocked in fleet. Enter an IP above to remove a host-level drop rule.
+                            </p>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-[var(--sd-panel)] border border-[var(--sd-border)] max-h-28 overflow-y-auto">
+                              {blockedIps.map((b) => (
+                                <button
+                                  key={b.id || b.ip_address}
+                                  type="button"
+                                  onClick={() => setTargetIp(b.ip_address)}
+                                  className={cn(
+                                    "text-[11px] font-mono px-2 py-0.5 rounded border transition cursor-pointer flex items-center gap-1",
+                                    targetIp.trim() === b.ip_address
+                                      ? "bg-emerald-500/25 border-emerald-500/60 text-emerald-200 shadow-xs"
+                                      : "bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-raised)]/80 border-[var(--sd-border)] text-amber-300"
+                                  )}
+                                  title={`Blocked on ${b.hostname || "Fleet"}: ${b.reason || "Containment"}`}
+                                >
+                                  <ShieldAlert className="h-3 w-3 text-amber-400" />
+                                  <span>{b.ip_address}</span>
+                                  {b.hostname && <span className="text-[9px] text-[var(--sd-text-dim)]">({b.hostname})</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Duplicate Block Warning */}
+                      {!isUnblock && hasInput && isValid && isCurrentlyInBlockedList && (
+                        <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] font-mono flex items-center justify-between gap-2 mt-1">
+                          <span className="flex items-center gap-1.5">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                            <span>This IP ({targetIp.trim()}) is already recorded as blocked.</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAction("unblock_ip")}
+                            className="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[10px] font-semibold cursor-pointer shrink-0 transition"
+                          >
+                            Switch to Unblock
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between text-[11px] text-[var(--sd-text-muted)] pt-1">
                         <span>Command to dispatch:</span>
                         <code
                           className={cn(
@@ -1594,10 +1895,22 @@ export default function FleetPage() {
                   }
                   className="sd-button sd-button-primary w-full py-2.5 px-4 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition flex items-center justify-center gap-2 shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Play className="h-3.5 w-3.5 fill-current text-[var(--sd-on-accent)]" />
-                  <span>
-                    {isExecuting ? "Executing Instruction..." : "Dispatch Instruction to Agent"}
-                  </span>
+                  {isExecuting ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin text-[var(--sd-on-accent)]" />
+                      <span>Executing Instruction...</span>
+                    </>
+                  ) : selectedTier === "Tier 2" && !tokenIdInput ? (
+                    <>
+                      <Lock className="h-3.5 w-3.5 text-[var(--sd-on-accent)]" />
+                      <span>Request Tier 2 Authorization</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-3.5 w-3.5 fill-current text-[var(--sd-on-accent)]" />
+                      <span>Dispatch Instruction to Agent</span>
+                    </>
+                  )}
                 </button>
               </form>
             </div>
@@ -1665,7 +1978,9 @@ export default function FleetPage() {
                             log.status === "failed" &&
                               "text-red-400 border-red-500/30 bg-red-500/10",
                             log.status === "executing" &&
-                              "text-amber-400 border-amber-500/30 bg-amber-500/10 animate-pulse"
+                              "text-amber-400 border-amber-500/30 bg-amber-500/10 animate-pulse",
+                            log.status === "pending" &&
+                              "text-amber-400 border-amber-500/30 bg-amber-500/10"
                           )}
                         >
                           {log.status}
@@ -1675,7 +1990,15 @@ export default function FleetPage() {
                         {log.output}
                       </div>
                       <div className="text-[10px] text-[var(--sd-text-dim)] flex items-center justify-between pt-1 border-t border-[var(--sd-border)]/30">
-                        <span className="text-[var(--sd-wheat)]">{log.tier}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[var(--sd-wheat)]">{log.tier}</span>
+                          {log.status === "pending" && (
+                            <Link href="/dashboard/tasks" className="text-amber-400 hover:text-amber-300 underline font-sans flex items-center gap-0.5">
+                              <span>Task Board</span>
+                              <ExternalLink className="h-2.5 w-2.5" />
+                            </Link>
+                          )}
+                        </div>
                         <span>{log.time}</span>
                       </div>
                     </div>
@@ -1684,7 +2007,102 @@ export default function FleetPage() {
               </div>
             </div>
           </div>
-        ) : (
+
+          {/* Active Blocked IPs & Containment Rules Ledger */}
+          <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-amber-400" />
+                <h3 className="text-[13px] font-medium uppercase tracking-wider text-[var(--sd-pine)] font-mono">
+                  Active Blocked IPs &amp; Host Containment Rules
+                </h3>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                  {blockedIps.length} Active {blockedIps.length === 1 ? "Rule" : "Rules"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fetchBlockedIps()}
+                  className="text-[11px] font-mono text-[var(--sd-text-muted)] hover:text-[var(--sd-pine)] transition flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  <span>Refresh Containment</span>
+                </button>
+              </div>
+            </div>
+
+            {blockedIps.length === 0 ? (
+              <div className="p-6 text-center border border-dashed border-[var(--sd-border)] rounded-xl text-[var(--sd-text-muted)] font-mono text-[12px] space-y-1">
+                <ShieldCheck className="h-6 w-6 text-emerald-400 mx-auto opacity-70 mb-2" />
+                <p className="text-[var(--sd-text)] font-semibold">No Active IP Containment Rules</p>
+                <p className="text-[11px] text-[var(--sd-text-dim)]">
+                  All inbound and outbound host traffic is running normally. To block an IP, select &quot;block_ip&quot; above.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)]">
+                <table className="w-full text-left text-[12px] font-mono">
+                  <thead>
+                    <tr className="border-b border-[var(--sd-border)] bg-[var(--sd-panel)] text-[var(--sd-pine)] text-[11px] uppercase">
+                      <th className="py-2.5 px-3.5 font-medium">Blocked Target IP</th>
+                      <th className="py-2.5 px-3.5 font-medium">Contained Host</th>
+                      <th className="py-2.5 px-3.5 font-medium">Autonomy Tier</th>
+                      <th className="py-2.5 px-3.5 font-medium">Containment Reason</th>
+                      <th className="py-2.5 px-3.5 font-medium">Timestamp</th>
+                      <th className="py-2.5 px-3.5 font-medium text-right">Containment Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--sd-border)]/40">
+                    {blockedIps.map((record) => (
+                      <tr key={record.id || record.ip_address} className="hover:bg-[var(--sd-panel)]/40 transition">
+                        <td className="py-2.5 px-3.5 text-amber-300 font-semibold flex items-center gap-1.5">
+                          <ShieldAlert className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                          <span>{record.ip_address}</span>
+                        </td>
+                        <td className="py-2.5 px-3.5 text-[var(--sd-text)]">
+                          {record.hostname || selectedAgent.hostname || "Fleet-wide"}
+                        </td>
+                        <td className="py-2.5 px-3.5">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[var(--sd-panel)] border border-[var(--sd-border)] text-[var(--sd-wheat)]">
+                            {record.tier || "Tier 1"}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3.5 text-[var(--sd-text-muted)] max-w-xs truncate" title={record.reason || "Firewall rule"}>
+                          {record.reason || "Manual containment"}
+                        </td>
+                        <td className="py-2.5 px-3.5 text-[var(--sd-text-dim)] text-[11px]">
+                          {new Date(record.blocked_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </td>
+                        <td className="py-2.5 px-3.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleDirectUnblockIp(record.ip_address, record.agent_id)}
+                            disabled={unblockingIp === record.ip_address}
+                            className="inline-flex items-center gap-1 px-3 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-[11px] font-semibold transition cursor-pointer disabled:opacity-50"
+                          >
+                            {unblockingIp === record.ip_address ? (
+                              <>
+                                <RefreshCw className="h-3 w-3 animate-spin text-emerald-400" />
+                                <span>Unblocking...</span>
+                              </>
+                            ) : (
+                              <>
+                                <RotateCcw className="h-3 w-3 text-emerald-400" />
+                                <span>Unblock IP</span>
+                              </>
+                            )}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
           <div className="space-y-6">
                 {/* Header Banner */}
                 <div className="rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
@@ -3315,6 +3733,30 @@ export default function FleetPage() {
           }}
         />
       )}
+
+      {/* Fleet Governance Approval Modal */}
+      <ApprovalModal
+        isOpen={isFleetModalOpen}
+        onClose={() => setIsFleetModalOpen(false)}
+        token={fleetModalToken}
+        onDecisionSuccess={(updatedToken) => {
+          setIsFleetModalOpen(false);
+          setTokenIdInput(updatedToken.id);
+          setDispatchFeedback({
+            type: "success",
+            message: `Token #${updatedToken.id.slice(0, 8)} authorized by ${activeUser.label}. Ready to dispatch!`,
+            tokenId: updatedToken.id,
+          });
+          fetchLogs();
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("shielddesk:approvals-changed", {
+                detail: { action: updatedToken.status, token: updatedToken },
+              })
+            );
+          }
+        }}
+      />
     </div>
   );
 }

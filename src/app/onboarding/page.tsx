@@ -274,7 +274,7 @@ export default function OnboardingPage() {
             </div>
 
             <Link
-              href="/dashboard"
+              href="/"
               className="inline-flex items-center justify-center gap-2 py-3 px-8 bg-[var(--sd-gold)] hover:bg-[var(--sd-wheat)] text-[var(--sd-on-accent)] font-medium rounded-lg transition-all shadow-lg "
             >
               Enter ShieldDesk SOC Console <ArrowRight className="w-4 h-4" />

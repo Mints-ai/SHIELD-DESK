@@ -11,6 +11,7 @@ import (
 // This is the single source of truth for the state machine.
 // CRITICAL SAFETY RULE: PATCHING is ONLY reachable from SNAPSHOT_VERIFIED.
 var legalTransitions = map[models.JobState][]models.JobState{
+	models.StateRemediated: {models.StateRollbackRequired},
 	models.StateDetected: {
 		models.StateFIXAvailable,
 		models.StateHumanReview,

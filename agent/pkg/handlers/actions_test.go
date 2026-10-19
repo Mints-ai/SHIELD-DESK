@@ -2,13 +2,14 @@ package handlers
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
 )
 
 func TestActionHandler_TakeSafetySnapshot(t *testing.T) {
-	handler := NewActionHandler()
+	handler := newTestActionHandler()
 	snapID, err := handler.TakeSafetySnapshot("TEST-HOST-01")
 	if err != nil {
 		t.Fatalf("Failed to take safety snapshot: %v", err)
@@ -30,7 +31,7 @@ func TestActionHandler_TakeSafetySnapshot(t *testing.T) {
 }
 
 func TestActionHandler_SetControlPlane(t *testing.T) {
-	handler := NewActionHandler()
+	handler := newTestActionHandler()
 	targetURL := "https://control.shielddesk.internal:8443"
 	handler.SetControlPlane(targetURL)
 
@@ -40,7 +41,7 @@ func TestActionHandler_SetControlPlane(t *testing.T) {
 }
 
 func TestActionHandler_BlockIP_Validation(t *testing.T) {
-	handler := NewActionHandler()
+	handler := newTestActionHandler()
 
 	// 1. Empty IP
 	_, err := handler.BlockIP("TEST-HOST-01", "")
@@ -68,7 +69,7 @@ func TestActionHandler_BlockIP_Validation(t *testing.T) {
 }
 
 func TestActionHandler_UnblockIP_Validation(t *testing.T) {
-	handler := NewActionHandler()
+	handler := newTestActionHandler()
 
 	// 1. Empty IP
 	_, err := handler.UnblockIP("TEST-HOST-01", "")
@@ -93,7 +94,7 @@ func TestActionHandler_UnblockIP_Validation(t *testing.T) {
 }
 
 func TestActionHandler_KillProcess_SafetyGuardrails(t *testing.T) {
-	handler := NewActionHandler()
+	handler := newTestActionHandler()
 
 	// 1. Refuse PID 0 or PID 1
 	_, err := handler.KillProcess("TEST-HOST-01", 1)
@@ -110,7 +111,7 @@ func TestActionHandler_KillProcess_SafetyGuardrails(t *testing.T) {
 }
 
 func TestActionHandler_Rollback_NotFound(t *testing.T) {
-	handler := NewActionHandler()
+	handler := newTestActionHandler()
 
 	_, err := handler.Rollback("TEST-HOST-01", "non-existent-snapshot-id")
 	if err == nil {
@@ -119,7 +120,7 @@ func TestActionHandler_Rollback_NotFound(t *testing.T) {
 }
 
 func TestActionHandler_ConcurrentSnapshots(t *testing.T) {
-	handler := NewActionHandler()
+	handler := newTestActionHandler()
 	var wg sync.WaitGroup
 	errCh := make(chan error, 10)
 
@@ -139,5 +140,41 @@ func TestActionHandler_ConcurrentSnapshots(t *testing.T) {
 
 	for err := range errCh {
 		t.Errorf("Concurrent snapshot error: %v", err)
+	}
+}
+
+// Every command issued by these tests runs this inert helper, never host tools.
+func newTestActionHandler() *ActionHandler {
+	handler := NewActionHandler()
+	handler.command = func(name string, args ...string) *exec.Cmd {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestActionCommandHelper$", "--", name)
+		cmd.Args = append(cmd.Args, args...)
+		cmd.Env = append(os.Environ(), "SHIELDDESK_TEST_COMMAND_HELPER=1")
+		return cmd
+	}
+	return handler
+}
+
+func TestActionCommandHelper(t *testing.T) {
+	if os.Getenv("SHIELDDESK_TEST_COMMAND_HELPER") == "1" {
+		os.Exit(0)
+	}
+}
+
+func TestBlockIPRejectsProtectedAddressesBeforeAnyCommand(t *testing.T) {
+	for _, ip := range []string{"127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1"} {
+		handler := NewActionHandler()
+		handler.command = func(string, ...string) *exec.Cmd { t.Fatal("protected address invoked a host command"); return nil }
+		if _, err := handler.BlockIP("TEST", ip); err == nil {
+			t.Fatalf("accepted loopback %s", ip)
+		}
+		if len(handler.snapshots) != 0 {
+			t.Fatal("invalid request created a snapshot")
+		}
+	}
+	handler := NewActionHandler()
+	handler.command = func(string, ...string) *exec.Cmd { t.Fatal("gateway validation invoked a host command"); return nil }
+	if _, err := handler.BlockIP("TEST", "::ffff:10.0.0.1", "10.0.0.1"); err == nil {
+		t.Fatal("accepted equivalent management address")
 	}
 }

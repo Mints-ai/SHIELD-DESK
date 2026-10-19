@@ -102,7 +102,7 @@ test("ShieldDesk Edge Proxy: Complete IP Banning & Containment Suite", async (t)
       assert.equal(body.blocked, true);
       assert.equal(body.error, "IP_BANNED");
       assert.equal(body.clientIp, bannedIp);
-      assert.match(body.message, /banned by ShieldDesk SOC Security Policy/);
+      assert.match(body.message, /(?:banned|quarantined) by ShieldDesk SOC Security Policy/);
     }
   });
 

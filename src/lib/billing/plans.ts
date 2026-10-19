@@ -74,9 +74,9 @@ export async function getTenantSubscription(tenantId: string): Promise<TenantSub
       tier: string;
       status: string;
       current_period_end: string;
-      subscription_id: string;
+      stripe_subscription_id: string | null;
     }>(
-      `SELECT tenant_id, tier, status, current_period_end, subscription_id
+      `SELECT tenant_id, tier, status, current_period_end, stripe_subscription_id
        FROM tenant_subscriptions WHERE tenant_id = $1 LIMIT 1`,
       [tenantId]
     );
@@ -93,7 +93,8 @@ export async function getTenantSubscription(tenantId: string): Promise<TenantSub
         currentPeriodEnd: row.current_period_end,
         enrolledEndpoints: 0,
         maxEndpoints: plan.maxEndpoints,
-        subscriptionId: row.subscription_id,
+        paymentProvider: row.stripe_subscription_id ? "stripe" : undefined,
+        subscriptionId: row.stripe_subscription_id || undefined,
       };
     }
   } catch (err: unknown) {
@@ -223,11 +224,11 @@ export async function updateTenantSubscription(
 
   try {
     await query(
-      `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, subscription_id, updated_at)
-       VALUES ($1, $2, 'active', $3, $4, now())
+      `INSERT INTO tenant_subscriptions (id, tenant_id, tier, status, current_period_end, stripe_subscription_id, updated_at)
+       VALUES ($5, $1, $2, 'active', $3, $4, now())
        ON CONFLICT (tenant_id) DO UPDATE
-       SET tier = $2, status = 'active', current_period_end = $3, subscription_id = $4, updated_at = now()`,
-      [tenantId, tier, periodEnd, subscriptionId]
+       SET tier = $2, status = 'active', current_period_end = $3, stripe_subscription_id = $4, updated_at = now()`,
+      [tenantId, tier, periodEnd, provider === "stripe" ? subscriptionId : null, `ts_${crypto.randomUUID()}`]
     );
   } catch (err: unknown) {
     if (isProd) {
@@ -270,10 +271,10 @@ export async function setTenantSubscriptionStatus(
   };
   try {
     await query(
-      `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, subscription_id, updated_at)
-       VALUES ($1,$2,$3,$4,$5,NOW())
-       ON CONFLICT (tenant_id) DO UPDATE SET tier=$2, status=$3, current_period_end=$4, subscription_id=$5, updated_at=NOW()`,
-      [tenantId, tier, status, updated.currentPeriodEnd, updated.subscriptionId || null]
+      `INSERT INTO tenant_subscriptions (id, tenant_id, tier, status, current_period_end, stripe_subscription_id, updated_at)
+       VALUES ($6,$1,$2,$3,$4,$5,NOW())
+       ON CONFLICT (tenant_id) DO UPDATE SET tier=$2, status=$3, current_period_end=$4, stripe_subscription_id=$5, updated_at=NOW()`,
+      [tenantId, tier, status, updated.currentPeriodEnd, updated.subscriptionId || null, `ts_${crypto.randomUUID()}`]
     );
   } catch (err: unknown) {
     if (isProd) {

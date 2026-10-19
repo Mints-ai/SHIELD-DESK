@@ -41,7 +41,7 @@ interface MitigationTaskItem {
   title: string;
   description: string;
   tier: string;
-  status: "pending" | "approved" | "rejected" | "in_progress" | "completed";
+  status: "pending" | "approved" | "rejected" | "in_progress" | "completed" | "failed";
   blast_radius?: string;
   cve_id?: string | null;
   assigned_to?: string | null;
@@ -69,7 +69,8 @@ interface TaskDetailData {
 export default function SOCTaskBoardPage() {
   const taskDialogId = useId();
   const detailDialogId = useId();
-  const { activeUserId, activeUser } = useChat();
+  const { activeUserId, activeUser, devPersonasAllowed } = useChat();
+  const assignableOperators = devPersonasAllowed ? Object.values(DEV_USERS) : activeUserId ? [activeUser] : [];
 
   const canEditTask = activeUser.role !== "analyst";
   const canAssignTask = activeUser.role !== "analyst";
@@ -102,11 +103,15 @@ export default function SOCTaskBoardPage() {
 
   // Keep default assignee compatible with active operator's hierarchy tier
   useEffect(() => {
+    if (!devPersonasAllowed && newTaskAssignedTo in DEV_USERS) {
+      setNewTaskAssignedTo("");
+      return;
+    }
     const targetRole = getUserRole(newTaskAssignedTo);
     if (targetRole && getRoleTier(targetRole) > currentUserTier) {
       setNewTaskAssignedTo(activeUserId in DEV_USERS ? activeUserId : "dev-responder");
     }
-  }, [activeUserId, currentUserTier, newTaskAssignedTo]);
+  }, [activeUserId, currentUserTier, newTaskAssignedTo, devPersonasAllowed]);
   const [availablePlans, setAvailablePlans] = useState<
     Array<{
       id: string;
@@ -298,15 +303,16 @@ export default function SOCTaskBoardPage() {
       const body = await res.json();
       if (res.ok && body.success) {
         setTasks((prev) =>
-          prev.map((t) => (t.id === task.id ? { ...t, status: "completed" } : t))
+          prev.map((t) => (t.id === task.id ? { ...t, status: body.task?.status || body.status || "in_progress" } : t))
         );
         if (selectedTask?.id === task.id) {
-          setSelectedTask((prev) => (prev ? { ...prev, status: "completed" } : null));
-          openTaskDetail({ ...task, status: "completed" });
+          const updatedTask = body.task || { ...task, status: body.status || "in_progress" };
+          setSelectedTask(updatedTask);
+          openTaskDetail(updatedTask);
         }
         setExecutionNotice({
           taskId: task.id,
-          message: `Executed on ${body.agent?.hostname || "Endpoint"}: ${body.output || "Execution verified & recorded in audit log."}`,
+          message: `${body.status === "completed" ? "Completed" : "Dispatched"} on ${body.agent?.hostname || "Endpoint"}: ${body.output || "Awaiting endpoint execution report."}`,
         });
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("shielddesk:approvals-changed"));
@@ -535,6 +541,12 @@ export default function SOCTaskBoardPage() {
       headerBadge: "bg-[var(--sd-success-dim)] text-[var(--sd-success)] border-[var(--sd-success-border)]",
       items: filteredTasks.filter((t) => t.status === "completed"),
     },
+    ...(filteredTasks.some((t) => t.status === "failed") ? [{
+      id: "failed",
+      label: "Execution Failed",
+      headerBadge: "bg-[var(--sd-critical-dim)] text-[var(--sd-critical)] border-[var(--sd-critical-border)]",
+      items: filteredTasks.filter((t) => t.status === "failed"),
+    }] : []),
   ];
 
   return (
@@ -900,8 +912,8 @@ export default function SOCTaskBoardPage() {
                 onChange={(e) => setNewTaskAssignedTo(e.target.value)}
                 className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
               >
-                {(Object.keys(DEV_USERS) as DevUserId[]).map((userId) => {
-                  const user = DEV_USERS[userId];
+                {assignableOperators.map((user) => {
+                  const userId = user.id;
                   const userTier = getRoleTier(user.role);
                   const isHigherTier = userTier > currentUserTier;
                   return (
@@ -1139,8 +1151,8 @@ export default function SOCTaskBoardPage() {
                     }}
                     className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-wheat)] font-semibold border border-[var(--sd-border)] rounded-lg px-2.5 py-1.5 outline-none font-mono cursor-pointer"
                   >
-                    {(Object.keys(DEV_USERS) as DevUserId[]).map((userId) => {
-                      const user = DEV_USERS[userId];
+                    {assignableOperators.map((user) => {
+                      const userId = user.id;
                       const userTier = getRoleTier(user.role);
                       const isHigherTier = userTier > currentUserTier;
                       return (
