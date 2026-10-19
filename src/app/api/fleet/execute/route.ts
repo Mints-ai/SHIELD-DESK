@@ -159,52 +159,10 @@ export async function POST(req: NextRequest) {
       const hostname = agent?.hostname || agentId;
       const ip = agent?.ip_address || "";
 
-      // 2. Ensure an active mitigation plan exists for this tenant
-      let planId: string | null = null;
-      try {
-        const planRes = await query<{ id: string }>(
-          "SELECT id FROM mitigation_plans WHERE tenant_id = $1 AND status != 'archived' ORDER BY created_at DESC LIMIT 1",
-          [caller.tenant_id]
-        );
-        if (planRes.rows.length > 0) {
-          planId = planRes.rows[0].id;
-        } else {
-          // Check for existing incident
-          let incidentId: string | null = null;
-          const incRes = await query<{ id: string }>(
-            "SELECT id FROM incidents WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1",
-            [caller.tenant_id]
-          );
-          if (incRes.rows.length > 0) {
-            incidentId = incRes.rows[0].id;
-          } else {
-            const newInc = await query<{ id: string }>(
-              `INSERT INTO incidents (tenant_id, incident_code, severity, status, title, description, created_at, updated_at)
-               VALUES ($1, $2, 'high', 'investigating', 'Fleet Containment & Host Governance Incident', 'Endpoint containment actions dispatched via Fleet Console', now(), now())
-               RETURNING id`,
-              [caller.tenant_id, `INC-FLEET-${Date.now().toString(36).toUpperCase()}`]
-            );
-            incidentId = newInc.rows[0].id;
-          }
-
-          const newPlan = await query<{ id: string }>(
-            `INSERT INTO mitigation_plans (incident_id, tenant_id, version, status, summary, created_at, updated_at)
-             VALUES ($1, $2, 1, 'active', 'Fleet Threat Containment & Host Governance Plan', now(), now())
-             RETURNING id`,
-            [incidentId, caller.tenant_id]
-          );
-          planId = newPlan.rows[0].id;
-        }
-      } catch (dbErr) {
-        console.error("[Execute] Failed to ensure mitigation plan:", dbErr);
-      }
-
-      if (!planId) {
-        return NextResponse.json(
-          { error: "Failed to allocate or retrieve mitigation plan for fleet governance." },
-          { status: 500 }
-        );
-      }
+      // 2. Optional Plan Association (Default to null / Standalone unless explicitly provided)
+      const planId: string | null = (body.planId && typeof body.planId === "string" && body.planId.trim())
+        ? body.planId.trim()
+        : null;
 
       // 3. Ensure caller exists in users table to satisfy foreign keys
       try {

@@ -137,7 +137,8 @@ export async function PATCH(
     const newStatus = body.status && allowedStatuses.includes(body.status)
       ? body.status
       : currentTask.status;
-    if (newStatus === "completed" && currentTask.status !== "completed" && currentTask.execution_command_id) {
+    const canManualOverride = session.role === "super_admin" || session.role === "system_admin" || session.role === "responder";
+    if (newStatus === "completed" && currentTask.status !== "completed" && currentTask.execution_command_id && !canManualOverride) {
       return NextResponse.json({ error: "This task must be completed by its endpoint execution report." }, { status: 409 });
     }
 
@@ -157,8 +158,8 @@ export async function PATCH(
       ? body.blastRadius.trim()
       : currentTask.blast_radius;
 
-    const newPlanId = typeof body.planId === "string" && body.planId.trim()
-      ? body.planId.trim()
+    const newPlanId = body.planId !== undefined
+      ? (body.planId && typeof body.planId === "string" && body.planId.trim() ? body.planId.trim() : null)
       : currentTask.plan_id;
 
     const newTier = ["Tier 1", "Tier 2", "Tier 3"].includes(body.tier)

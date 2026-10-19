@@ -167,7 +167,9 @@ export async function POST(req: NextRequest) {
     }
 
     const taskId = crypto.randomUUID();
-    let planId = body.planId;
+    let planId = body.planId && typeof body.planId === "string" && body.planId.trim()
+      ? body.planId.trim()
+      : null;
 
     // If planId specified, verify it belongs to caller's tenant
     if (planId) {
@@ -180,28 +182,7 @@ export async function POST(req: NextRequest) {
           : [planId, session.tenantId];
         const planCheck = await query<{ id: string; tenant_id: string }>(checkSql, checkParams);
         if (planCheck.rows.length === 0) {
-          return NextResponse.json(
-            { error: "Mitigation plan not found" },
-            { status: 404 }
-          );
-        }
-      } catch {
-        return NextResponse.json(
-          { error: "Database error validating mitigation plan" },
-          { status: 500 }
-        );
-      }
-    } else {
-      // If no planId specified, link to the tenant's latest active incident mitigation plan
-      try {
-        const planRes = await query<{ id: string }>(
-          "SELECT id FROM mitigation_plans WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1",
-          [session.tenantId]
-        );
-        if (planRes.rows.length > 0) {
-          planId = planRes.rows[0].id;
-        } else {
-          planId = null;
+          planId = null; // Do not fail task creation; treat as standalone task
         }
       } catch {
         planId = null;

@@ -452,7 +452,7 @@ export async function generateMitigationPlan(
     .filter(Boolean);
 
   const cveResult = await query<{ cve_id: string }>(
-    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE incident_code = $1)",
+    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE (incident_code = $1 OR id::text = $1) LIMIT 1)",
     [args.incidentId]
   );
   const linkedCveRows = cveResult.rows;
@@ -469,54 +469,54 @@ export async function generateMitigationPlan(
 
   const immediateTasks = assetNames.length
     ? [
-        {
-          horizon: "immediate" as const,
-          title: `Isolate affected asset(s): ${assetNames.join(", ")}`,
-          description: "Contain compromised hosts to halt lateral network propagation",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: `Affected Hosts: ${assetNames.join(", ")}`,
-        },
-        {
-          horizon: "immediate" as const,
-          title: "Revoke exposed credentials and rotate session keys",
-          description: "Invalidate tokens associated with users on compromised hosts",
-          tier: "Tier 1",
-          status: "completed" as const,
-          blastRadius: "User Sessions",
-        },
-      ]
+      {
+        horizon: "immediate" as const,
+        title: `Isolate affected asset(s): ${assetNames.join(", ")}`,
+        description: "Contain compromised hosts to halt lateral network propagation",
+        tier: "Tier 2",
+        status: "pending" as const,
+        blastRadius: `Affected Hosts: ${assetNames.join(", ")}`,
+      },
+      {
+        horizon: "immediate" as const,
+        title: "Revoke exposed credentials and rotate session keys",
+        description: "Invalidate tokens associated with users on compromised hosts",
+        tier: "Tier 1",
+        status: "completed" as const,
+        blastRadius: "User Sessions",
+      },
+    ]
     : [
-        {
-          horizon: "immediate" as const,
-          title: "Confirm scope of affected assets before further containment",
-          description: "Scan subnet telemetry to discover unmapped affected hosts",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: "Audit Scope",
-        },
-      ];
+      {
+        horizon: "immediate" as const,
+        title: "Confirm scope of affected assets before further containment",
+        description: "Scan subnet telemetry to discover unmapped affected hosts",
+        tier: "Tier 2",
+        status: "pending" as const,
+        blastRadius: "Audit Scope",
+      },
+    ];
 
   const patchTasks = resolvedCves.length
     ? resolvedCves.map((c) => ({
+      horizon: "short_term" as const,
+      title: `Deploy remediation for ${c.cveId}`,
+      description: `Apply vendor patches and configuration hardening for ${c.cveId}`,
+      tier: "Tier 2",
+      status: "pending" as const,
+      blastRadius: "Target Service Endpoints",
+      cveId: c.cveId,
+    }))
+    : [
+      {
         horizon: "short_term" as const,
-        title: `Deploy remediation for ${c.cveId}`,
-        description: `Apply vendor patches and configuration hardening for ${c.cveId}`,
+        title: "Patch affected systems and review attack vector",
+        description: "Apply standard security updates and review lateral movement logs",
         tier: "Tier 2",
         status: "pending" as const,
-        blastRadius: "Target Service Endpoints",
-        cveId: c.cveId,
-      }))
-    : [
-        {
-          horizon: "short_term" as const,
-          title: "Patch affected systems and review attack vector",
-          description: "Apply standard security updates and review lateral movement logs",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: "Host Environment",
-        },
-      ];
+        blastRadius: "Host Environment",
+      },
+    ];
 
   const longTermTasks = [
     {
@@ -559,7 +559,7 @@ export async function generateMitigationPlan(
           tenant_id: string;
         }>(
           `SELECT id, tenant_id FROM incidents
-           WHERE incident_code = $1 ${incidentTenantScope}
+           WHERE (incident_code = $1 OR id::text = $1) ${incidentTenantScope}
            LIMIT 1 FOR UPDATE`,
           incidentParams
         );
