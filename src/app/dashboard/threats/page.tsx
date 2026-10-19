@@ -28,6 +28,7 @@ import {
   Terminal,
   Power,
   Code,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { YaraRuleTesterModal } from "@/components/threats/YaraRuleTesterModal";
@@ -112,6 +113,69 @@ export interface WebhookEndpointItem {
   configured: boolean;
 }
 
+export interface WebhookDeliveryLogItem {
+  id: string;
+  delivery_id: string;
+  tenant_id: string;
+  endpoint_id: string;
+  endpoint_name?: string;
+  event_type: string;
+  severity?: string;
+  status_code?: number;
+  latency_ms?: number;
+  payload?: Record<string, unknown>;
+  response_body?: string;
+  success: boolean;
+  attempts: number;
+  is_dlq: boolean;
+  status: "DELIVERED" | "DEAD_LETTER" | "RETRIED" | "PERMANENT_FAILURE";
+  error_message?: string;
+  destination?: string;
+  last_attempt_at?: string;
+  created_at: string;
+}
+
+export interface WebhookMetricsData {
+  total_dispatches: number;
+  delivered_count: number;
+  dlq_pending_count: number;
+  retried_count: number;
+  success_rate: number;
+  avg_latency_ms: number;
+  p95_latency_ms: number;
+  status_code_breakdown: {
+    "2xx": number;
+    "4xx": number;
+    "5xx": number;
+    timeout: number;
+  };
+}
+
+function detectClientPlatform(urlStr: string): "discord" | "slack" | "teams" | null {
+  try {
+    const url = new URL(urlStr);
+    const host = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase();
+    if (host.includes("discord.com") || host.includes("discordapp.com")) {
+      if (pathname.includes("/api/webhooks")) return "discord";
+    }
+    if (host.includes("slack.com") || host.includes("hooks.slack.com")) {
+      return "slack";
+    }
+    if (
+      host.includes("office.com") ||
+      host.includes("office365.com") ||
+      host.includes("webhook.office.com") ||
+      pathname.includes("incomingwebhook")
+    ) {
+      return "teams";
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 import { useChat } from "@/lib/context/ChatContext";
 
 export default function ThreatsDashboardPage() {
@@ -183,6 +247,13 @@ export default function ThreatsDashboardPage() {
   const [webhookCreating, setWebhookCreating] = useState(false);
   const [webhookFeedback, setWebhookFeedback] = useState<string | null>(null);
   const [selectedEndpointForTest, setSelectedEndpointForTest] = useState<string>("");
+  const [webhookDeliveryLogs, setWebhookDeliveryLogs] = useState<WebhookDeliveryLogItem[]>([]);
+  const [webhookMetrics, setWebhookMetrics] = useState<WebhookMetricsData | null>(null);
+  const [webhookLogsFilter, setWebhookLogsFilter] = useState<"all" | "dlq" | "delivered">("all");
+  const [retryingDeliveryId, setRetryingDeliveryId] = useState<string | null>(null);
+  const [retryingAllDlq, setRetryingAllDlq] = useState<boolean>(false);
+  const [inspectingLog, setInspectingLog] = useState<WebhookDeliveryLogItem | null>(null);
+  const [autoDetectedPlatform, setAutoDetectedPlatform] = useState<"discord" | "slack" | "teams" | null>(null);
 
   const fetchThreatData = async (silent = false) => {
     try {
@@ -433,9 +504,9 @@ export default function ThreatsDashboardPage() {
     }
   };
 
-  const fetchWebhookEndpoints = useCallback(async () => {
+  const fetchWebhookEndpoints = useCallback(async (filter = webhookLogsFilter) => {
     try {
-      const res = await fetch("/api/webhooks", {
+      const res = await fetch(`/api/webhooks?status=${filter}&limit=50`, {
         headers: {
           "X-ShieldDesk-User": activeUserId,
         },
@@ -448,18 +519,24 @@ export default function ThreatsDashboardPage() {
             setSelectedEndpointForTest((prev) => prev || data.endpoints[0].id);
           }
         }
+        if (Array.isArray(data.delivery_logs)) {
+          setWebhookDeliveryLogs(data.delivery_logs);
+        }
+        if (data.metrics) {
+          setWebhookMetrics(data.metrics);
+        }
         setCanManageWebhooks(Boolean(data.can_manage_webhooks));
       }
     } catch (err) {
       console.error("Failed to load webhook endpoints:", err);
     }
-  }, [activeUserId]);
+  }, [activeUserId, webhookLogsFilter]);
 
   useEffect(() => {
     if (activeTab === "ingest") {
-      void fetchWebhookEndpoints();
+      void Promise.resolve().then(() => fetchWebhookEndpoints(webhookLogsFilter));
     }
-  }, [activeTab, fetchWebhookEndpoints]);
+  }, [activeTab, webhookLogsFilter, fetchWebhookEndpoints]);
 
   const dispatchTestWebhook = async (endpointId?: string) => {
     setLoading(true);
@@ -475,10 +552,68 @@ export default function ThreatsDashboardPage() {
       });
       const data = await res.json();
       setWebhookLog(data);
+      await fetchWebhookEndpoints();
     } catch {
       setWebhookLog({ message: "Failed to dispatch test webhook" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRetryDelivery = async (deliveryId: string) => {
+    setRetryingDeliveryId(deliveryId);
+    try {
+      const res = await fetch("/api/webhooks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({
+          action: "retry_delivery",
+          delivery_id: deliveryId,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setWebhookFeedback(`Webhook delivery '${deliveryId}' replayed successfully (${data.log?.latency_ms ?? 0}ms).`);
+      } else {
+        setWebhookFeedback(`Retry failed: ${data.message || data.error || "Unknown error"}`);
+      }
+      setTimeout(() => setWebhookFeedback(null), 4000);
+      await fetchWebhookEndpoints();
+    } catch {
+      setWebhookFeedback("Network error retrying webhook delivery.");
+    } finally {
+      setRetryingDeliveryId(null);
+    }
+  };
+
+  const handleRetryAllDlq = async () => {
+    setRetryingAllDlq(true);
+    try {
+      const res = await fetch("/api/webhooks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({
+          action: "retry_all_dlq",
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setWebhookFeedback(data.message || `DLQ replay complete: ${data.succeeded_count} recovered.`);
+      } else {
+        setWebhookFeedback(`Batch retry error: ${data.error || "Failed to batch retry"}`);
+      }
+      setTimeout(() => setWebhookFeedback(null), 5000);
+      await fetchWebhookEndpoints();
+    } catch {
+      setWebhookFeedback("Network error replaying DLQ batch.");
+    } finally {
+      setRetryingAllDlq(false);
     }
   };
 
@@ -1048,13 +1183,75 @@ export default function ThreatsDashboardPage() {
         {/* Tab 4: Ingestion & HMAC Webhooks */}
         {activeTab === "ingest" && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Telemetry Card */}
-              <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-3 shadow-xs">
+            {/* KPI Performance Bar */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-1">
+                <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                  Total Deliveries
+                </div>
+                <div className="text-xl font-light text-[var(--sd-text)] font-mono">
+                  {(webhookMetrics?.total_dispatches ?? 0).toLocaleString()}
+                </div>
+                <div className="text-[10px] text-[var(--sd-text-muted)]">All time audit events</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-1">
+                <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                  Success Rate
+                </div>
+                <div className="text-xl font-light text-emerald-400 font-mono">
+                  {webhookMetrics?.success_rate ?? 100}%
+                </div>
+                <div className="text-[10px] text-emerald-400/80">
+                  {webhookMetrics?.delivered_count ?? 0} delivered
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-1">
+                <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                  Average Latency
+                </div>
+                <div className="text-xl font-light text-[var(--sd-pine-bright)] font-mono">
+                  {webhookMetrics?.avg_latency_ms ?? 0}ms
+                </div>
+                <div className="text-[10px] text-[var(--sd-text-muted)]">Target response time</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-1">
+                <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                  P95 Latency
+                </div>
+                <div className="text-xl font-light text-[var(--sd-wheat)] font-mono">
+                  {webhookMetrics?.p95_latency_ms ?? 0}ms
+                </div>
+                <div className="text-[10px] text-[var(--sd-text-muted)]">95th percentile SLA</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface shadow-xs space-y-1 col-span-2 sm:col-span-1">
+                <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                  DLQ Pending
+                </div>
+                <div
+                  className={cn(
+                    "text-xl font-mono font-medium",
+                    (webhookMetrics?.dlq_pending_count ?? 0) > 0 ? "text-rose-400 font-bold" : "text-[var(--sd-text-muted)]"
+                  )}
+                >
+                  {webhookMetrics?.dlq_pending_count ?? 0}
+                </div>
+                <div className="text-[10px] text-[var(--sd-text-muted)]">
+                  {(webhookMetrics?.dlq_pending_count ?? 0) > 0 ? "Requires re-dispatch" : "Queue nominal"}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-5">
+              {/* Telemetry Card - Full Width Stacked */}
+              <div className="p-5 rounded-xl border border-[var(--sd-border)] sd-surface space-y-4 shadow-xs">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
                     <Radio className="h-4 w-4 text-[var(--sd-pine)]" />
-                    gRPC Ingest Service &amp; PII Scrubbing
+                    <span>gRPC Ingest Service &amp; PII Scrubbing</span>
                   </h3>
                   <button
                     onClick={handleResetPIIMetrics}
@@ -1070,7 +1267,7 @@ export default function ThreatsDashboardPage() {
                   In-flight regex tokenizer redacting sensitive credentials before events reach the NATS message bus.
                 </p>
 
-                <div className="space-y-2 pt-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1.5 pt-2">
                   <div className="flex justify-between text-[13px] py-1.5 border-b border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Agent Handshake Protocol:</span>
                     <span className="font-mono text-[var(--sd-text)] font-medium">
@@ -1101,7 +1298,7 @@ export default function ThreatsDashboardPage() {
                       {(telemetry?.pii_redacted_today ?? 0).toLocaleString()} redacted
                     </span>
                   </div>
-                  <div className="flex justify-between text-[13px] py-1.5">
+                  <div className="flex justify-between text-[13px] py-1.5 border-b md:border-b-0 border-[var(--sd-border)]">
                     <span className="text-[var(--sd-text-muted)]">Ingestion Message Bus:</span>
                     <span className="font-mono text-[var(--sd-text)] font-medium">
                       {telemetry?.bus_status || "Active Ingestion Loop"}
@@ -1110,30 +1307,30 @@ export default function ThreatsDashboardPage() {
                 </div>
 
                 {/* Live PII Token Redaction Breakdown */}
-                <div className="mt-3 pt-3 border-t border-[var(--sd-border)]">
+                <div className="mt-2 pt-3 border-t border-[var(--sd-border)]">
                   <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider mb-2">
                     Live PII Redaction Breakdown
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                    <div className="p-2.5 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
                       <div className="text-[var(--sd-text-muted)] text-[11px]">JWT Tokens</div>
                       <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
                         {(telemetry?.pii_categories?.jwt_tokens ?? 0).toLocaleString()}
                       </div>
                     </div>
-                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                    <div className="p-2.5 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
                       <div className="text-[var(--sd-text-muted)] text-[11px]">Secrets / Keys</div>
                       <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
                         {(telemetry?.pii_categories?.passwords_and_secrets ?? 0).toLocaleString()}
                       </div>
                     </div>
-                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                    <div className="p-2.5 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
                       <div className="text-[var(--sd-text-muted)] text-[11px]">Credit Cards</div>
                       <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
                         {(telemetry?.pii_categories?.credit_cards ?? 0).toLocaleString()}
                       </div>
                     </div>
-                    <div className="p-2 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
+                    <div className="p-2.5 rounded-lg bg-[var(--sd-surface-subtle)] border border-[var(--sd-border)]">
                       <div className="text-[var(--sd-text-muted)] text-[11px]">User Emails</div>
                       <div className="font-mono font-medium text-sm text-[var(--sd-text)] mt-0.5">
                         {(telemetry?.pii_categories?.emails ?? 0).toLocaleString()}
@@ -1203,7 +1400,7 @@ export default function ThreatsDashboardPage() {
 
                 {/* Webhooks Grid */}
                 {webhookEndpoints.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                     {webhookEndpoints.map((ep) => {
                       const isDiscord = ep.type === "discord";
                       const isSlack = ep.type === "slack";
@@ -1402,6 +1599,191 @@ export default function ThreatsDashboardPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Subsection: Delivery History & DLQ Audit Ledger Table */}
+                <div className="pt-6 border-t border-[var(--sd-border)] space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--sd-border)] pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-[var(--sd-panel)] text-[var(--sd-pine-bright)] border border-[var(--sd-border)]">
+                        <History className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
+                          <span>Delivery History &amp; Dead-Letter Queue (DLQ)</span>
+                          <span className="px-2 py-0.2 rounded-full text-[10px] font-mono bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]">
+                            {webhookDeliveryLogs.length} events
+                          </span>
+                        </h3>
+                        <p className="text-xs text-[var(--sd-text-muted)]">
+                          Millisecond-resolution audit trail of all outbound alert dispatches with replay recovery.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {/* Status filter tabs */}
+                      <div className="inline-flex rounded-lg p-0.5 bg-[var(--sd-panel)] border border-[var(--sd-border)] text-xs">
+                        <button
+                          onClick={() => setWebhookLogsFilter("all")}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-[11px] font-medium transition cursor-pointer",
+                            webhookLogsFilter === "all"
+                              ? "bg-[var(--sd-panel-raised)] text-[var(--sd-text)] shadow-xs"
+                              : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+                          )}
+                        >
+                          All
+                        </button>
+                        <button
+                          onClick={() => setWebhookLogsFilter("dlq")}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-[11px] font-medium transition cursor-pointer flex items-center gap-1",
+                            webhookLogsFilter === "dlq"
+                              ? "bg-rose-500/20 text-rose-300 shadow-xs border border-rose-500/30"
+                              : "text-[var(--sd-text-muted)] hover:text-rose-400"
+                          )}
+                        >
+                          <span>Dead-Letter (DLQ)</span>
+                          {(webhookMetrics?.dlq_pending_count ?? 0) > 0 && (
+                            <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[9px] font-bold">
+                              {webhookMetrics?.dlq_pending_count}
+                            </span>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => setWebhookLogsFilter("delivered")}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-[11px] font-medium transition cursor-pointer",
+                            webhookLogsFilter === "delivered"
+                              ? "bg-emerald-500/20 text-emerald-300 shadow-xs border border-emerald-500/30"
+                              : "text-[var(--sd-text-muted)] hover:text-emerald-400"
+                          )}
+                        >
+                          Delivered (2xx)
+                        </button>
+                      </div>
+
+                      {/* Replay All DLQ Button */}
+                      {(webhookMetrics?.dlq_pending_count ?? 0) > 0 && (
+                        <button
+                          onClick={handleRetryAllDlq}
+                          disabled={retryingAllDlq}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium shadow-xs transition cursor-pointer disabled:opacity-50"
+                          title="Replay all failed DLQ deliveries"
+                        >
+                          <RotateCcw className={cn("h-3 w-3", retryingAllDlq && "animate-spin")} />
+                          <span>{retryingAllDlq ? "Replaying..." : "Replay All DLQ"}</span>
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => fetchWebhookEndpoints()}
+                        title="Refresh logs"
+                        className="p-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Table */}
+                  <div className="overflow-x-auto rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)]">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-[var(--sd-border)] text-[var(--sd-text-muted)] text-[11px] uppercase font-mono tracking-wider bg-[var(--sd-panel)]">
+                          <th className="py-2.5 px-3">Status</th>
+                          <th className="py-2.5 px-3">Timestamp</th>
+                          <th className="py-2.5 px-3">Event</th>
+                          <th className="py-2.5 px-3">Target Endpoint</th>
+                          <th className="py-2.5 px-3">Latency</th>
+                          <th className="py-2.5 px-3">Attempts</th>
+                          <th className="py-2.5 px-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--sd-border)]">
+                        {webhookDeliveryLogs.length > 0 ? (
+                          webhookDeliveryLogs.map((log) => {
+                            const isDelivered = log.status === "DELIVERED";
+                            const isRetried = log.status === "RETRIED";
+                            const isDlq = log.is_dlq || log.status === "DEAD_LETTER";
+                            const latency = log.latency_ms ?? 0;
+
+                            return (
+                              <tr key={log.id} className="hover:bg-[var(--sd-panel-hover)]/40 transition">
+                                <td className="py-2.5 px-3">
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium",
+                                      isDelivered
+                                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                        : isRetried
+                                          ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                          : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                                    )}
+                                  >
+                                    {isDelivered ? "200 OK" : isRetried ? "RETRIED" : `${log.status_code || 500} DLQ`}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-[11px] text-[var(--sd-text-muted)]">
+                                  {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-[11px] text-[var(--sd-text)]">
+                                  {log.event_type}
+                                </td>
+                                <td className="py-2.5 px-3 text-[11px] text-[var(--sd-text-muted)] truncate max-w-xs" title={log.destination || log.endpoint_name}>
+                                  {log.endpoint_name || log.endpoint_id}
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-[11px]">
+                                  <span
+                                    className={cn(
+                                      latency < 100
+                                        ? "text-emerald-400"
+                                        : latency < 500
+                                          ? "text-amber-400"
+                                          : "text-rose-400"
+                                    )}
+                                  >
+                                    {latency}ms
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 font-mono text-[11px] text-[var(--sd-text-muted)]">
+                                  {log.attempts || 1}
+                                </td>
+                                <td className="py-2.5 px-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {isDlq && (
+                                      <button
+                                        onClick={() => handleRetryDelivery(log.delivery_id)}
+                                        disabled={retryingDeliveryId === log.delivery_id}
+                                        className="px-2 py-1 rounded text-[11px] font-medium bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                                        title="Retry dead-letter dispatch"
+                                      >
+                                        <RotateCcw className={cn("h-3 w-3", retryingDeliveryId === log.delivery_id && "animate-spin")} />
+                                        <span>Retry</span>
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => setInspectingLog(log)}
+                                      className="px-2 py-1 rounded text-[11px] font-medium bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text)] border border-[var(--sd-border)] transition cursor-pointer"
+                                    >
+                                      Inspect
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={7} className="py-8 text-center text-xs text-[var(--sd-text-muted)] font-mono">
+                              No webhook delivery logs found for this filter.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
 
               {/* Add Webhook Endpoint Modal */}
@@ -1480,14 +1862,32 @@ export default function ThreatsDashboardPage() {
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
-                          Destination URL
-                        </label>
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                            Destination URL
+                          </label>
+                          {autoDetectedPlatform && (
+                            <span className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              <Zap className="h-3 w-3" />
+                              Auto-detected: {autoDetectedPlatform.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
                         <input
                           type="url"
                           required
                           value={newWebhookUrl}
-                          onChange={(e) => setNewWebhookUrl(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setNewWebhookUrl(val);
+                            const detected = detectClientPlatform(val);
+                            if (detected) {
+                              setAutoDetectedPlatform(detected);
+                              setNewWebhookType(detected);
+                            } else {
+                              setAutoDetectedPlatform(null);
+                            }
+                          }}
                           placeholder="https://hooks.slack.com/services/... or https://siem.corp/webhook"
                           className="w-full px-3 py-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs text-[var(--sd-text)] font-mono focus:outline-hidden focus:border-[var(--sd-pine)] transition"
                         />
@@ -1564,6 +1964,93 @@ export default function ThreatsDashboardPage() {
                 </div>
               )}
             </div>
+
+            {/* Inspector Modal */}
+            {inspectingLog && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in duration-150">
+                <div className="relative w-full max-w-2xl rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+                  <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-lg bg-[var(--sd-pine)]/10 text-[var(--sd-pine)] border border-[var(--sd-pine)]/20">
+                        <Terminal className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-medium text-[var(--sd-text)]">
+                          Webhook Delivery Inspector
+                        </h3>
+                        <p className="text-[11px] text-[var(--sd-text-muted)] font-mono">
+                          ID: {inspectingLog.delivery_id}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setInspectingLog(null)}
+                      className="text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] p-1 rounded-lg text-sm cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
+                    <div className="p-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)]">
+                      <div className="text-[10px] text-[var(--sd-text-muted)] uppercase">Status</div>
+                      <div className="font-medium mt-0.5 text-[var(--sd-text)]">{inspectingLog.status} ({inspectingLog.status_code || 0})</div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)]">
+                      <div className="text-[10px] text-[var(--sd-text-muted)] uppercase">Latency</div>
+                      <div className="font-medium mt-0.5 text-[var(--sd-text)]">{inspectingLog.latency_ms ?? 0}ms</div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)]">
+                      <div className="text-[10px] text-[var(--sd-text-muted)] uppercase">Attempts</div>
+                      <div className="font-medium mt-0.5 text-[var(--sd-text)]">{inspectingLog.attempts}</div>
+                    </div>
+                    <div className="p-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)]">
+                      <div className="text-[10px] text-[var(--sd-text-muted)] uppercase">DLQ Flag</div>
+                      <div className="font-medium mt-0.5 text-[var(--sd-text)]">{inspectingLog.is_dlq ? "YES" : "NO"}</div>
+                    </div>
+                  </div>
+
+                  {inspectingLog.error_message && (
+                    <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs font-mono space-y-1">
+                      <div className="font-semibold uppercase text-[10px] tracking-wider">Error Message</div>
+                      <div>{inspectingLog.error_message}</div>
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider font-mono">
+                      Dispatched Payload (JSON)
+                    </div>
+                    <pre className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[11px] font-mono text-[var(--sd-text)] overflow-x-auto max-h-52">
+                      {JSON.stringify(inspectingLog.payload || {}, null, 2)}
+                    </pre>
+                  </div>
+
+                  {inspectingLog.response_body && (
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider font-mono">
+                        Destination Response Body
+                      </div>
+                      <pre className="p-3 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[11px] font-mono text-[var(--sd-text-muted)] overflow-x-auto max-h-36">
+                        {inspectingLog.response_body}
+                      </pre>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-3 border-t border-[var(--sd-border)]">
+                    <span className="text-[10px] text-[var(--sd-text-muted)] font-mono">
+                      Timestamp: {new Date(inspectingLog.created_at).toISOString()}
+                    </span>
+                    <button
+                      onClick={() => setInspectingLog(null)}
+                      className="px-4 py-1.5 rounded-lg bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] border border-[var(--sd-border)] transition cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

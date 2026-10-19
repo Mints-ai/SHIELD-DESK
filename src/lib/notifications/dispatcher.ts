@@ -1,7 +1,8 @@
 /**
  * Enterprise Real-Time Alerting & Governance Dispatcher
  * Dispatches actionable webhook notifications to Slack, Microsoft Teams,
- * and PagerDuty when security events, mitigation plans, or approval tokens occur.
+ * Discord, custom tenant endpoints, and PagerDuty with millisecond latency tracking
+ * and automatic Dead-Letter Queue (DLQ) logging.
  */
 
 export interface SecurityAlertNotification {
@@ -22,7 +23,22 @@ export interface SecurityAlertNotification {
   metadata?: Record<string, unknown>;
 }
 
-export async function dispatchSecurityNotification(notification: SecurityAlertNotification): Promise<{ success: boolean; channelsDispatched: string[] }> {
+const SEVERITY_LEVELS: Record<string, number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
+};
+
+function severityMeetsMinimum(eventSeverity?: string, minSeverity?: string): boolean {
+  const eventVal = SEVERITY_LEVELS[(eventSeverity || "medium").toLowerCase()] ?? 2;
+  const minVal = SEVERITY_LEVELS[(minSeverity || "medium").toLowerCase()] ?? 2;
+  return eventVal >= minVal;
+}
+
+export async function dispatchSecurityNotification(
+  notification: SecurityAlertNotification
+): Promise<{ success: boolean; channelsDispatched: string[] }> {
   const slackUrl = process.env.SLACK_WEBHOOK_URL;
   const teamsUrl = process.env.TEAMS_WEBHOOK_URL;
   const discordUrl = process.env.DISCORD_WEBHOOK_URL;
@@ -39,64 +55,13 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
   };
   const color = notification.severity ? colorMap[notification.severity] : "#123826";
 
-  // Send custom tenant endpoints and generic SIEM targets to Go Webhook Microservice
-  const goWebhookBaseUrl = process.env.GO_WEBHOOK_URL || "http://127.0.0.1:8080";
-  const asyncSecondaryTargets: Array<{ name: string; url: string }> = [];
-  if (genericUrl) {
-    asyncSecondaryTargets.push({ name: "generic_webhook", url: genericUrl });
-  }
-
-  // Retrieve dynamic custom webhooks configured for this tenant in DB / memory
-  try {
-    const { getTenantWebhookEndpoints } = await import("@/lib/webhooks/webhookStore");
-    const endpoints = await getTenantWebhookEndpoints(notification.tenantId);
-    endpoints
-      .filter((ep) => ep.enabled && ep.destination)
-      .forEach((ep) => {
-        if (ep.destination !== discordUrl && ep.destination !== slackUrl && ep.destination !== teamsUrl) {
-          asyncSecondaryTargets.push({ name: `custom_${ep.type}_${ep.id}`, url: ep.destination });
-        }
-      });
-  } catch {
-    // Non-blocking fallback
-  }
-
-  if (asyncSecondaryTargets.length > 0) {
-    try {
-      const goPromises = asyncSecondaryTargets.map((target) =>
-        fetch(`${goWebhookBaseUrl}/dispatch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            target_url: target.url,
-            secret_key: process.env.SHIELDDESK_WEBHOOK_SECRET || "sd_webhook_dev_secret",
-            event: notification.type,
-            tenant_id: notification.tenantId,
-            data: {
-              title: notification.title,
-              description: notification.description,
-              severity: notification.severity || "standard",
-              action_url: notification.actionUrl,
-              metadata: notification.metadata,
-            },
-          }),
-          signal: AbortSignal.timeout(1500),
-        })
-      );
-
-      const results = await Promise.allSettled(goPromises);
-      results.forEach((res, idx) => {
-        if (res.status === "fulfilled" && (res.value.status === 200 || res.value.status === 202)) {
-          channelsDispatched.push(asyncSecondaryTargets[idx].name);
-        }
-      });
-    } catch {
-      // Non-blocking fallback for secondary targets
-    }
-  }
-
-  // 1. Slack Webhook Payload
+  // 1. Slack Webhook Dispatch
   if (slackUrl) {
+    const startTime = Date.now();
+    let deliveryStatus = 200;
+    let resBody = "";
+    let isOk = false;
+
     try {
       const slackPayload = {
         attachments: [
@@ -128,29 +93,44 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
         body: JSON.stringify(slackPayload),
         signal: AbortSignal.timeout(5000),
       });
-      channelsDispatched.push("slack");
-
-      try {
-        const { recordWebhookDeliveryLog } = await import("@/lib/webhooks/webhookStore");
-        await recordWebhookDeliveryLog({
-          deliveryId: `del_${Math.random().toString(36).substring(2, 10)}`,
-          tenantId: notification.tenantId,
-          endpointId: "wh-slack",
-          endpointName: "Slack SecOps Channel (System)",
-          eventType: notification.type,
-          severity: notification.severity,
-          statusCode: res.status,
-          success: res.ok,
-          payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
-        });
-      } catch { /* ignore */ }
+      deliveryStatus = res.status;
+      resBody = await res.text().catch(() => "");
+      isOk = res.ok;
+      if (isOk) channelsDispatched.push("slack");
     } catch (err) {
-      console.warn("[ShieldDesk Alert Dispatcher] Slack delivery error:", err);
+      deliveryStatus = 504;
+      resBody = err instanceof Error ? err.message : "Slack dispatch timeout";
     }
+
+    const latencyMs = Math.max(1, Date.now() - startTime);
+
+    try {
+      const { recordWebhookDeliveryLog } = await import("@/lib/webhooks/webhookStore");
+      await recordWebhookDeliveryLog({
+        deliveryId: `del_${Math.random().toString(36).substring(2, 10)}`,
+        tenantId: notification.tenantId,
+        endpointId: "wh-slack",
+        endpointName: "Slack SecOps Channel (System)",
+        eventType: notification.type,
+        severity: notification.severity,
+        statusCode: deliveryStatus,
+        latencyMs,
+        success: isOk,
+        destination: slackUrl,
+        payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
+        responseBody: resBody.slice(0, 500),
+        errorMessage: isOk ? undefined : `Slack delivery failed with HTTP ${deliveryStatus}`,
+      });
+    } catch { /* ignore */ }
   }
 
-  // 2. Discord Webhook Payload
+  // 2. Discord Webhook Dispatch
   if (discordUrl) {
+    const startTime = Date.now();
+    let deliveryStatus = 200;
+    let resBody = "";
+    let isOk = false;
+
     try {
       const discordPayload = {
         content: notification.severity === "critical"
@@ -185,29 +165,44 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
         body: JSON.stringify(discordPayload),
         signal: AbortSignal.timeout(5000),
       });
-      channelsDispatched.push("discord");
-
-      try {
-        const { recordWebhookDeliveryLog } = await import("@/lib/webhooks/webhookStore");
-        await recordWebhookDeliveryLog({
-          deliveryId: `del_${Math.random().toString(36).substring(2, 10)}`,
-          tenantId: notification.tenantId,
-          endpointId: "wh-discord",
-          endpointName: "Discord Security Alerts (System)",
-          eventType: notification.type,
-          severity: notification.severity,
-          statusCode: res.status,
-          success: res.ok || res.status === 204,
-          payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
-        });
-      } catch { /* ignore */ }
+      deliveryStatus = res.status;
+      resBody = await res.text().catch(() => "");
+      isOk = res.ok || res.status === 204;
+      if (isOk) channelsDispatched.push("discord");
     } catch (err) {
-      console.warn("[ShieldDesk Alert Dispatcher] Discord delivery error:", err);
+      deliveryStatus = 504;
+      resBody = err instanceof Error ? err.message : "Discord dispatch timeout";
     }
+
+    const latencyMs = Math.max(1, Date.now() - startTime);
+
+    try {
+      const { recordWebhookDeliveryLog } = await import("@/lib/webhooks/webhookStore");
+      await recordWebhookDeliveryLog({
+        deliveryId: `del_${Math.random().toString(36).substring(2, 10)}`,
+        tenantId: notification.tenantId,
+        endpointId: "wh-discord",
+        endpointName: "Discord Security Alerts (System)",
+        eventType: notification.type,
+        severity: notification.severity,
+        statusCode: deliveryStatus,
+        latencyMs,
+        success: isOk,
+        destination: discordUrl,
+        payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
+        responseBody: resBody.slice(0, 500),
+        errorMessage: isOk ? undefined : `Discord delivery failed with HTTP ${deliveryStatus}`,
+      });
+    } catch { /* ignore */ }
   }
 
-  // 2. Microsoft Teams Adaptive Card
+  // 3. Microsoft Teams Dispatch
   if (teamsUrl) {
+    const startTime = Date.now();
+    let deliveryStatus = 200;
+    let resBody = "";
+    let isOk = false;
+
     try {
       const teamsPayload = {
         "@type": "MessageCard",
@@ -232,31 +227,152 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
           : [],
       };
 
-      await fetch(teamsUrl, {
+      const res = await fetch(teamsUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(teamsPayload),
         signal: AbortSignal.timeout(5000),
       });
-      channelsDispatched.push("teams");
+      deliveryStatus = res.status;
+      resBody = await res.text().catch(() => "");
+      isOk = res.ok;
+      if (isOk) channelsDispatched.push("teams");
     } catch (err) {
-      console.warn("[ShieldDesk Alert Dispatcher] Teams delivery error:", err);
+      deliveryStatus = 504;
+      resBody = err instanceof Error ? err.message : "Teams dispatch timeout";
     }
+
+    const latencyMs = Math.max(1, Date.now() - startTime);
+
+    try {
+      const { recordWebhookDeliveryLog } = await import("@/lib/webhooks/webhookStore");
+      await recordWebhookDeliveryLog({
+        deliveryId: `del_${Math.random().toString(36).substring(2, 10)}`,
+        tenantId: notification.tenantId,
+        endpointId: "wh-teams",
+        endpointName: "Microsoft Teams Incident Bridge (System)",
+        eventType: notification.type,
+        severity: notification.severity,
+        statusCode: deliveryStatus,
+        latencyMs,
+        success: isOk,
+        destination: teamsUrl,
+        payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
+        responseBody: resBody.slice(0, 500),
+        errorMessage: isOk ? undefined : `Teams delivery failed with HTTP ${deliveryStatus}`,
+      });
+    } catch { /* ignore */ }
   }
 
-  // 3. Generic SIEM Webhook
+  // 4. Custom Tenant Registered Webhook Endpoints
+  try {
+    const { getTenantWebhookEndpoints, executeWebhookDispatch, recordWebhookDeliveryLog } = await import(
+      "@/lib/webhooks/webhookStore"
+    );
+    const endpoints = await getTenantWebhookEndpoints(notification.tenantId);
+
+    const eligibleEndpoints = endpoints.filter((ep) => {
+      if (!ep.enabled || !ep.destination) return false;
+      // Do not duplicate system URLs
+      if (ep.destination === discordUrl || ep.destination === slackUrl || ep.destination === teamsUrl || ep.destination === genericUrl) {
+        return false;
+      }
+      // Check event subscription
+      if (ep.events && ep.events.length > 0 && !ep.events.includes(notification.type)) {
+        return false;
+      }
+      // Check minimum severity
+      if (!severityMeetsMinimum(notification.severity, ep.min_severity)) {
+        return false;
+      }
+      return true;
+    });
+
+    for (const ep of eligibleEndpoints) {
+      const deliveryId = `del_${Math.random().toString(36).substring(2, 10)}`;
+      const result = await executeWebhookDispatch({
+        destination: ep.destination,
+        type: ep.type,
+        eventType: notification.type,
+        severity: notification.severity,
+        tenantId: notification.tenantId,
+        payload: {
+          title: notification.title,
+          description: notification.description,
+          action_url: notification.actionUrl,
+          metadata: notification.metadata,
+        },
+        deliveryId,
+        secretKey: ep.secret_key,
+      });
+
+      if (result.success) {
+        channelsDispatched.push(`custom_${ep.type}_${ep.id}`);
+      }
+
+      await recordWebhookDeliveryLog({
+        deliveryId,
+        tenantId: notification.tenantId,
+        endpointId: ep.id,
+        endpointName: ep.name,
+        eventType: notification.type,
+        severity: notification.severity,
+        statusCode: result.statusCode,
+        latencyMs: result.latencyMs,
+        success: result.success,
+        destination: ep.destination,
+        payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
+        responseBody: result.responseBody.slice(0, 500),
+        errorMessage: result.errorMessage,
+      });
+    }
+  } catch (customErr) {
+    console.warn("[ShieldDesk Alert Dispatcher] Custom tenant endpoints dispatch error:", customErr);
+  }
+
+  // 5. Generic SIEM Webhook
   if (genericUrl) {
+    const startTime = Date.now();
+    let deliveryStatus = 200;
+    let resBody = "";
+    let isOk = false;
+
     try {
-      await fetch(genericUrl, {
+      const res = await fetch(genericUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(notification),
         signal: AbortSignal.timeout(5000),
       });
-      channelsDispatched.push("generic_webhook");
+      deliveryStatus = res.status;
+      resBody = await res.text().catch(() => "");
+      isOk = res.ok;
+      if (isOk) channelsDispatched.push("generic_webhook");
     } catch (err) {
-      console.warn("[ShieldDesk Alert Dispatcher] Generic webhook delivery error:", err);
+      deliveryStatus = 504;
+      resBody = err instanceof Error ? err.message : "Generic SIEM dispatch timeout";
     }
+
+    const latencyMs = Math.max(1, Date.now() - startTime);
+
+    try {
+      const { recordWebhookDeliveryLog } = await import("@/lib/webhooks/webhookStore");
+      await recordWebhookDeliveryLog({
+        deliveryId: `del_${Math.random().toString(36).substring(2, 10)}`,
+        tenantId: notification.tenantId,
+        endpointId: "wh-security-generic",
+        endpointName: "Custom SIEM Ingestion (System)",
+        eventType: notification.type,
+        severity: notification.severity,
+        statusCode: deliveryStatus,
+        latencyMs,
+        success: isOk,
+        destination: genericUrl,
+        payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
+        responseBody: resBody.slice(0, 500),
+        errorMessage: isOk ? undefined : `SIEM delivery failed with HTTP ${deliveryStatus}`,
+      });
+    } catch { /* ignore */ }
   }
 
   return {
