@@ -51,6 +51,13 @@ export async function PATCH(
       );
     }
 
+    if (caller.role === "analyst") {
+      return NextResponse.json(
+        { error: "Forbidden: Analysts do not have permission to modify endpoint agent state" },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const action = body.action || "disconnect";
@@ -243,6 +250,13 @@ export async function DELETE(
       return NextResponse.json(
         { error: "Unauthorized: Valid authentication session required" },
         { status: 401 }
+      );
+    }
+
+    if (caller.role === "analyst") {
+      return NextResponse.json(
+        { error: "Forbidden: Analysts do not have permission to delete endpoint agents" },
+        { status: 403 }
       );
     }
 
