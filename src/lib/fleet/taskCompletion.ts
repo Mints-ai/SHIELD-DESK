@@ -13,7 +13,8 @@ export async function settleCommandTask(command: {
 
   const result = await query<{ id: string; plan_id: string | null }>(
     `UPDATE mitigation_tasks SET status = $1
-     WHERE execution_command_id = $2 AND tenant_id = $3 AND status = 'in_progress'
+     WHERE execution_command_id = $2 AND tenant_id = $3
+       AND (status = 'in_progress' OR (status = 'completed' AND $1 = 'failed'))
      RETURNING id, plan_id`,
     [succeeded ? "completed" : "failed", command.id, command.tenant_id]
   );

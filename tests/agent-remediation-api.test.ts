@@ -1,4 +1,5 @@
 import "./setup";
+import "./fixtures/fleet";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
@@ -11,7 +12,7 @@ import {
   MOCK_AGENT_COMMANDS,
   MOCK_HASH_CHAINS,
 } from "../src/lib/fleet/fleet";
-import { resetMockThrottle } from "../src/lib/governance/blastRadiusThrottle";
+import { resetMockThrottle, DEFAULT_TIER1_LIMIT } from "../src/lib/governance/blastRadiusThrottle";
 import { createSessionToken } from "../src/lib/auth/token";
 import type { SessionUser } from "../src/lib/auth/session";
 
@@ -131,7 +132,7 @@ test("ShieldDesk Automated Remediation & Agent Queue API Suite", async (t) => {
     resetMockThrottle();
 
     // Exhaust throttle with 5 Tier 1 commands
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < DEFAULT_TIER1_LIMIT; i++) {
       await executeAgentCommand({
         agentId: "FIN-WS-042",
         command: `block_ip 198.51.100.${20 + i}`,

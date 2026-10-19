@@ -262,6 +262,8 @@ describe("Commercial Launch Hardening & P0/P1 Security Gate Suite", () => {
           tenantId: "acme-tenant",
           validityDays: 1,
         });
+        const { MTLSGuard } = await import("@/lib/fleet/mtlsGuard");
+        MTLSGuard.registerAgent({id:"FIN-WS-042",tenant_id:"acme-tenant"});
         const lic = issueCommercialLicense({
           tenantId: "acme-tenant",
           tier: "professional",

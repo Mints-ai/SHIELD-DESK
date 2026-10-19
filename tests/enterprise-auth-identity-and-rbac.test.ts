@@ -1,4 +1,6 @@
 import "./setup";
+import { registerTenantSsoConfig } from "@/lib/auth/sso";
+registerTenantSsoConfig({tenantId:"acme-tenant",provider:"okta",enabled:true,issuer:"https://idp.example.invalid",ssoUrl:"https://idp.example.invalid/sso",domainHint:"acme.com",defaultRole:"analyst",createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
 import test from "node:test";
 import assert from "node:assert/strict";
 import {

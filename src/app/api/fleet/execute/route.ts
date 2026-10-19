@@ -488,8 +488,8 @@ export async function POST(req: NextRequest) {
         await query(
           `UPDATE endpoint_agents
            SET status = 'connected', last_seen_at = now()
-           WHERE id = $1 OR ip_address = $2;`,
-          [agentId, targetIp]
+           WHERE id::text = $1 AND tenant_id = $2;`,
+          [agent?.id || agentId, agent?.tenant_id || caller.tenant_id]
         ).catch(() => {});
 
         // 3. Mark live agent status as connected
@@ -498,7 +498,7 @@ export async function POST(req: NextRequest) {
         // 4. Update in-memory fallback store
         const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
         for (const a of MOCK_ENDPOINT_AGENTS) {
-          if (a.id === agentId || a.ip_address === targetIp) {
+          if (a.id === (agent?.id || agentId) && a.tenant_id === (agent?.tenant_id || caller.tenant_id)) {
             a.status = "connected";
           }
         }

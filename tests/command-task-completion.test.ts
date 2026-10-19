@@ -32,7 +32,7 @@ class LifecycleDatabase {
       return { rows: [command] };
     }
     if (sql.includes("UPDATE mitigation_tasks SET status = $1")) {
-      const task = this.tasks.find((t) => t.execution_command_id === p[1] && t.tenant_id === p[2] && t.status === "in_progress");
+      const task = this.tasks.find((t) => t.execution_command_id === p[1] && t.tenant_id === p[2] && (t.status === "in_progress" || (t.status === "completed" && p[0] === "failed")));
       if (!task) return { rows: [] };
       task.status = String(p[0]);
       return { rows: [task] };
@@ -80,6 +80,19 @@ describe("Endpoint-confirmed task completion", () => {
     await recordCommandResult({ commandId: "command-a", agentId: "agent-a", status: "executed", output: "done" });
     assert.equal(db.tasks[0].status, "completed");
     assert.equal(db.planStatus, "active");
+  });
+  it("reopens a completed plan when its current dispatch later fails or rolls back", async () => {
+    for (const status of ["failed", "rolled_back", "verification_failed"] as const) {
+      db.tasks[0].status = "approved";
+      await new RealAgentExecutor().execute(params());
+      await recordCommandResult({ commandId: "command-a", agentId: "agent-a", status: "executed", output: "executed" });
+      assert.equal(db.tasks[0].status, "completed");
+      await recordCommandResult({ commandId: "command-a", agentId: "agent-a", status, output: "restore required" });
+      assert.equal(db.tasks[0].status, "failed");
+      assert.equal(db.planStatus, "active");
+      await recordCommandResult({ commandId: "command-a", agentId: "agent-a", status: "executed", output: "stale success" });
+      assert.equal(db.tasks[0].status, "failed");
+    }
   });
   it("preserves containment failures and elevation errors instead of manufacturing success", async () => {
     for (const output of ["requires elevation", "refusing to block loopback interface", "unrecognized command action: unblock_ip", "firewall denied"]) {

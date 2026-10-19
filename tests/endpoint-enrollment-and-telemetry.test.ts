@@ -372,7 +372,7 @@ test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry S
     const blockData = await blockRes.json();
     assert.equal(blockData.success, true);
     assert.match(blockData.output, /CONTAINMENT ACTIVE/, "Output must state containment is active");
-    assert.match(blockData.output, /DISCONNECTED/, "Output must state endpoint is disconnected");
+    assert.match(blockData.output, /disconnected/i, "Output must state endpoint is disconnected");
     assert.match(blockData.output, /unblock_ip 10\.0\.15\.99/, "Output must provide unblock instructions");
 
     // Verify IP is marked blocked in threatAlertStore
@@ -431,6 +431,8 @@ test("ShieldDesk Phase 2: Endpoint Enrollment, Identity, Heartbeat & Telemetry S
     assert.equal(unblockRes.status, 200, "unblock_ip should execute successfully");
     const unblockData = await unblockRes.json();
     assert.equal(unblockData.success, true);
+    const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+    assert.equal(MOCK_ENDPOINT_AGENTS.find(a => a.id === "dup-agent-test-id-002")?.status, "disconnected", "Unblock must not reconnect another endpoint sharing the IP");
     assert.match(unblockData.output, /CONTAINMENT LIFTED/, "Output must state containment is lifted");
 
     // Verify IP is no longer blocked

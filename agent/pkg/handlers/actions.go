@@ -26,15 +26,17 @@ type Snapshot struct {
 // ActionHandler executes Tier 1 and Tier 2 remediation instructions with
 // automatic rollback safety snapshotting and management channel preservation.
 type ActionHandler struct {
-	mu             sync.Mutex
-	snapshots      map[string]Snapshot
-	lastSnap       string
+	command         func(string, ...string) *exec.Cmd
+	mu              sync.Mutex
+	snapshots       map[string]Snapshot
+	lastSnap        string
 	controlPlaneURL string
 }
 
 // NewActionHandler returns an initialized ActionHandler.
 func NewActionHandler() *ActionHandler {
 	return &ActionHandler{
+		command:   exec.Command,
 		snapshots: make(map[string]Snapshot),
 	}
 }
@@ -59,21 +61,21 @@ func (h *ActionHandler) TakeSafetySnapshot(hostname string) (string, error) {
 	var wfwPath string
 
 	if runtime.GOOS == "windows" {
-		out, _ := exec.Command("netstat", "-rn").CombinedOutput()
+		out, _ := h.command("netstat", "-rn").CombinedOutput()
 		stateData.WriteString("Routing Table:\n")
 		stateData.Write(out)
 
 		// Export Windows firewall policy to a temporary binary snapshot file
 		wfwPath = filepath.Join(os.TempDir(), fmt.Sprintf("%s.wfw", snapID))
-		_ = exec.Command("netsh", "advfirewall", "export", wfwPath).Run()
+		_ = h.command("netsh", "advfirewall", "export", wfwPath).Run()
 		stateData.WriteString(fmt.Sprintf("WFW Export: %s\n", wfwPath))
 	} else {
-		routeOut, _ := exec.Command("ip", "route").CombinedOutput()
+		routeOut, _ := h.command("ip", "route").CombinedOutput()
 		stateData.WriteString("Routing Table:\n")
 		stateData.Write(routeOut)
 
 		// Save iptables rules
-		iptablesOut, _ := exec.Command("iptables-save").CombinedOutput()
+		iptablesOut, _ := h.command("iptables-save").CombinedOutput()
 		stateData.WriteString("Firewall:\n")
 		stateData.Write(iptablesOut)
 	}
@@ -113,11 +115,11 @@ func (h *ActionHandler) IsolateHost(hostname string, mgmtCIDRs ...string) (strin
 
 	if runtime.GOOS == "windows" {
 		// Clean any previous isolation rules first
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
 
 		// Allow management outbound first
-		allowCmd := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		allowCmd := h.command("netsh", "advfirewall", "firewall", "add", "rule",
 			"name=ShieldDesk-Mgmt", "dir=out", "action=allow", fmt.Sprintf("remoteip=%s", mgmtCIDR))
 		if out, err := allowCmd.CombinedOutput(); err != nil {
 			if strings.Contains(string(out), "elevation") || strings.Contains(string(out), "administrator") {
@@ -128,7 +130,7 @@ func (h *ActionHandler) IsolateHost(hostname string, mgmtCIDRs ...string) (strin
 		}
 
 		// Block all other outbound traffic
-		blockCmd := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		blockCmd := h.command("netsh", "advfirewall", "firewall", "add", "rule",
 			"name=ShieldDesk-Isolate", "dir=out", "action=block", "remoteip=any")
 		if out, err := blockCmd.CombinedOutput(); err != nil {
 			if strings.Contains(string(out), "elevation") || strings.Contains(string(out), "administrator") {
@@ -150,7 +152,7 @@ func (h *ActionHandler) IsolateHost(hostname string, mgmtCIDRs ...string) (strin
 		}
 
 		for _, args := range cmds {
-			if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
+			if out, err := h.command(args[0], args[1:]...).CombinedOutput(); err != nil {
 				_, _ = h.Rollback(hostname, snapID)
 				return "", fmt.Errorf("iptables command failed (%v): %s: %w", args, string(out), err)
 			}
@@ -178,8 +180,8 @@ func (h *ActionHandler) RestoreHost(hostname string) (string, error) {
 
 	// Clean up isolation rules manually if no snapshot ID available
 	if runtime.GOOS == "windows" {
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
 	}
 
 	return fmt.Sprintf("Host %s restored from isolation. Network interfaces operational.", hostname), nil
@@ -198,35 +200,33 @@ func (h *ActionHandler) BlockIP(hostname, ipAddress string, mgmtGatewayIP ...str
 		return "", fmt.Errorf("invalid IP address: %s", cleanIP)
 	}
 
-	snapID, _ := h.TakeSafetySnapshot(hostname)
-
 	if parsed.IsLoopback() {
-		if runtime.GOOS == "windows" {
-			_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
-			_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
-				"name=ShieldDesk-Isolate", "dir=out", "action=block", "remoteip=any").Run()
-		}
-		return fmt.Sprintf("Host %s: loopback interface containment active. Safety snapshot %s recorded.", hostname, snapID), nil
+		return "", fmt.Errorf("refusing to block loopback interface: %s", cleanIP)
 	}
 
 	if len(mgmtGatewayIP) > 0 && mgmtGatewayIP[0] != "" {
-		if cleanIP == mgmtGatewayIP[0] {
+		if parsed.Equal(net.ParseIP(strings.TrimSpace(mgmtGatewayIP[0]))) {
 			return "", fmt.Errorf("refusing to block management gateway: %s", cleanIP)
 		}
+	}
+
+	snapID, err := h.TakeSafetySnapshot(hostname)
+	if err != nil {
+		return "", fmt.Errorf("failed to take safety snapshot before IP blocking: %w", err)
 	}
 
 	if runtime.GOOS == "windows" {
 		ruleIn := fmt.Sprintf("ShieldDesk-Block-In-%s", cleanIP)
 		ruleOut := fmt.Sprintf("ShieldDesk-Block-Out-%s", cleanIP)
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleIn)).Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleOut)).Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleIn)).Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleOut)).Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "add", "rule",
 			fmt.Sprintf("name=%s", ruleIn), "dir=in", "action=block", fmt.Sprintf("remoteip=%s", cleanIP)).Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		_ = h.command("netsh", "advfirewall", "firewall", "add", "rule",
 			fmt.Sprintf("name=%s", ruleOut), "dir=out", "action=block", fmt.Sprintf("remoteip=%s", cleanIP)).Run()
 	} else {
-		_ = exec.Command("iptables", "-A", "INPUT", "-s", cleanIP, "-j", "DROP").Run()
-		_ = exec.Command("iptables", "-A", "OUTPUT", "-d", cleanIP, "-j", "DROP").Run()
+		_ = h.command("iptables", "-A", "INPUT", "-s", cleanIP, "-j", "DROP").Run()
+		_ = h.command("iptables", "-A", "OUTPUT", "-d", cleanIP, "-j", "DROP").Run()
 	}
 
 	return fmt.Sprintf("Host %s: firewall rule inserted to DROP all traffic with %s. Safety snapshot %s recorded.", hostname, cleanIP, snapID), nil
@@ -247,13 +247,13 @@ func (h *ActionHandler) UnblockIP(hostname, ipAddress string) (string, error) {
 	if runtime.GOOS == "windows" {
 		ruleIn := fmt.Sprintf("ShieldDesk-Block-In-%s", cleanIP)
 		ruleOut := fmt.Sprintf("ShieldDesk-Block-Out-%s", cleanIP)
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleIn)).Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleOut)).Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleIn)).Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleOut)).Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
 	} else {
-		_ = exec.Command("iptables", "-D", "INPUT", "-s", cleanIP, "-j", "DROP").Run()
-		_ = exec.Command("iptables", "-D", "OUTPUT", "-d", cleanIP, "-j", "DROP").Run()
+		_ = h.command("iptables", "-D", "INPUT", "-s", cleanIP, "-j", "DROP").Run()
+		_ = h.command("iptables", "-D", "OUTPUT", "-d", cleanIP, "-j", "DROP").Run()
 	}
 
 	return fmt.Sprintf("Host %s: firewall drop rules removed for %s. Traffic restored.", hostname, cleanIP), nil
@@ -271,7 +271,7 @@ func (h *ActionHandler) KillProcess(hostname string, pid int) (string, error) {
 	}
 
 	if runtime.GOOS == "windows" {
-		cmd := exec.Command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
+		cmd := h.command("taskkill", "/F", "/PID", fmt.Sprintf("%d", pid))
 		if err := cmd.Run(); err == nil {
 			return fmt.Sprintf("Host %s: process PID %d terminated via taskkill. Forensics dump saved.", hostname, pid), nil
 		}
@@ -302,8 +302,8 @@ func (h *ActionHandler) Rollback(hostname string, snapshotIDs ...string) (string
 	if !ok {
 		// Even if snapshot isn't found in memory, ensure isolation rules are wiped
 		if runtime.GOOS == "windows" {
-			_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
-			_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
+			_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
+			_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
 		}
 		return "", fmt.Errorf("safety snapshot '%s' not found to rollback", snapID)
 	}
@@ -311,18 +311,18 @@ func (h *ActionHandler) Rollback(hostname string, snapshotIDs ...string) (string
 	if runtime.GOOS == "windows" {
 		if snap.WfwPath != "" {
 			if _, err := os.Stat(snap.WfwPath); err == nil {
-				_ = exec.Command("netsh", "advfirewall", "import", snap.WfwPath).Run()
+				_ = h.command("netsh", "advfirewall", "import", snap.WfwPath).Run()
 			}
 		}
 		// Also explicitly remove ShieldDesk isolation rules
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
-		_ = exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Isolate").Run()
+		_ = h.command("netsh", "advfirewall", "firewall", "delete", "rule", "name=ShieldDesk-Mgmt").Run()
 	} else {
 		// Restore iptables if captured
 		if strings.Contains(snap.StateData, "Firewall:") {
 			parts := strings.Split(snap.StateData, "Firewall:\n")
 			if len(parts) > 1 && len(strings.TrimSpace(parts[1])) > 0 {
-				cmd := exec.Command("iptables-restore")
+				cmd := h.command("iptables-restore")
 				cmd.Stdin = strings.NewReader(parts[1])
 				_ = cmd.Run()
 			}
@@ -335,9 +335,9 @@ func (h *ActionHandler) Rollback(hostname string, snapshotIDs ...string) (string
 // FirewallRuleSpec defines the parameters for a dynamic firewall rule.
 type FirewallRuleSpec struct {
 	Name       string `json:"name"`
-	Direction  string `json:"direction"`  // "in" or "out"
-	Action     string `json:"action"`     // "block" or "allow"
-	Protocol   string `json:"protocol"`   // "tcp", "udp", "any"
+	Direction  string `json:"direction"` // "in" or "out"
+	Action     string `json:"action"`    // "block" or "allow"
+	Protocol   string `json:"protocol"`  // "tcp", "udp", "any"
 	LocalPort  string `json:"localPort,omitempty"`
 	RemotePort string `json:"remotePort,omitempty"`
 	RemoteIP   string `json:"remoteIp,omitempty"`
@@ -382,7 +382,7 @@ func (h *ActionHandler) AddFirewallRule(hostname string, spec FirewallRuleSpec) 
 			args = append(args, fmt.Sprintf("program=%s", spec.Program))
 		}
 
-		out, err := exec.Command("netsh", args...).CombinedOutput()
+		out, err := h.command("netsh", args...).CombinedOutput()
 		if err != nil {
 			_, _ = h.Rollback(hostname, snapID)
 			return "", fmt.Errorf("failed to add windows firewall rule: %s: %w", string(out), err)
@@ -411,7 +411,7 @@ func (h *ActionHandler) AddFirewallRule(hostname string, spec FirewallRuleSpec) 
 			args = append(args, flag, spec.RemoteIP)
 		}
 		args = append(args, "-j", target)
-		out, err := exec.Command("iptables", args...).CombinedOutput()
+		out, err := h.command("iptables", args...).CombinedOutput()
 		if err != nil {
 			_, _ = h.Rollback(hostname, snapID)
 			return "", fmt.Errorf("failed to add iptables rule: %s: %w", string(out), err)
@@ -435,12 +435,12 @@ func (h *ActionHandler) DeleteFirewallRule(hostname, ruleName string) (string, e
 	snapID, _ := h.TakeSafetySnapshot(hostname)
 
 	if runtime.GOOS == "windows" {
-		out, err := exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleName)).CombinedOutput()
+		out, err := h.command("netsh", "advfirewall", "firewall", "delete", "rule", fmt.Sprintf("name=%s", ruleName)).CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("failed to delete firewall rule '%s': %s: %w", ruleName, string(out), err)
 		}
 	} else {
-		_ = exec.Command("iptables", "-D", "INPUT", "-m", "comment", "--comment", ruleName, "-j", "DROP").Run()
+		_ = h.command("iptables", "-D", "INPUT", "-m", "comment", "--comment", ruleName, "-j", "DROP").Run()
 	}
 
 	return fmt.Sprintf("Host %s: Firewall rule '%s' deleted. Safety snapshot %s recorded.", hostname, ruleName, snapID), nil
@@ -465,7 +465,7 @@ func (h *ActionHandler) SetFirewallProfile(hostname, profile, state string) (str
 	}
 
 	if runtime.GOOS == "windows" {
-		out, err := exec.Command("netsh", "advfirewall", "set", targetProfile, "state", targetState).CombinedOutput()
+		out, err := h.command("netsh", "advfirewall", "set", targetProfile, "state", targetState).CombinedOutput()
 		if err != nil {
 			_, _ = h.Rollback(hostname, snapID)
 			return "", fmt.Errorf("failed to set firewall profile state: %s: %w", string(out), err)
@@ -496,7 +496,7 @@ func (h *ActionHandler) SetFirewallDefaultPolicy(hostname, inbound, outbound str
 
 	if runtime.GOOS == "windows" {
 		policyStr := fmt.Sprintf("%s,%s", inAction, outAction)
-		out, err := exec.Command("netsh", "advfirewall", "set", "currentprofile", "firewallpolicy", policyStr).CombinedOutput()
+		out, err := h.command("netsh", "advfirewall", "set", "currentprofile", "firewallpolicy", policyStr).CombinedOutput()
 		if err != nil {
 			_, _ = h.Rollback(hostname, snapID)
 			return "", fmt.Errorf("failed to set firewall policy: %s: %w", string(out), err)
@@ -556,7 +556,7 @@ func (h *ActionHandler) DefenderScan(hostname, scanType string) (string, error) 
 	}
 	if runtime.GOOS == "windows" {
 		cmdStr := fmt.Sprintf("Start-MpScan -ScanType %s", st)
-		out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdStr).CombinedOutput()
+		out, err := h.command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdStr).CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("defender scan failed: %s: %w", string(out), err)
 		}
@@ -567,7 +567,7 @@ func (h *ActionHandler) DefenderScan(hostname, scanType string) (string, error) 
 // DefenderUpdateSignatures updates Microsoft Defender antivirus definitions and intelligence.
 func (h *ActionHandler) DefenderUpdateSignatures(hostname string) (string, error) {
 	if runtime.GOOS == "windows" {
-		out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Update-MpSignature").CombinedOutput()
+		out, err := h.command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Update-MpSignature").CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("signature update failed: %s: %w", string(out), err)
 		}
@@ -583,7 +583,7 @@ func (h *ActionHandler) DefenderSetRealtime(hostname, state string) (string, err
 	}
 	if runtime.GOOS == "windows" {
 		cmdStr := fmt.Sprintf("Set-MpPreference -DisableRealtimeMonitoring %s", disable)
-		out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdStr).CombinedOutput()
+		out, err := h.command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdStr).CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("realtime configuration failed: %s: %w", string(out), err)
 		}
@@ -598,7 +598,7 @@ func (h *ActionHandler) DefenderSetRealtime(hostname, state string) (string, err
 // DefenderRemediateThreat cleans and neutralizes active detected threats.
 func (h *ActionHandler) DefenderRemediateThreat(hostname, threatID string) (string, error) {
 	if runtime.GOOS == "windows" {
-		out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Remove-MpThreat").CombinedOutput()
+		out, err := h.command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Remove-MpThreat").CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("threat remediation failed: %s: %w", string(out), err)
 		}
@@ -613,7 +613,7 @@ func (h *ActionHandler) DefenderAddExclusion(hostname, path string) (string, err
 	}
 	if runtime.GOOS == "windows" {
 		cmdStr := fmt.Sprintf("Add-MpPreference -ExclusionPath '%s'", path)
-		out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdStr).CombinedOutput()
+		out, err := h.command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdStr).CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("failed to add exclusion: %s: %w", string(out), err)
 		}
@@ -628,11 +628,10 @@ func (h *ActionHandler) DefenderRemoveExclusion(hostname, path string) (string, 
 	}
 	if runtime.GOOS == "windows" {
 		cmdStr := fmt.Sprintf("Remove-MpPreference -ExclusionPath '%s'", path)
-		out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdStr).CombinedOutput()
+		out, err := h.command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmdStr).CombinedOutput()
 		if err != nil {
 			return "", fmt.Errorf("failed to remove exclusion: %s: %w", string(out), err)
 		}
 	}
 	return fmt.Sprintf("Host %s: Exclusion path '%s' removed from Microsoft Defender.", hostname, path), nil
 }
-
