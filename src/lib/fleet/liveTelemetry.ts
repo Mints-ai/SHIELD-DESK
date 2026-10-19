@@ -220,7 +220,7 @@ export async function getLiveCommandLogs(
     tenantId: string;
     command: string;
     tier: string;
-    status: "succeeded" | "failed" | "executing";
+    status: "succeeded" | "failed" | "executing" | "pending";
     output: string;
     time: string;
     executedAt: string;

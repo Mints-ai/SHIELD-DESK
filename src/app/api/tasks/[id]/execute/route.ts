@@ -15,8 +15,9 @@ import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 function mapTaskToAgentCommand(task: MitigationTaskRecord, token?: ApprovalTokenRecord): string {
   // 1. If token has an explicit command stored, prioritize that
-  if (token?.command && typeof token.command === "string" && token.command.trim()) {
-    return token.command.trim();
+  const tokenCommand = token && "command" in token ? token.command : undefined;
+  if (typeof tokenCommand === "string" && tokenCommand.trim()) {
+    return tokenCommand.trim();
   }
 
   // 2. If task.description is directly an agent command, use it

@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     const blockedIps = await listActiveBlockedIps(tenantId, agentId);
     return NextResponse.json({ success: true, blockedIps });
   } catch (err: unknown) {
-    trackError(err, { endpoint: "/api/fleet/blocked-ips", method: "GET" });
+    trackError(err, { endpoint: "/api/fleet/blocked-ips", extra: { method: "GET" } });
     const msg = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   } catch (err: unknown) {
-    trackError(err, { endpoint: "/api/fleet/blocked-ips", method: "POST" });
+    trackError(err, { endpoint: "/api/fleet/blocked-ips", extra: { method: "POST" } });
     const msg = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
