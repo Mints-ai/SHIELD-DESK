@@ -26,9 +26,26 @@ export async function POST(req: NextRequest) {
 
   const clientIp = await resolveClientIp(req, body?.clientIp);
 
-  // Check Autonomous IP Containment (Block if >5 failed attempts recorded)
+  // Check Autonomous IP Containment (Block if >=5 failed attempts recorded)
   if (isIpBlocked(clientIp)) {
     const failures = getIpFailureCount(clientIp);
+    const targetUser =
+      typeof body?.email === "string" && body.email.trim()
+        ? body.email.trim()
+        : typeof body?.userId === "string" && body.userId.trim()
+        ? body.userId.trim()
+        : "blocked-ip-attempt";
+
+    // Record the blocked access attempt and dispatch alert to Discord
+    recordThreatAlert({
+      targetUser,
+      clientIp,
+      failureReason: "Blocked IP attempted access (Autonomous IP Containment active)",
+      severity: "critical",
+      type: "brute_force_spike",
+      tenantId: "mints-global",
+    });
+
     return NextResponse.json(
       {
         error: "Too many login attempts. Access is blocked. Contact security admin to unblock.",
@@ -131,6 +148,7 @@ export async function POST(req: NextRequest) {
               targetUser: email,
               clientIp,
               failureReason: "Account not found or invalid credentials",
+              tenantId: "mints-global",
             });
             // Fail closed: reject unknown email or user without password hash
             return NextResponse.json(
@@ -145,6 +163,7 @@ export async function POST(req: NextRequest) {
               targetUser: email,
               clientIp,
               failureReason: "Invalid password provided",
+              tenantId: user.tenant_id || "mints-global",
             });
             return NextResponse.json(
               { error: "Invalid email or password." },
@@ -161,6 +180,7 @@ export async function POST(req: NextRequest) {
             targetUser: email,
             clientIp,
             failureReason: "Authentication failure: Database verification unavailable",
+            tenantId: "mints-global",
           });
           // Fail closed: do NOT fallback to demo user
           return NextResponse.json(
