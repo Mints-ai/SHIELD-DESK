@@ -55,5 +55,7 @@ export function getObservedEndpointIp(headers: Headers): string | null {
 }
 
 export function resolveEndpointIp(headers: Headers, bodyIp: unknown): string | null {
-  return getObservedEndpointIp(headers) ?? normalizeEndpointIp(bodyIp);
+  const observed = getObservedEndpointIp(headers);
+  if (observed) return observed;
+  return normalizeEndpointIp(bodyIp);
 }

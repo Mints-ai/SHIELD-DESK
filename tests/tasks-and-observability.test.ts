@@ -1,4 +1,6 @@
 import "./setup";
+import { useTaskFixture } from "./fixtures/tasks";
+useTaskFixture();
 import test from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
@@ -24,6 +26,8 @@ test("Tasks & Observability Integration Suite", async (t) => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(Array.isArray(body.tasks));
+    assert.ok(body.tasks.length > 0);
+    assert.ok(body.tasks.every((task: {tenant_id:string}) => task.tenant_id === "mints-global"));
     assert.equal(body.tenantId, "mints-global");
   });
 
@@ -193,6 +197,8 @@ test("Tasks & Observability Integration Suite", async (t) => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(Array.isArray(body.plans));
+    assert.ok(body.plans.length > 0);
+    assert.ok(body.plans.every((plan: {tenant_id:string}) => plan.tenant_id === "mints-global"));
     assert.equal(body.tenantId, "mints-global");
   });
 

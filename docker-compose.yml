@@ -41,18 +41,6 @@ services:
     networks:
       - shielddesk-network
 
-  # 2b. Trivy & Gitleaks Vulnerability Scanner (Port 8001)
-  scan-service:
-    build:
-      context: ./services/scan
-      dockerfile: Dockerfile
-    container_name: shielddesk-scan-service
-    restart: unless-stopped
-    ports:
-      - "8001:8001"
-    networks:
-      - shielddesk-network
-
   # 3. PostgreSQL Multi-Tenant Database (Port 5432)
   db:
     image: postgres:16-alpine

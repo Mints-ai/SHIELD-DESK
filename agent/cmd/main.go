@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -260,9 +261,17 @@ func main() {
 				eps = 12 + (tickCount % 15)
 			}
 			coreTelem := collector.HarvestCoreTelemetry(*hostname, metrics.CPUPercent, metrics.MemPercent)
-			sendHeartbeat(httpClient, *controlURL, *agentID, *hostname, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
-			log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
-				tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			hbStatus, _ := sendHeartbeat(httpClient, *controlURL, *agentID, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
+			if hbStatus == "disconnected" {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | Status: DISCONNECTED BY CONTROL PANEL (Standing by)",
+					tickCount, *hostname)
+			} else if hbStatus == "duplicate_ip" || hbStatus == "kill_switch" || hbStatus == "ip_blocked" {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | Status: DISCONNECTED (%s)",
+					tickCount, *hostname, hbStatus)
+			} else {
+				log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
+					tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
+			}
 		}
 	}()
 
@@ -285,7 +294,7 @@ func main() {
 
 	go func() {
 		for range pollTicker.C {
-			pollCommands(httpClient, *controlURL, *agentID, *hostname, actionHandler)
+			pollCommands(httpClient, *controlURL, *agentID, *hostname, actionHandler, collector)
 		}
 	}()
 
@@ -303,7 +312,7 @@ func main() {
 	fmt.Println("\033[32m[+] Successfully signaled DISCONNECTED to control plane. Exiting clean.\033[0m")
 }
 
-func pollCommands(client *http.Client, controlURL, agentID, hostname string, handler *handlers.ActionHandler) {
+func pollCommands(client *http.Client, controlURL, agentID, hostname string, handler *handlers.ActionHandler, collector *telemetry.Collector) {
 	reqURL := fmt.Sprintf("%s/api/agent/commands?agent_id=%s", controlURL, agentID)
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
@@ -320,6 +329,9 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 	if resp.StatusCode == 423 {
 		log.Printf("[CommandPoll] Agent %s is locked by Emergency Admin Kill Switch.", agentID)
 		return
+	} else if resp.StatusCode == http.StatusNotFound {
+		fmt.Printf("\n\033[31m[!] ENDPOINT REMOVED\033[0m — This host was deleted from the ShieldDesk fleet. Stopping agent daemon.\n")
+		os.Exit(0)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -360,7 +372,27 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 		}
 
 		// 3. Cryptographically verify RSA-SHA256 signature
-		if err := verifyCommandSignature(controlPlanePubKey, targetAgentID, cmd.Command, nonce, cmd.Tier, cmd.Signature); err != nil {
+		err := verifyCommandSignature(controlPlanePubKey, targetAgentID, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+		if err != nil && targetAgentID != agentID && agentID != "" {
+			err = verifyCommandSignature(controlPlanePubKey, agentID, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+		}
+		if err != nil && targetAgentID != hostname && hostname != "" {
+			err = verifyCommandSignature(controlPlanePubKey, hostname, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+		}
+		// If verification failed, refresh control plane public key once (handles server restart/key rotation)
+		if err != nil {
+			if freshKey, refErr := loadControlPlanePublicKey(client, controlURL, *publicKeyFlag); refErr == nil && freshKey != nil {
+				controlPlanePubKey = freshKey
+				err = verifyCommandSignature(controlPlanePubKey, targetAgentID, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+				if err != nil && targetAgentID != agentID && agentID != "" {
+					err = verifyCommandSignature(controlPlanePubKey, agentID, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+				}
+				if err != nil && targetAgentID != hostname && hostname != "" {
+					err = verifyCommandSignature(controlPlanePubKey, hostname, cmd.Command, nonce, cmd.Tier, cmd.Signature)
+				}
+			}
+		}
+		if err != nil {
 			log.Printf("[Security Alert] REJECTED: Cryptographic signature verification failed for command %s: %v", cmd.ID, err)
 			reportResult(client, controlURL, cmd.ID, "failed", fmt.Sprintf("cryptographic signature verification failed: %v", err), "")
 			continue
@@ -383,6 +415,13 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 
 		status, output, snapshotID := dispatch(cmd.Command, hostname, handler)
 		reportResult(client, controlURL, cmd.ID, status, output, snapshotID)
+
+		// Immediately publish updated heartbeat with fresh telemetry (e.g. process terminated)
+		if collector != nil {
+			metrics := collector.HarvestMetrics()
+			coreTelem := collector.HarvestCoreTelemetry(hostname, metrics.CPUPercent, metrics.MemPercent)
+			_, _ = sendHeartbeat(client, controlURL, agentID, metrics.CPUPercent, metrics.MemPercent, 15, coreTelem)
+		}
 	}
 }
 
@@ -428,7 +467,6 @@ func parseRSAPublicKeyPEM(pemBytes []byte) (*rsa.PublicKey, error) {
 	return rsaPub, nil
 }
 
-// loadControlPlanePublicKey attempts loading the public key from flag/PEM, file, environment, or control-plane HTTP API
 func loadControlPlanePublicKey(client *http.Client, controlURL, pathOrPEM string) (*rsa.PublicKey, error) {
 	// 1. Direct PEM string passed via flag
 	if strings.Contains(pathOrPEM, "-----BEGIN PUBLIC KEY-----") {
@@ -453,7 +491,16 @@ func loadControlPlanePublicKey(client *http.Client, controlURL, pathOrPEM string
 		}
 	}
 
-	// 4. On-demand fetch from control plane endpoint (/api/fleet/public-key)
+	// 4. Local PEM file in working directory
+	for _, localCandidate := range []string{"control-plane-pub.pem", ".control-plane-dev-pub.pem"} {
+		if data, err := os.ReadFile(localCandidate); err == nil && len(data) > 0 {
+			if pub, parseErr := parseRSAPublicKeyPEM(data); parseErr == nil && pub != nil {
+				return pub, nil
+			}
+		}
+	}
+
+	// 5. On-demand fetch from control plane endpoint (/api/fleet/public-key)
 	fetchURL := fmt.Sprintf("%s/api/fleet/public-key", controlURL)
 	req, err := http.NewRequest("GET", fetchURL, nil)
 	if err != nil {
@@ -518,6 +565,17 @@ func dispatch(command, hostname string, handler *handlers.ActionHandler) (string
 			mgmtGateway = parts[2]
 		}
 		out, err := handler.BlockIP(hostname, ip, mgmtGateway)
+		if err != nil {
+			return "failed", err.Error(), ""
+		}
+		return "executed", out, ""
+
+	case "unblock_ip":
+		if len(parts) < 2 {
+			return "failed", "missing target IP address", ""
+		}
+		ip := parts[1]
+		out, err := handler.UnblockIP(hostname, ip)
 		if err != nil {
 			return "failed", err.Error(), ""
 		}
@@ -789,7 +847,7 @@ func enrollWithControlPlane(client *http.Client, controlURL, token, hostname str
 	return enrollResp.AgentID, enrollResp.TenantID, nil
 }
 
-func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cpu, mem float64, eps int, coreTelem telemetry.CoreTelemetry) {
+func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem float64, eps int, coreTelem telemetry.CoreTelemetry) (string, error) {
 	payload := map[string]interface{}{
 		"agentId":       agentID,
 		"cpuUsage":      cpu,
@@ -801,24 +859,48 @@ func sendHeartbeat(client *http.Client, controlURL, agentID, hostname string, cp
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return "", err
 	}
 	req, err := http.NewRequest("POST", controlURL+"/api/agent/heartbeat", bytes.NewBuffer(data))
 	if err != nil {
-		return
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-ShieldDesk-Agent-ID", agentID)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return
+		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 423 {
 		log.Printf("[Heartbeat Alert] Kill switch is active for agent %s. Host commands blocked.", agentID)
+		return "kill_switch", nil
+	} else if resp.StatusCode == 409 {
+		log.Printf("[Heartbeat Alert] Connection rejected: Another endpoint is already connected from this IP address. Agent in standby.")
+		return "duplicate_ip", nil
+	} else if resp.StatusCode == 403 {
+		log.Printf("[Heartbeat Alert] Connection rejected: IP address is blocked by SOC security policy. Endpoint disconnected from fleet.")
+		return "ip_blocked", nil
+	} else if resp.StatusCode == http.StatusNotFound {
+		fmt.Printf("\n\033[31m[!] ENDPOINT REMOVED\033[0m — This host was deleted from the ShieldDesk fleet. Stopping agent daemon.\n")
+		os.Exit(0)
+		return "removed", nil
 	}
+
+	if resp.StatusCode == http.StatusOK {
+		var hbResp struct {
+			Success bool   `json:"success"`
+			Status  string `json:"status"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&hbResp); err == nil && hbResp.Status != "" {
+			return hbResp.Status, nil
+		}
+		return "connected", nil
+	}
+
+	return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 }
 
 func sendDisconnectHeartbeat(client *http.Client, controlURL, agentID string) {
@@ -854,6 +936,11 @@ func getEndpointIP(client *http.Client, controlPlaneURL string) string {
 		return ip
 	}
 	endpointIPCacheMu.Unlock()
+
+	// Prioritize local physical network adapter IP to distinguish multiple endpoints on same LAN/Wi-Fi
+	if local := getLocalEndpointIP(); local != "" {
+		return cacheEndpointIP(local)
+	}
 
 	discoveryURLs := []string{
 		strings.TrimRight(controlPlaneURL, "/") + "/api/agent/my-ip",
@@ -895,19 +982,61 @@ func getLocalEndpointIP() string {
 	if err != nil {
 		return ""
 	}
+
+	type candidate struct {
+		ip       string
+		priority int
+	}
+	var candidates []candidate
+
 	for _, iface := range interfaces {
+		lowerName := strings.ToLower(iface.Name)
+		isVirtual := strings.Contains(lowerName, "virtual") ||
+			strings.Contains(lowerName, "vbox") ||
+			strings.Contains(lowerName, "vmware") ||
+			strings.Contains(lowerName, "loopback") ||
+			strings.Contains(lowerName, "pseudo") ||
+			strings.Contains(lowerName, "docker") ||
+			strings.Contains(lowerName, "wsl") ||
+			strings.Contains(lowerName, "hyper-v") ||
+			strings.Contains(lowerName, "vethernet")
+
 		addresses, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
 		for _, address := range addresses {
 			ip, _, err := net.ParseCIDR(address.String())
-			if err == nil && ip.To4() != nil && !ip.IsLoopback() {
-				return ip.String()
+			if err != nil || ip.To4() == nil || ip.IsLoopback() {
+				continue
 			}
+			ipStr := ip.String()
+			if strings.HasPrefix(ipStr, "169.254.") || strings.HasPrefix(ipStr, "192.168.56.") {
+				continue
+			}
+
+			priority := 1
+			if isVirtual {
+				priority = 0
+			} else if strings.Contains(lowerName, "wi-fi") || strings.Contains(lowerName, "wifi") || strings.Contains(lowerName, "wireless") || strings.Contains(lowerName, "wlan") {
+				priority = 10
+			} else if strings.Contains(lowerName, "ethernet") || strings.Contains(lowerName, "eth") || strings.Contains(lowerName, "en") {
+				priority = 5
+			}
+
+			candidates = append(candidates, candidate{ip: ipStr, priority: priority})
 		}
 	}
-	return ""
+
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].priority > candidates[j].priority
+	})
+
+	return candidates[0].ip
 }
 
 func cacheEndpointIP(ip string) string {

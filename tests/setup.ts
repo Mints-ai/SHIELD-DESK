@@ -9,11 +9,11 @@ import Module from "node:module";
 const originalRequire = (Module.prototype as any).require;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(Module.prototype as any).require = function (id: string) {
+(Module.prototype as any).require = function (this: unknown, id: string, ...rest: unknown[]) {
   if (id === "server-only") {
     return {};
   }
-  return originalRequire.apply(this, arguments);
+  return originalRequire.apply(this, [id, ...rest]);
 };
 
 // Set test secrets for cryptographically verified testing
@@ -45,6 +45,8 @@ process.env.DISCORD_WEBHOOK_URL = "";
 process.env.SLACK_WEBHOOK_URL = "";
 process.env.TEAMS_WEBHOOK_URL = "";
 process.env.SECURITY_WEBHOOK_URL = "";
+
+
 
 // Clean up background DB pools or open handles so test runner exits promptly
 process.on("beforeExit", () => {

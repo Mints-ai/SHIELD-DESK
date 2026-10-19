@@ -6,25 +6,6 @@ import { hasPermission } from "@/lib/permissions";
 import { runTrivyScan, isTrivyAvailable, getOrRunTrivyScan, getLastScanResult } from "@/lib/trivy";
 import { runGitleaksScan, isGitleaksAvailable, getLastGitleaksScanResult } from "@/lib/gitleaks";
 
-/**
- * DEMO/FALLBACK DATA — returned when running in DEMO_MODE and the live scan
- * service (SCAN_SERVICE_URL) is unreachable. These CVE findings are illustrative
- * examples drawn from real public CVE disclosures.
- * In production with FAIL_CLOSED=true, this endpoint returns 503 if the live
- * service is unreachable.
- */
-const MOCK_CVE_FINDINGS: Array<{
-  cve_id: string;
-  package_name: string;
-  installed_version: string;
-  fixed_version: string;
-  severity: string;
-  cvss_score: number;
-  epss_score: number;
-  asset_id: string;
-  description: string;
-  remediation: string;
-}> = [];
 
 
 export async function GET(req: NextRequest) {
@@ -119,26 +100,6 @@ export async function GET(req: NextRequest) {
       secretsFound: cachedGitleaks.findings.length,
       timestamp: new Date().toISOString(),
     });
-  }
-  if (recentScans.length === 0 && !isProduction() && isDemoMode()) {
-    recentScans.push(
-      {
-        id: "scan-demo-01",
-        type: "Trivy Container & OS Scan (Demo)",
-        target: "eval/workstation:demo",
-        status: "COMPLETED",
-        vulnerabilities: 4,
-        timestamp: "5 mins ago",
-      },
-      {
-        id: "scan-demo-02",
-        type: "Gitleaks Secrets Scan (Demo)",
-        target: "eval/repo (main)",
-        status: "COMPLETED",
-        secretsFound: 2,
-        timestamp: "18 mins ago",
-      }
-    );
   }
 
   return NextResponse.json({
@@ -264,26 +225,13 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // 4. Return demo simulated scan
-      return NextResponse.json({
-        success: true,
-        status: "success",
-        _demo_mode: true,
-        scan_id: `scan-${Date.now().toString(36)}`,
-        message: "Trivy vulnerability scan simulated across fleet targets (Demo Mode).",
-        scan_type: body.scan_type || "full",
-        target: body.target_path || "fleet-all",
-        findings: MOCK_CVE_FINDINGS,
-        cveFindings: MOCK_CVE_FINDINGS,
-        metrics: {
-          total: 4,
-          totalVulnerabilities: 4,
-          critical: 2,
-          high: 2,
-          medium: 0,
-          low: 0,
+      return NextResponse.json(
+        {
+          error: "Scan service (Trivy pipeline) is unreachable.",
+          code: "SCAN_SERVICE_OFFLINE",
         },
-      });
+        { status: 503 }
+      );
     }
 
     if (action === "secrets_scan") {

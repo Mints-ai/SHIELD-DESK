@@ -17,8 +17,11 @@ export async function POST(req: NextRequest) {
     const agentId = body.agentId;
     const active = body.active !== undefined ? Boolean(body.active) : Boolean(body.enable);
 
+    const isCrossTenant =
+      caller.role === "system_admin" || caller.role === "super_admin";
+
     const { setLiveKillSwitch } = await import("@/lib/fleet/liveTelemetry");
-    setLiveKillSwitch(active, caller.tenant_id);
+    await setLiveKillSwitch(active, isCrossTenant ? undefined : caller.tenant_id);
 
     const result = await triggerKillSwitch({
       agentId,

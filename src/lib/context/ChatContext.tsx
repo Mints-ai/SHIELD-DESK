@@ -1,16 +1,18 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 
 import { DEV_USERS, type DevUserId, type DevUserMetadata } from "@/lib/constants/devUsers";
+import { SIGNED_OUT_OPERATOR, type OperatorIdentity } from "@/lib/auth/operatorIdentity";
 export { DEV_USERS, type DevUserId, type DevUserMetadata };
 
-// Default tenant name: MINTS GLOBAL
-
 interface ChatContextType {
-  activeUserId: DevUserId;
+  activeUserId: string;
   setActiveUserId: (id: DevUserId) => void;
-  activeUser: DevUserMetadata;
+  activeUser: OperatorIdentity;
+  devPersonasAllowed: boolean;
+  isIdentityLoading: boolean;
+  refreshSession: () => Promise<void>;
   activeIncidentId: string | null;
   setActiveIncidentId: (id: string | null) => void;
   activeCveId: string | null;
@@ -28,29 +30,59 @@ const STORAGE_KEY_USER = "shielddesk_active_user_id";
 const STORAGE_KEY_INCIDENT = "shielddesk_active_incident_id";
 
 export function ChatProvider({ children }: { children: React.ReactNode }) {
-  const [activeUserId, setActiveUserIdState] = useState<DevUserId>("dev-analyst");
+  const [activeUser, setActiveUser] = useState<OperatorIdentity>(SIGNED_OUT_OPERATOR);
+  const [devPersonasAllowed, setDevPersonasAllowed] = useState(false);
+  const [isIdentityLoading, setIsIdentityLoading] = useState(true);
   const [activeIncidentId, setActiveIncidentIdState] = useState<string | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const activeUserId = activeUser.id;
+  const refreshSession = useCallback(() => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    return Promise.resolve().then(() => fetch("/api/auth/session", {
+      cache: "no-store", credentials: "same-origin", signal: controller.signal,
+    })).then(async (response) => {
+      const result = await response.json();
+      if (controller.signal.aborted) return;
+      try {
+        const savedIncident = sessionStorage.getItem(STORAGE_KEY_INCIDENT);
+        if (savedIncident && savedIncident !== "undefined" && savedIncident !== "null" && savedIncident.trim() !== "") {
+          setActiveIncidentIdState(savedIncident.trim());
+        }
+      } catch { /* unavailable storage */ }
+      if (!response.ok && response.status !== 401) throw new Error("Session could not be verified");
+      const allowPersonas = result.devPersonasAllowed === true;
+      setDevPersonasAllowed(allowPersonas);
+      if (allowPersonas) {
+        let saved: string | null = null;
+        try { saved = sessionStorage.getItem(STORAGE_KEY_USER); } catch { /* unavailable storage */ }
+        const persona = saved && Object.hasOwn(DEV_USERS, saved) ? saved as DevUserId
+          : result.user?.id && Object.hasOwn(DEV_USERS, result.user.id) ? result.user.id as DevUserId : "dev-analyst";
+        setActiveUser(DEV_USERS[persona]);
+      } else {
+        setActiveUser(result.user || SIGNED_OUT_OPERATOR);
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted) { setActiveUser(SIGNED_OUT_OPERATOR); setDevPersonasAllowed(false); }
+    }).finally(() => {
+      if (!controller.signal.aborted) setIsIdentityLoading(false);
+    });
+  }, []);
   const [activeCveId, setActiveCveId] = useState<string | null>(null);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [promptToInject, setPromptToInject] = useState<string | null>(null);
 
   useEffect(() => {
-    try {
-      const savedUser = sessionStorage.getItem(STORAGE_KEY_USER) as DevUserId | null;
-      if (savedUser && DEV_USERS[savedUser]) {
-        setActiveUserIdState(savedUser);
-      }
-      const savedIncident = sessionStorage.getItem(STORAGE_KEY_INCIDENT);
-      if (savedIncident) {
-        setActiveIncidentIdState(savedIncident);
-      }
-    } catch {
-      // sessionStorage not available or SSR
-    }
-  }, []);
+    void refreshSession();
+    const refresh = () => { void refreshSession(); };
+    window.addEventListener("shielddesk:session-changed", refresh);
+    return () => { requestRef.current?.abort(); window.removeEventListener("shielddesk:session-changed", refresh); };
+  }, [refreshSession]);
 
   const setActiveUserId = (id: DevUserId) => {
-    setActiveUserIdState(id);
+    if (!devPersonasAllowed || !Object.hasOwn(DEV_USERS, id)) return;
+    setActiveUser(DEV_USERS[id]);
     try {
       sessionStorage.setItem(STORAGE_KEY_USER, id);
     } catch {
@@ -59,10 +91,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setActiveIncidentId = (id: string | null) => {
-    setActiveIncidentIdState(id);
+    const cleanId = id && id !== "undefined" && id !== "null" && id.trim() !== "" ? id.trim() : null;
+    setActiveIncidentIdState(cleanId);
     try {
-      if (id) {
-        sessionStorage.setItem(STORAGE_KEY_INCIDENT, id);
+      if (cleanId) {
+        sessionStorage.setItem(STORAGE_KEY_INCIDENT, cleanId);
       } else {
         sessionStorage.removeItem(STORAGE_KEY_INCIDENT);
       }
@@ -79,7 +112,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setIsChatOpen(true);
   };
 
-  const activeUser = DEV_USERS[activeUserId] || DEV_USERS["dev-analyst"];
 
   return (
     <ChatContext.Provider
@@ -87,6 +119,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         activeUserId,
         setActiveUserId,
         activeUser,
+        devPersonasAllowed,
+        isIdentityLoading,
+        refreshSession,
         activeIncidentId,
         setActiveIncidentId,
         activeCveId,

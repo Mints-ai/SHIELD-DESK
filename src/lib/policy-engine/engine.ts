@@ -53,6 +53,7 @@ export class PolicyEngine {
       } else if (
         normalizedAction.includes("revoke") ||
         normalizedAction.includes("block_ip") ||
+        normalizedAction.includes("unblock_ip") ||
         normalizedAction.includes("rotate_key") ||
         normalizedAction.includes("invalidate_token")
       ) {

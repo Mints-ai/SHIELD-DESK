@@ -25,11 +25,27 @@ function Write-Status {
     Write-Host " -- $Msg" -ForegroundColor DarkGray
 }
 
+# ---- Python command detection -------------------------------
+function Get-PythonCommand {
+    foreach ($cmd in @("py", "python", "python3")) {
+        if (Get-Command $cmd -ErrorAction SilentlyContinue) {
+            try {
+                $ver = & $cmd --version 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    return $cmd
+                }
+            } catch {}
+        }
+    }
+    return $null
+}
+$PYTHON_CMD = Get-PythonCommand
+
 # ---- Prerequisite checks -----------------------------------
 function Test-Prerequisites {
     Write-Host "  Checking prerequisites..." -ForegroundColor DarkGray
     $missing = @()
-    if (-not (Get-Command "python"  -ErrorAction SilentlyContinue)) { $missing += "python  (Python 3.10+)" }
+    if (-not $PYTHON_CMD) { $missing += "python  (Python 3.10+ or py launcher)" }
     if (-not (Get-Command "node"    -ErrorAction SilentlyContinue)) { $missing += "node    (Node.js 20+)" }
     if ($missing.Count -gt 0) {
         Write-Host ""
@@ -41,7 +57,7 @@ function Test-Prerequisites {
     if (-not (Get-Command "ollama" -ErrorAction SilentlyContinue)) {
         Write-Host "  [INFO] ollama CLI not detected (optional for cloud/deterministic AI fallback)." -ForegroundColor DarkYellow
     }
-    Write-Host "  [OK] Required tools verified." -ForegroundColor Green
+    Write-Host "  [OK] Required tools verified (Python launcher: $PYTHON_CMD)." -ForegroundColor Green
 }
 
 # ---- Load Environment Variables (.env.local / .env) ---------
@@ -201,7 +217,7 @@ if ($hasOllama) {
 } else {
     Write-Host "  [INFO] Skipping local Ollama process; cloud/API models active." -ForegroundColor DarkYellow
 }
-$pythonJob  = Start-Service "PythonBrain" "python server.py" $PYTHON    $envMap
+$pythonJob  = Start-Service "PythonBrain" "$PYTHON_CMD server.py" $PYTHON    $envMap
 $nextJob    = Start-Service "NextJS"      "npm run dev"    $ROOT        $envMap
 $threatDir  = Join-Path $ROOT "services\threat"
 $threatExe  = Join-Path $threatDir "threat.exe"
@@ -221,10 +237,24 @@ $patchCmd   = if (Test-Path $patchExe) { ".\orchestrator.exe server --port 8006"
 $patchJob   = Start-Service "GoPatch"     $patchCmd        $patchDir    $envMap
 $agentDir   = Join-Path $ROOT "agent"
 $agentExe   = Join-Path $ROOT "bin\shielddesk-agent.exe"
-$agentCmd   = if (Test-Path $agentExe) { "& `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
-$agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
+$startLocalAgent = ($envMap["START_LOCAL_AGENT"] -eq "true") -or ($env:START_LOCAL_AGENT -eq "true")
+$agentJob = $null
+if ($startLocalAgent) {
+    $configuredAgentId = if ($envMap["SHIELDDESK_AGENT_ID"]) { $envMap["SHIELDDESK_AGENT_ID"] } else { $env:SHIELDDESK_AGENT_ID }
+    $configuredToken   = if ($envMap["SHIELDDESK_ENROLL_TOKEN"]) { $envMap["SHIELDDESK_ENROLL_TOKEN"] } else { $env:SHIELDDESK_ENROLL_TOKEN }
+    $agentArgs = if ($configuredToken) { "-token `"$configuredToken`" -control-url http://localhost:3000" } elseif ($configuredAgentId) { "-agent-id `"$configuredAgentId`" -control-url http://localhost:3000" } else { "" }
+    if ($agentArgs) {
+        $agentCmd   = if (Test-Path $agentExe) { "& `"$agentExe`" $agentArgs" } else { "go run ./cmd $agentArgs" }
+        $agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
+    } else {
+        Write-Host "  [INFO] Local agent daemon requires SHIELDDESK_ENROLL_TOKEN or SHIELDDESK_AGENT_ID in .env.local to enroll." -ForegroundColor DarkYellow
+    }
+} else {
+    Write-Host "  [INFO] Local agent daemon disabled (remote endpoints stream genuine telemetry via Connect Endpoint)." -ForegroundColor DarkYellow
+}
 
-$allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob, $agentJob)
+$allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob)
+if ($agentJob) { $allJobs += $agentJob }
 if ($ollamaJob) { $allJobs += $ollamaJob }
 if ($natsJob) { $allJobs += $natsJob }
 
@@ -255,7 +285,9 @@ Write-Host "  |  Go Threat Engine-->  http://localhost:8003     |" -ForegroundCo
 Write-Host "  |  Go Ingest & PII -->  http://localhost:8004     |" -ForegroundColor Blue
 Write-Host "  |  SSH Patch Orch  -->  http://localhost:8006     |" -ForegroundColor Green
 Write-Host "  |  Go Webhook Svc  -->  http://localhost:8080     |" -ForegroundColor DarkYellow
-Write-Host "  |  Go Agent (EDR)  -->  Streaming FIN-WS-042      |" -ForegroundColor Green
+if ($agentJob) {
+Write-Host "  |  Go Agent (EDR)  -->  Active Local Endpoint      |" -ForegroundColor Green
+}
 if ($hasNats) {
 Write-Host "  |  NATS JetStream  -->  http://localhost:8222     |" -ForegroundColor Cyan
 }

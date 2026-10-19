@@ -12,7 +12,7 @@ import {
 } from "./monitoringTypes";
 
 // In-memory policy store for resilience and demo environments
-const MOCK_MONITORING_POLICIES: Record<string, EndpointMonitoringPolicy> = {};
+const IN_MEMORY_MONITORING_POLICIES: Record<string, EndpointMonitoringPolicy> = {};
 
 /**
  * Returns the monitoring policy for an endpoint agent.
@@ -33,31 +33,23 @@ export async function getEndpointMonitoringPolicy(
     // Fall back to memory registry
   }
 
-  if (MOCK_MONITORING_POLICIES[agentId]) {
-    return MOCK_MONITORING_POLICIES[agentId];
+  if (IN_MEMORY_MONITORING_POLICIES[agentId]) {
+    return IN_MEMORY_MONITORING_POLICIES[agentId];
   }
 
-  // Default baseline policy (all core diagnostic scopes active by default for comprehensive endpoint visibility)
+  // Default baseline policy (only system_performance enabled, others require approval)
   const defaultPolicy: EndpointMonitoringPolicy = {
     agent_id: agentId,
     tenant_id: tenantId,
-    enabled_scopes: [
-      "system_performance",
-      "process_inventory",
-      "network_sockets",
-      "firewall_baseline",
-      "storage_disk",
-      "service_health",
-      "defender_authority",
-    ],
+    enabled_scopes: ["system_performance"],
     approved_by: "system-baseline",
     approved_at: new Date().toISOString(),
     approval_token_id: null,
-    policy_hash: crypto.createHash("sha256").update(`${agentId}:all_scopes:baseline`).digest("hex"),
+    policy_hash: crypto.createHash("sha256").update(`${agentId}:system_performance:baseline`).digest("hex"),
     status: "active",
   };
 
-  MOCK_MONITORING_POLICIES[agentId] = defaultPolicy;
+  IN_MEMORY_MONITORING_POLICIES[agentId] = defaultPolicy;
   return defaultPolicy;
 }
 
@@ -144,7 +136,7 @@ export async function updateEndpointMonitoringPolicy({
       [policy.agent_id, policy.tenant_id, JSON.stringify(policy.enabled_scopes), policy.approved_by, policy.approval_token_id, policy.policy_hash, policy.status]
     );
   } catch {
-    MOCK_MONITORING_POLICIES[agentId] = policy;
+    IN_MEMORY_MONITORING_POLICIES[agentId] = policy;
   }
 
   // Cryptographically log the policy change to the tamper-evident hash chain

@@ -30,7 +30,7 @@ import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 // Tenant brand: MINTS GLOBAL (Demo Mode)
 export function TopNavBar() {
   const pathname = usePathname();
-  const { activeUserId, activeUser, setActiveUserId, setIsChatOpen } = useChat();
+  const { activeUserId, activeUser, devPersonasAllowed, setActiveUserId, setIsChatOpen } = useChat();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const navigationToggleRef = useRef<HTMLButtonElement>(null);
   const [healthLoaded, setHealthLoaded] = useState(false);
@@ -40,7 +40,8 @@ export function TopNavBar() {
     ollama: boolean;
     supabase: boolean;
     pythonAiEngine: boolean;
-  }>({ database: false, ollama: false, supabase: false, pythonAiEngine: false });
+    threatEngine: boolean;
+  }>({ database: false, ollama: false, supabase: false, pythonAiEngine: false, threatEngine: false });
 
   const [envMeta, setEnvMeta] = useState<{
     environment: string;
@@ -70,13 +71,14 @@ export function TopNavBar() {
           ollama: Boolean(data?.ollama?.reachable),
           supabase: Boolean(data?.supabase?.connected),
           pythonAiEngine: Boolean(data?.pythonAiEngine?.reachable),
+          threatEngine: Boolean(data?.threatEngine?.reachable ?? data?.pythonAiEngine?.reachable),
         });
         if (data?.environment) {
           setEnvMeta(data.environment);
         }
       })
       .catch(() => {
-        setHealthStatus({ database: false, ollama: false, supabase: false, pythonAiEngine: false });
+        setHealthStatus({ database: false, ollama: false, supabase: false, pythonAiEngine: false, threatEngine: false });
       })
       .finally(() => setHealthLoaded(true));
   }, []);
@@ -128,7 +130,7 @@ export function TopNavBar() {
     { label: "Database", connected: healthStatus.database, icon: Database },
     { label: "Supabase", connected: healthStatus.supabase, icon: Cloud },
     { label: "Local assistant", connected: healthStatus.ollama, icon: Cpu },
-    { label: "Threat engine", connected: healthStatus.pythonAiEngine, icon: Bot },
+    { label: "Threat engine", connected: healthStatus.threatEngine || healthStatus.pythonAiEngine, icon: Flame },
   ];
   const connectedCount = services.filter((service) => service.connected).length;
 
@@ -197,13 +199,14 @@ export function TopNavBar() {
               <Lock size={16} /><span>{pendingTokens.length}</span>
             </button>
           )}
-          {envMeta.devPersonasAllowed && <div className="sd-profile"><span className="sd-avatar" aria-hidden="true">{activeUser.label.split(" ").map((word) => word[0]).slice(0,2).join("")}</span><div><select aria-label="Active operator persona" value={activeUserId} onChange={(event) => setActiveUserId(event.target.value as DevUserId)} className="outline-none focus:outline-none focus:ring-0 focus-visible:outline-none border-none shadow-none cursor-pointer bg-transparent" style={{ outline: "none", border: "none", boxShadow: "none" }}>{(Object.keys(DEV_USERS) as DevUserId[]).map((id) => <option key={id} value={id}>{DEV_USERS[id].label}</option>)}</select><p className="sd-profile-caption">{activeUser.tenantName}</p></div></div>}
+          {devPersonasAllowed && <div className="sd-profile"><span className="sd-avatar" aria-hidden="true">{activeUser.label.split(" ").map((word) => word[0]).slice(0,2).join("")}</span><div><select aria-label="Active operator persona" value={activeUserId} onChange={(event) => setActiveUserId(event.target.value as DevUserId)} className="outline-none focus:outline-none focus:ring-0 focus-visible:outline-none border-none shadow-none cursor-pointer bg-transparent" style={{ outline: "none", border: "none", boxShadow: "none" }}>{(Object.keys(DEV_USERS) as DevUserId[]).map((id) => <option key={id} value={id}>{DEV_USERS[id].label}</option>)}</select><p className="sd-profile-caption">{activeUser.tenantName}</p></div></div>}
+          {!devPersonasAllowed && activeUserId && <div className="sd-profile" aria-label="Authenticated operator"><span className="sd-avatar" aria-hidden="true">{activeUser.label.split(" ").map((word) => word[0]).slice(0, 2).join("")}</span><div><p>{activeUser.label}</p><p className="sd-profile-caption">{activeUser.tenantName}</p></div></div>}
           <Link href="/login" className="sd-button !px-3" aria-label="Sign in"><LogIn size={16} /><span className="sd-signin-label">Sign in</span></Link>
         </div>
       </header>
       <aside id="workspace-navigation" className="sd-sidebar" data-open={mobileNavOpen} onKeyDown={(event) => { if (event.key === "Escape") { setMobileNavOpen(false); navigationToggleRef.current?.focus(); } }}>
         <Link href="/" className="sd-brand" aria-label="ShieldDesk home"><img src="/shield-emblem.png" alt="ShieldDesk" className="w-9 h-9 object-contain flex-shrink-0" /><div><div className="sd-brand-name">ShieldDesk</div><div className="sd-brand-caption">Security operations</div></div></Link>
-        <nav aria-label="Dashboard"><p className="sd-nav-label">Workspace</p>{navLinks.map(({ href, label, icon: Icon }) => <Link key={href} href={href} onClick={() => setMobileNavOpen(false)} className="sd-nav-link" aria-current={(href === "/" ? pathname === "/" : pathname?.startsWith(href)) ? "page" : undefined}><Icon size={18} strokeWidth={1.5} /><span>{label}</span></Link>)}</nav>
+        <nav aria-label="Dashboard"><p className="sd-nav-label">Workspace</p>{navLinks.map(({ href, label, icon: Icon }) => <Link key={href} href={href} prefetch={true} onClick={() => setMobileNavOpen(false)} className="sd-nav-link" aria-current={(href === "/" ? pathname === "/" : pathname?.startsWith(href)) ? "page" : undefined}><Icon size={18} strokeWidth={1.5} /><span>{label}</span></Link>)}</nav>
         <div className="sd-sidebar-bottom"><p>Clarity in every signal.<br />Confidence in every action.</p><div className="sd-sidebar-rule" /><span className="sd-sample-label"><i className="sd-status-dot" />{envMeta.isDemoMode ? "Demo environment" : "Live SOC"}</span><div className="sd-sidebar-footnote">{envMeta.isDemoMode ? "Illustrative data · Development workspace" : "Live telemetry · Governed operations"}<br />ShieldDesk · Mints Global</div></div>
       </aside>
 

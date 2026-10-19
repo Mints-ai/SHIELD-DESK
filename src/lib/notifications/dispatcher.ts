@@ -5,7 +5,15 @@
  */
 
 export interface SecurityAlertNotification {
-  type: "incident_ingested" | "incident_created" | "threat_detected" | "approval_required" | "plan_generated" | "kill_switch_engaged";
+  type:
+    | "incident_ingested"
+    | "incident_created"
+    | "threat_detected"
+    | "approval_required"
+    | "plan_generated"
+    | "kill_switch_engaged"
+    | "auth_failure"
+    | "brute_force_spike";
   tenantId: string;
   title: string;
   description: string;
@@ -31,18 +39,31 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
   };
   const color = notification.severity ? colorMap[notification.severity] : "#123826";
 
-  // Check if Go Webhook Microservice is available on port 8080 (Fire-and-forget handoff)
+  // Send custom tenant endpoints and generic SIEM targets to Go Webhook Microservice
   const goWebhookBaseUrl = process.env.GO_WEBHOOK_URL || "http://127.0.0.1:8080";
-  const targets = [
-    { name: "slack", url: slackUrl },
-    { name: "teams", url: teamsUrl },
-    { name: "discord", url: discordUrl },
-    { name: "generic_webhook", url: genericUrl },
-  ].filter((t): t is { name: string; url: string } => Boolean(t.url));
+  const asyncSecondaryTargets: Array<{ name: string; url: string }> = [];
+  if (genericUrl) {
+    asyncSecondaryTargets.push({ name: "generic_webhook", url: genericUrl });
+  }
 
-  if (targets.length > 0) {
+  // Retrieve dynamic custom webhooks configured for this tenant in DB / memory
+  try {
+    const { getTenantWebhookEndpoints } = await import("@/lib/webhooks/webhookStore");
+    const endpoints = await getTenantWebhookEndpoints(notification.tenantId);
+    endpoints
+      .filter((ep) => ep.enabled && ep.destination)
+      .forEach((ep) => {
+        if (ep.destination !== discordUrl && ep.destination !== slackUrl && ep.destination !== teamsUrl) {
+          asyncSecondaryTargets.push({ name: `custom_${ep.type}_${ep.id}`, url: ep.destination });
+        }
+      });
+  } catch {
+    // Non-blocking fallback
+  }
+
+  if (asyncSecondaryTargets.length > 0) {
     try {
-      const goPromises = targets.map((target) =>
+      const goPromises = asyncSecondaryTargets.map((target) =>
         fetch(`${goWebhookBaseUrl}/dispatch`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -59,24 +80,18 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
               metadata: notification.metadata,
             },
           }),
-          signal: AbortSignal.timeout(600), // Swift timeout to prevent blocking Next.js
+          signal: AbortSignal.timeout(1500),
         })
       );
 
       const results = await Promise.allSettled(goPromises);
-      let anyQueued = false;
       results.forEach((res, idx) => {
         if (res.status === "fulfilled" && (res.value.status === 200 || res.value.status === 202)) {
-          channelsDispatched.push(targets[idx].name);
-          anyQueued = true;
+          channelsDispatched.push(asyncSecondaryTargets[idx].name);
         }
       });
-
-      if (anyQueued) {
-        return { success: true, channelsDispatched };
-      }
     } catch {
-      // Fallback to direct inline dispatch below if Go microservice is offline
+      // Non-blocking fallback for secondary targets
     }
   }
 
@@ -94,7 +109,7 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
               { title: "Tenant", value: notification.tenantId, short: true },
               { title: "Severity", value: (notification.severity || "Standard").toUpperCase(), short: true },
               ...(notification.metadata
-                ? Object.entries(notification.metadata).slice(0, 4).map(([k, v]) => ({
+                ? Object.entries(notification.metadata).slice(0, 8).map(([k, v]) => ({
                     title: k,
                     value: String(v),
                     short: true,
@@ -107,13 +122,28 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
         ],
       };
 
-      await fetch(slackUrl, {
+      const res = await fetch(slackUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(slackPayload),
         signal: AbortSignal.timeout(5000),
       });
       channelsDispatched.push("slack");
+
+      try {
+        const { recordWebhookDeliveryLog } = await import("@/lib/webhooks/webhookStore");
+        await recordWebhookDeliveryLog({
+          deliveryId: `del_${Math.random().toString(36).substring(2, 10)}`,
+          tenantId: notification.tenantId,
+          endpointId: "wh-slack",
+          endpointName: "Slack SecOps Channel (System)",
+          eventType: notification.type,
+          severity: notification.severity,
+          statusCode: res.status,
+          success: res.ok,
+          payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
+        });
+      } catch { /* ignore */ }
     } catch (err) {
       console.warn("[ShieldDesk Alert Dispatcher] Slack delivery error:", err);
     }
@@ -123,6 +153,9 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
   if (discordUrl) {
     try {
       const discordPayload = {
+        content: notification.severity === "critical"
+          ? "🚨 **[ShieldDesk Critical Security Alert]**"
+          : "🛡️ **[ShieldDesk SOC Alert]**",
         embeds: [
           {
             title: `🛡️ ShieldDesk SOC: ${notification.title}`,
@@ -133,26 +166,41 @@ export async function dispatchSecurityNotification(notification: SecurityAlertNo
               { name: "Tenant", value: notification.tenantId, inline: true },
               { name: "Severity", value: (notification.severity || "Standard").toUpperCase(), inline: true },
               ...(notification.metadata
-                ? Object.entries(notification.metadata).slice(0, 4).map(([k, v]) => ({
+                ? Object.entries(notification.metadata).slice(0, 10).map(([k, v]) => ({
                     name: k,
                     value: String(v),
                     inline: true,
                   }))
                 : []),
             ],
-            footer: { text: "ShieldDesk Autonomous SOC Platform" },
+            footer: { text: "ShieldDesk Autonomous SOC Platform • Threat Engine" },
             timestamp: new Date().toISOString(),
           },
         ],
       };
 
-      await fetch(discordUrl, {
+      const res = await fetch(discordUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(discordPayload),
         signal: AbortSignal.timeout(5000),
       });
       channelsDispatched.push("discord");
+
+      try {
+        const { recordWebhookDeliveryLog } = await import("@/lib/webhooks/webhookStore");
+        await recordWebhookDeliveryLog({
+          deliveryId: `del_${Math.random().toString(36).substring(2, 10)}`,
+          tenantId: notification.tenantId,
+          endpointId: "wh-discord",
+          endpointName: "Discord Security Alerts (System)",
+          eventType: notification.type,
+          severity: notification.severity,
+          statusCode: res.status,
+          success: res.ok || res.status === 204,
+          payload: { title: notification.title, description: notification.description, metadata: notification.metadata },
+        });
+      } catch { /* ignore */ }
     } catch (err) {
       console.warn("[ShieldDesk Alert Dispatcher] Discord delivery error:", err);
     }

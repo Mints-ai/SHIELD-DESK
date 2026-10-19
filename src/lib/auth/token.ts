@@ -8,6 +8,7 @@ export interface SessionPayload {
   role: ShieldDeskRole;
   exp: number; // Unix timestamp in seconds
   iat: number; // Unix timestamp in seconds
+  email?: string;
 }
 
 // Cache an ephemeral key for the lifetime of the dev process if no secret configured
@@ -46,6 +47,7 @@ export function createSessionToken(
     role: user.role,
     iat: now,
     exp: now + ttlSeconds,
+    ...(user.email ? { email: user.email } : {}),
   };
 
   const secret = getSessionSecret();

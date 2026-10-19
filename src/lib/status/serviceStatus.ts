@@ -167,8 +167,29 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
     }
   })();
 
+  // 6. Threat Detection & 3-Sigma Anomaly Engine Probe
+  let threatStatus: ComponentHealth = "operational";
+  let threatLatency = 8;
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+
+  const probeThreatPromise = (async () => {
+    try {
+      const { latencyMs } = await probeLatency(async () => {
+        const res = await fetch(`${threatServiceUrl}/health`, {
+          signal: AbortSignal.timeout(1500),
+        });
+        if (!res.ok) throw new Error("Threat engine non-ok");
+        return res;
+      });
+      threatLatency = latencyMs;
+      threatStatus = "operational";
+    } catch {
+      threatStatus = isProduction() ? "outage" : "operational";
+    }
+  })();
+
   // Run all active probes concurrently
-  await Promise.allSettled([probeDbPromise, probeAuthPromise, probeAiPromise]);
+  await Promise.allSettled([probeDbPromise, probeAuthPromise, probeAiPromise, probeThreatPromise]);
 
   // 4. Fleet PKI Control Plane & Endpoint Telemetry Bus
   const pkiStatus: ComponentHealth = "operational";
@@ -181,9 +202,6 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
   if (!trivyPath && !gitleaksPath && isProduction()) {
     scannerStatus = "degraded";
   }
-
-  // 6. Threat Detection & 3-Sigma Anomaly Engine
-  const threatStatus: ComponentHealth = "operational";
 
   // 7. Compliance Ledger & Merkle Vault
   const complianceStatus: ComponentHealth = "operational";
@@ -247,7 +265,7 @@ export async function getSystemStatusReport(): Promise<SystemStatusReport> {
       name: "3-Sigma Statistical Anomaly & YARA Engine",
       category: "intelligence",
       status: threatStatus,
-      latency_ms: 8,
+      latency_ms: threatLatency,
       description: "Gaussian distribution metric baselining and AST YARA pattern matching.",
       last_checked: now,
     },

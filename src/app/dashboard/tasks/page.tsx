@@ -36,12 +36,12 @@ import { DEV_USERS, type DevUserId, getRoleTier, getUserRole, canAssignTaskToUse
 
 interface MitigationTaskItem {
   id: string;
-  plan_id: string;
+  plan_id?: string | null;
   horizon: "immediate" | "short_term" | "long_term";
   title: string;
   description: string;
   tier: string;
-  status: "pending" | "approved" | "rejected" | "in_progress" | "completed";
+  status: "pending" | "approved" | "rejected" | "in_progress" | "completed" | "failed";
   blast_radius?: string;
   cve_id?: string | null;
   assigned_to?: string | null;
@@ -69,7 +69,8 @@ interface TaskDetailData {
 export default function SOCTaskBoardPage() {
   const taskDialogId = useId();
   const detailDialogId = useId();
-  const { activeUserId, activeUser } = useChat();
+  const { activeUserId, activeUser, devPersonasAllowed } = useChat();
+  const assignableOperators = devPersonasAllowed ? Object.values(DEV_USERS) : activeUserId ? [activeUser] : [];
 
   const canEditTask = activeUser.role !== "analyst";
   const canAssignTask = activeUser.role !== "analyst";
@@ -86,7 +87,6 @@ export default function SOCTaskBoardPage() {
     return false;
   };
 
-  const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);
   const [filterHorizon, setFilterHorizon] = useState<string>("all");
   const [filterTier, setFilterTier] = useState<string>("all");
@@ -103,11 +103,15 @@ export default function SOCTaskBoardPage() {
 
   // Keep default assignee compatible with active operator's hierarchy tier
   useEffect(() => {
+    if (!devPersonasAllowed && newTaskAssignedTo in DEV_USERS) {
+      setNewTaskAssignedTo("");
+      return;
+    }
     const targetRole = getUserRole(newTaskAssignedTo);
     if (targetRole && getRoleTier(targetRole) > currentUserTier) {
       setNewTaskAssignedTo(activeUserId in DEV_USERS ? activeUserId : "dev-responder");
     }
-  }, [activeUserId, currentUserTier, newTaskAssignedTo]);
+  }, [activeUserId, currentUserTier, newTaskAssignedTo, devPersonasAllowed]);
   const [availablePlans, setAvailablePlans] = useState<
     Array<{
       id: string;
@@ -141,7 +145,6 @@ export default function SOCTaskBoardPage() {
       if (resTasks.ok) {
         const data = await resTasks.json();
         setTasks(data.tasks || []);
-        setIsSampleData(data._source === "demo_fallback");
       }
       if (resPlans.ok) {
         const plansData = await resPlans.json();
@@ -300,15 +303,16 @@ export default function SOCTaskBoardPage() {
       const body = await res.json();
       if (res.ok && body.success) {
         setTasks((prev) =>
-          prev.map((t) => (t.id === task.id ? { ...t, status: "completed" } : t))
+          prev.map((t) => (t.id === task.id ? { ...t, status: body.task?.status || body.status || "in_progress" } : t))
         );
         if (selectedTask?.id === task.id) {
-          setSelectedTask((prev) => (prev ? { ...prev, status: "completed" } : null));
-          openTaskDetail({ ...task, status: "completed" });
+          const updatedTask = body.task || { ...task, status: body.status || "in_progress" };
+          setSelectedTask(updatedTask);
+          openTaskDetail(updatedTask);
         }
         setExecutionNotice({
           taskId: task.id,
-          message: `Executed on ${body.agent?.hostname || "Endpoint"}: ${body.output || "Execution verified & recorded in audit log."}`,
+          message: `${body.status === "completed" ? "Completed" : "Dispatched"} on ${body.agent?.hostname || "Endpoint"}: ${body.output || "Awaiting endpoint execution report."}`,
         });
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("shielddesk:approvals-changed"));
@@ -337,17 +341,20 @@ export default function SOCTaskBoardPage() {
   // Plan Switcher Handler
   const handleUpdatePlan = async (taskId: string, newPlanId: string) => {
     try {
+      const targetPlanId = newPlanId ? newPlanId : null;
       const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ planId: newPlanId }),
+        body: JSON.stringify({ planId: targetPlanId }),
       });
       if (res.ok) {
         if (selectedTask && selectedTask.id === taskId) {
-          openTaskDetail({ ...selectedTask, plan_id: newPlanId });
+          const updatedTask = { ...selectedTask, plan_id: targetPlanId ?? undefined };
+          setSelectedTask(updatedTask);
+          openTaskDetail(updatedTask);
         }
         loadTasks();
       }
@@ -537,6 +544,12 @@ export default function SOCTaskBoardPage() {
       headerBadge: "bg-[var(--sd-success-dim)] text-[var(--sd-success)] border-[var(--sd-success-border)]",
       items: filteredTasks.filter((t) => t.status === "completed"),
     },
+    ...(filteredTasks.some((t) => t.status === "failed") ? [{
+      id: "failed",
+      label: "Execution Failed",
+      headerBadge: "bg-[var(--sd-critical-dim)] text-[var(--sd-critical)] border-[var(--sd-critical-border)]",
+      items: filteredTasks.filter((t) => t.status === "failed"),
+    }] : []),
   ];
 
   return (
@@ -544,8 +557,6 @@ export default function SOCTaskBoardPage() {
       <TopNavBar />
 
       <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
-        {isSampleData && <p className="sd-sample-label w-fit">Sample tasks · Local fallback data</p>}
-
         {/* Execution Banner Notice */}
         {executionNotice && (
           <div
@@ -904,8 +915,8 @@ export default function SOCTaskBoardPage() {
                 onChange={(e) => setNewTaskAssignedTo(e.target.value)}
                 className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
               >
-                {(Object.keys(DEV_USERS) as DevUserId[]).map((userId) => {
-                  const user = DEV_USERS[userId];
+                {assignableOperators.map((user) => {
+                  const userId = user.id;
                   const userTier = getRoleTier(user.role);
                   const isHigherTier = userTier > currentUserTier;
                   return (
@@ -934,11 +945,7 @@ export default function SOCTaskBoardPage() {
                 onChange={(e) => setNewTaskPlanId(e.target.value)}
                 className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
               >
-                <option value="">
-                  {availablePlans.length > 0
-                    ? `Default Incident Plan (${availablePlans[0]?.incident_code})`
-                    : "Default Remediation Plan"}
-                </option>
+                <option value="">None (Standalone Task)</option>
                 {availablePlans.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.incident_code}: {p.incident_title} (Plan v{p.version})
@@ -946,7 +953,7 @@ export default function SOCTaskBoardPage() {
                 ))}
               </select>
               <p className="text-[10.5px] text-[var(--sd-text-muted)]">
-                Select an incident mitigation plan to link this task to, or use the active incident sequence.
+                Optionally select an incident mitigation plan to link this task to, or leave unassigned for a standalone task.
               </p>
             </div>
 
@@ -1143,8 +1150,8 @@ export default function SOCTaskBoardPage() {
                     }}
                     className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-wheat)] font-semibold border border-[var(--sd-border)] rounded-lg px-2.5 py-1.5 outline-none font-mono cursor-pointer"
                   >
-                    {(Object.keys(DEV_USERS) as DevUserId[]).map((userId) => {
-                      const user = DEV_USERS[userId];
+                    {assignableOperators.map((user) => {
+                      const userId = user.id;
                       const userTier = getRoleTier(user.role);
                       const isHigherTier = userTier > currentUserTier;
                       return (
@@ -1173,14 +1180,31 @@ export default function SOCTaskBoardPage() {
             <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <ShieldAlert className="h-4 w-4 text-[var(--sd-wheat)] shrink-0" />
+                  <ShieldAlert
+                    className={`h-4 w-4 shrink-0 ${
+                      detailData?.task.plan_id ? "text-[var(--sd-wheat)]" : "text-[var(--sd-text-muted)]"
+                    }`}
+                  />
                   <div className="min-w-0">
-                    <span className="text-xs font-semibold text-[var(--sd-text)] truncate block">
-                      Incident {detailData?.task.incident_code || (availablePlans[0]?.incident_code ?? "INC-4223")}: {detailData?.task.incident_title || (availablePlans[0]?.incident_title ?? "Active Incident Remediation")}
-                    </span>
-                    <span className="text-[10.5px] text-[var(--sd-text-muted)] font-mono block">
-                      Plan Version {detailData?.task.plan_version || 1} · Severity: {detailData?.task.incident_severity || "Routine"}
-                    </span>
+                    {detailData?.task.plan_id ? (
+                      <>
+                        <span className="text-xs font-semibold text-[var(--sd-text)] truncate block">
+                          Incident {detailData.task.incident_code || "—"}: {detailData.task.incident_title || "Mitigation Sequence"}
+                        </span>
+                        <span className="text-[10.5px] text-[var(--sd-text-muted)] font-mono block">
+                          Plan Version {detailData.task.plan_version || 1} · Severity: {detailData.task.incident_severity || "Routine"}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs font-semibold text-[var(--sd-text-muted)] truncate block">
+                          No Mitigation Plan Assigned
+                        </span>
+                        <span className="text-[10.5px] text-[var(--sd-text-muted)] font-mono block">
+                          Standalone Task · Not linked to an active incident plan
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1199,18 +1223,18 @@ export default function SOCTaskBoardPage() {
               {canEditTask && (
                 <div className="pt-2 border-t border-[var(--sd-border-subtle)] flex items-center justify-between gap-2 text-xs">
                   <span className="text-[10.5px] font-mono text-[var(--sd-text-muted)] uppercase">
-                    Re-assign to Plan:
+                    Mitigation Plan:
                   </span>
                   <select
                     value={selectedTask.plan_id || ""}
                     onChange={async (e) => {
                       const newPlanId = e.target.value;
-                      if (!newPlanId || newPlanId === selectedTask.plan_id) return;
+                      if (newPlanId === (selectedTask.plan_id || "")) return;
                       await handleUpdatePlan(selectedTask.id, newPlanId);
                     }}
                     className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-pine)] border border-[var(--sd-border)] rounded-lg px-2.5 py-1 outline-none font-mono cursor-pointer max-w-[280px] truncate"
                   >
-                    <option value="">Select Target Plan...</option>
+                    <option value="">None (Standalone Task)</option>
                     {availablePlans.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.incident_code} ({p.incident_title.slice(0, 24)}…)

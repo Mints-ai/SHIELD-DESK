@@ -98,6 +98,17 @@ async function getEndpointIpAddress() {
     return cachedEndpointIp;
   }
 
+  // Prioritize local physical network adapter IP.
+  // This ensures multiple endpoints on the same Wi-Fi/LAN register their unique local IPs
+  // rather than colliding on a shared NAT router public IP, while preserving single-endpoint-per-IP
+  // enforcement for duplicate daemons started on the exact same host.
+  const local = getLocalIpAddress();
+  if (local) {
+    cachedEndpointIp = local;
+    cachedEndpointIpAt = Date.now();
+    return local;
+  }
+
   const discoveryUrls = [
     `${controlUrl}/api/agent/my-ip`,
     'https://api.ipify.org?format=json',
@@ -120,7 +131,7 @@ async function getEndpointIpAddress() {
     }
   }
 
-  cachedEndpointIp = getLocalIpAddress();
+  cachedEndpointIp = '127.0.0.1';
   cachedEndpointIpAt = Date.now();
   return cachedEndpointIp;
 }
@@ -178,7 +189,23 @@ function collectEndpointCoreTelemetry(currentCpuPct) {
   const totalMem = os.totalmem();
   const freeMem = os.freemem();
   const usedMem = totalMem - freeMem;
-  const cpuModel = cpus[0]?.model ? cpus[0].model.trim() : 'AMD Ryzen 9 5900HX with Radeon Graphics';
+  let cpuModel = cpus[0]?.model ? cpus[0].model.trim() : "";
+  if (!cpuModel && os.platform() === "win32") {
+    try {
+      const cp = require("child_process");
+      const regOut = cp.execSync(
+        'reg query "HKLM\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0" /v ProcessorNameString',
+        { timeout: 1500, windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+      );
+      const match = regOut.match(/ProcessorNameString\s+REG_SZ\s+(.*)/i);
+      if (match && match[1]?.trim()) {
+        cpuModel = match[1].trim();
+      }
+    } catch {}
+  }
+  if (!cpuModel) {
+    cpuModel = os.arch() ? `${os.arch().toUpperCase()} Host Processor` : "Host Processor";
+  }
   const cpuCores = cpus.length || 16;
   const memoryTotalGb = Number((totalMem / (1024 ** 3)).toFixed(1));
   const memoryUsedGb = Number((usedMem / (1024 ** 3)).toFixed(1));
@@ -631,8 +658,8 @@ function collectEndpointCoreTelemetry(currentCpuPct) {
       handle_count: (processList.length || 120) * 16,
       sampling_overhead: '< 0.05% CPU',
     },
-    network_sockets: socketList.slice(0, 20),
-    process_inventory: processList.slice(0, 20),
+    network_sockets: socketList.slice(0, 50),
+    process_inventory: processList.slice(0, 150),
     firewall_baseline: firewall,
     defender_status: defenderStatus,
     storage_disk: storageList,
@@ -648,11 +675,17 @@ async function request(urlStr, options = {}, data = null) {
     const url = new URL(urlStr);
     const client = url.protocol === 'https:' ? https : http;
 
+    const headers = {
+      'Connection': 'close',
+      ...(options.headers || {}),
+    };
+
     const req = client.request(
       urlStr,
       {
         method: options.method || 'GET',
-        headers: options.headers || {},
+        headers,
+        agent: false,
       },
       (res) => {
         let body = '';
@@ -783,6 +816,10 @@ async function start() {
 
       if (hbRes.status === 423) {
         console.log(`\x1b[31m[!] KILL SWITCH ACTIVE\x1b[0m — Telemetry dropped by control plane.`);
+      } else if (hbRes.status === 409) {
+        console.log(`\x1b[33m[!] DUPLICATE IP CONFLICT\x1b[0m — Another endpoint is already connected from this IP. Host in standby.`);
+      } else if (hbRes.status === 403) {
+        console.log(`\x1b[31m[!] IP BLOCKED BY SOC\x1b[0m — Host IP is blocked by SOC security policy. Endpoint disconnected.`);
       } else if (hbRes.status === 404) {
         console.log(`\n\x1b[31m[!] ENDPOINT REMOVED\x1b[0m — This endpoint was unenrolled from the ShieldDesk fleet. Stopping daemon.`);
         running = false;
@@ -791,7 +828,7 @@ async function start() {
       } else if (hbRes.status === 200) {
         const timeStr = new Date().toLocaleTimeString();
         if (hbRes.data && hbRes.data.status === 'disconnected') {
-          process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> Status: \x1b[33mDISCONNECTED BY CONTROL PLANE (Standing by)\x1b[0m`);
+          process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> Status: \x1b[33mDISCONNECTED BY CONTROL PANEL (Standing by)\x1b[0m`);
         } else {
           process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> CPU: \x1b[36m${cpu}%\x1b[0m | RAM: \x1b[36m${mem}%\x1b[0m | EPS: \x1b[36m${eps}\x1b[0m | Status: \x1b[32mOK\x1b[0m`);
         }
@@ -802,6 +839,12 @@ async function start() {
       // Check and execute queued commands from control plane
       try {
         const cmdRes = await request(`${controlUrl}/api/agent/commands?agent_id=${agentId}`);
+        if (cmdRes.status === 404) {
+          console.log(`\n\x1b[31m[!] ENDPOINT REMOVED\x1b[0m — This host was deleted from the ShieldDesk fleet. Stopping daemon.`);
+          running = false;
+          clearInterval(interval);
+          process.exit(0);
+        }
         if (cmdRes.status === 200 && Array.isArray(cmdRes.data.commands) && cmdRes.data.commands.length > 0) {
           for (const cmd of cmdRes.data.commands) {
             console.log(`\n\x1b[35m[*] Received Command [${cmd.id}]:\x1b[0m ${cmd.command} (Tier: ${cmd.tier})`);
@@ -839,6 +882,75 @@ async function start() {
                   const name = parts[1];
                   cp.execSync(`netsh advfirewall firewall delete rule name="${name}"`, { timeout: 5000, stdio: 'ignore' });
                   execOutput = `Firewall rule ${name} deleted successfully on ${customHostname}.`;
+                } else if (cmd.command.startsWith('isolate_host')) {
+                  try {
+                    cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Isolate"', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  try {
+                    cp.execSync('netsh advfirewall firewall add rule name="ShieldDesk-Isolate" dir=out action=block remoteip=any', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  execOutput = `Host ${customHostname} network interfaces quarantined. Inbound and outbound traffic dropped.`;
+                } else if (cmd.command.startsWith('restore_host')) {
+                  try {
+                    cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Isolate"', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  try {
+                    cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Mgmt"', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  execOutput = `Host ${customHostname} restored from isolation. Network interfaces operational.`;
+                } else if (cmd.command.startsWith('block_ip')) {
+                  const targetIp = cmd.command.split(/\s+/)[1];
+                  if (!targetIp) throw new Error('Missing target IP address for block_ip');
+                  try {
+                    cp.execSync(`netsh advfirewall firewall add rule name="ShieldDesk-Block-In-${targetIp}" dir=in action=block remoteip=${targetIp}`, { timeout: 5000, stdio: 'ignore' });
+                    cp.execSync(`netsh advfirewall firewall add rule name="ShieldDesk-Block-Out-${targetIp}" dir=out action=block remoteip=${targetIp}`, { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  execOutput = `Host firewall rule added: DROPPING all inbound and outbound traffic with ${targetIp}.`;
+                } else if (cmd.command.startsWith('unblock_ip')) {
+                  const targetIp = cmd.command.split(/\s+/)[1];
+                  if (!targetIp) throw new Error('Missing target IP address for unblock_ip');
+                  try {
+                    cp.execSync(`netsh advfirewall firewall delete rule name="ShieldDesk-Block-In-${targetIp}"`, { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  try {
+                    cp.execSync(`netsh advfirewall firewall delete rule name="ShieldDesk-Block-Out-${targetIp}"`, { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  try {
+                    cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Isolate"', { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  execOutput = `Host firewall rule deleted: Restored inbound and outbound traffic with ${targetIp}.`;
+                } else if (cmd.command.startsWith('kill_process')) {
+                  const parts = cmd.command.split(/\s+/);
+                  const pid = parseInt(parts[1], 10);
+                  if (isNaN(pid) || pid <= 4) {
+                    throw new Error(`Invalid or kernel protected PID: ${parts[1]}`);
+                  }
+                  cp.execSync(`taskkill /F /PID ${pid}`, { timeout: 5000, stdio: 'ignore' });
+                  execOutput = `Process PID ${pid} terminated successfully on ${customHostname}.`;
+                  cachedCoreTelemetry = null;
+                }
+              } else {
+                if (cmd.command.startsWith('block_ip')) {
+                  const targetIp = cmd.command.split(/\s+/)[1];
+                  if (!targetIp) throw new Error('Missing target IP address for block_ip');
+                  cp.execSync(`iptables -A INPUT -s ${targetIp} -j DROP && iptables -A OUTPUT -d ${targetIp} -j DROP`, { timeout: 5000, stdio: 'ignore' });
+                  execOutput = `Host iptables rule added: DROPPING all traffic with ${targetIp}.`;
+                } else if (cmd.command.startsWith('unblock_ip')) {
+                  const targetIp = cmd.command.split(/\s+/)[1];
+                  if (!targetIp) throw new Error('Missing target IP address for unblock_ip');
+                  try {
+                    cp.execSync(`iptables -D INPUT -s ${targetIp} -j DROP && iptables -D OUTPUT -d ${targetIp} -j DROP`, { timeout: 5000, stdio: 'ignore' });
+                  } catch {}
+                  execOutput = `Host iptables rule deleted: Restored traffic with ${targetIp}.`;
+                } else if (cmd.command.startsWith('kill_process')) {
+                  const parts = cmd.command.split(/\s+/);
+                  const pid = parseInt(parts[1], 10);
+                  if (isNaN(pid) || pid <= 1) {
+                    throw new Error(`Invalid or protected PID: ${parts[1]}`);
+                  }
+                  process.kill(pid, 'SIGKILL');
+                  execOutput = `Process PID ${pid} killed successfully on ${customHostname}.`;
+                  cachedCoreTelemetry = null;
                 }
               }
             } catch (cmdErr) {
@@ -861,9 +973,33 @@ async function start() {
             });
             console.log(`\x1b[32m[+] Execution reported for Command [${cmd.id}]: \x1b[0m${execStatus}`);
           }
+
+          if (cachedCoreTelemetry === null) {
+            const freshCpu = getCpuUsage();
+            const freshMem = getMemoryUsage();
+            const freshTelemetry = collectEndpointCoreTelemetry(freshCpu);
+            await request(`${controlUrl}/api/agent/heartbeat`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-ShieldDesk-Agent-ID': agentId,
+              },
+            }, {
+              agentId,
+              ipAddress: endpointIp,
+              cpuUsage: freshCpu,
+              memoryUsage: freshMem,
+              eps,
+              status: 'connected',
+              coreTelemetry: freshTelemetry,
+            }).catch(() => {});
+          }
         }
       } catch {}
     } catch (err) {
+      if (err && (err.code === 'ECONNRESET' || err.message?.includes('ECONNRESET'))) {
+        return;
+      }
       console.error(`\n[Heartbeat Error]`, err.message);
     }
   }, 3000);

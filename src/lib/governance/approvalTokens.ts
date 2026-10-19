@@ -30,6 +30,7 @@ export interface ApprovalTokenRecord {
   // Bound cryptographic & contextual attributes (Audit Section 45)
   incident_id?: string | null;
   plan_id?: string | null;
+  command?: string | null;
   command_id?: string | null;
   command_hash?: string | null;
   target_endpoint_ids?: string[] | null;
@@ -38,32 +39,8 @@ export interface ApprovalTokenRecord {
   used_at?: string | null;
 }
 
-// In-memory token store for offline mode.
-// Pre-seeded test fixtures are isolated strictly to test runner executions (NODE_ENV === "test").
-const MOCK_APPROVAL_TOKENS: Record<string, ApprovalTokenRecord> =
-  process.env.NODE_ENV === "test"
-    ? {
-        "tok11111-1111-1111-1111-111111111111": {
-          id: "tok11111-1111-1111-1111-111111111111",
-          tenant_id: "acme-tenant",
-          task_id: "t1111111-1111-1111-1111-111111111111",
-          action_type: "isolate_host",
-          tier: "Tier 2",
-          status: "pending",
-          requested_by: "dev-analyst",
-          approved_by: null,
-          blast_radius: "Workstation FIN-WS-042 (Finance Subnet)",
-          model_confidence: 0.96,
-          expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-          created_at: new Date(Date.now() - 3600 * 1000).toISOString(),
-          updated_at: new Date(Date.now() - 3600 * 1000).toISOString(),
-          task_title: "Isolate affected host FIN-WS-042",
-          task_description: "Quarantine endpoint network interface to halt lateral movement toward database server",
-          target_endpoint_ids: ["ea111111-1111-1111-1111-111111111111", "FIN-WS-042"],
-          command_hash: null,
-        },
-      }
-    : {};
+// In-memory token store for offline development / test runners.
+export const IN_MEMORY_APPROVAL_TOKENS: Record<string, ApprovalTokenRecord> = {};
 
 /**
  * Requests an approval token for a mitigation task.
@@ -190,8 +167,8 @@ export async function requestApprovalToken(
         message: "Database unavailable to record approval token. Action aborted under production fail-closed policy.",
       };
     }
-    // Dev fallback if database is offline
-    const mockToken: ApprovalTokenRecord = {
+    // In-memory fallback if database is offline (test / dev)
+    const inMemoryToken: ApprovalTokenRecord = {
       id: tokenId,
       tenant_id: session.tenantId,
       task_id: args.taskId,
@@ -208,13 +185,14 @@ export async function requestApprovalToken(
       task_title: `Security Action: ${action}`,
       incident_id: args.incidentId || null,
       plan_id: args.planId || null,
+      command: args.command || null,
       command_id: args.commandId || null,
       command_hash: resolvedCommandHash,
       target_endpoint_ids: args.targetEndpointIds || null,
       approval_level: args.approvalLevel || tier,
       nonce: resolvedNonce,
     };
-    MOCK_APPROVAL_TOKENS[tokenId] = mockToken;
+    IN_MEMORY_APPROVAL_TOKENS[tokenId] = inMemoryToken;
 
     dispatchSecurityNotification({
       type: "approval_required",
@@ -226,7 +204,7 @@ export async function requestApprovalToken(
       metadata: { tokenId, taskId: args.taskId, tier },
     }).catch(() => {});
 
-    return { token: mockToken };
+    return { token: inMemoryToken };
   }
 }
 
@@ -276,10 +254,10 @@ export async function approveActionToken(
     );
 
     let token = tokenRes.rows[0];
-    let isMock = false;
+    let isInMemoryFallback = false;
     if (!token && !shouldFailClosed()) {
-      token = MOCK_APPROVAL_TOKENS[args.tokenId];
-      isMock = Boolean(token);
+      token = IN_MEMORY_APPROVAL_TOKENS[args.tokenId];
+      isInMemoryFallback = Boolean(token);
     }
     if (!token) {
       return {
@@ -367,11 +345,11 @@ export async function approveActionToken(
 
     // 5. Update token to approved
     let updatedToken = token;
-    if (isMock) {
+    if (isInMemoryFallback) {
       token.status = "approved";
       token.approved_by = session.uid;
       token.updated_at = new Date().toISOString();
-      MOCK_APPROVAL_TOKENS[token.id] = token;
+      IN_MEMORY_APPROVAL_TOKENS[token.id] = token;
       updatedToken = token;
     } else {
       const updated = await query<ApprovalTokenRecord>(
@@ -384,22 +362,22 @@ export async function approveActionToken(
       if (updated.rows[0]) {
         updatedToken = updated.rows[0];
       }
-      if (MOCK_APPROVAL_TOKENS[token.id]) {
-        MOCK_APPROVAL_TOKENS[token.id].status = "approved";
-        MOCK_APPROVAL_TOKENS[token.id].approved_by = session.uid;
-        MOCK_APPROVAL_TOKENS[token.id].updated_at = new Date().toISOString();
+      if (IN_MEMORY_APPROVAL_TOKENS[token.id]) {
+        IN_MEMORY_APPROVAL_TOKENS[token.id].status = "approved";
+        IN_MEMORY_APPROVAL_TOKENS[token.id].approved_by = session.uid;
+        IN_MEMORY_APPROVAL_TOKENS[token.id].updated_at = new Date().toISOString();
       }
     }
 
     // 6. Update linked task status
-    if (!isMock && token.task_id) {
+    if (!isInMemoryFallback && token.task_id) {
       try {
         await query("UPDATE mitigation_tasks SET status = 'approved' WHERE id = $1", [token.task_id]);
       } catch {}
     }
 
     // 7. Write immutable audit log
-    if (!isMock) {
+    if (!isInMemoryFallback) {
       try {
         await query(
           `INSERT INTO approval_audit_log (token_id, tenant_id, actor_id, action, details, created_at)
@@ -422,14 +400,14 @@ export async function approveActionToken(
         message: "Database unavailable to record token approval. Action aborted under production fail-closed policy.",
       };
     }
-    // Dev fallback if database is offline
-    const token = MOCK_APPROVAL_TOKENS[args.tokenId];
+    // In-memory fallback if database is offline (test / dev)
+    const token = IN_MEMORY_APPROVAL_TOKENS[args.tokenId];
     if (!token) return { error: "not_found" };
     if (!canAccess(session.role, "VIEW_CROSS_TENANT") && token.tenant_id !== session.tenantId) {
       return { error: "not_found" }; // 404 anti-enumeration
     }
 
-    // Separation of Duties check in mock mode
+    // Separation of Duties check in in-memory mode
     if (token.requested_by === session.uid) {
       return {
         error: "separation_of_duties_violation",
@@ -446,7 +424,7 @@ export async function approveActionToken(
       };
     }
 
-    // Tier 3 dual-approval in mock mode
+    // Tier 3 dual-approval in in-memory mode
     if (token.tier === "Tier 3") {
       const requiredRoles = ["super_admin", "system_admin"];
       if (!requiredRoles.includes(session.role)) {
@@ -543,7 +521,13 @@ export async function rejectActionToken(
     return { success: true, token: updated.rows[0] };
   } catch (err: unknown) {
     console.error("[ApprovalTokens] Exception rejecting token in database:", err);
-    const token = MOCK_APPROVAL_TOKENS[args.tokenId];
+    if (shouldFailClosed()) {
+      return {
+        error: "database_unavailable",
+        message: "Database unavailable to record token rejection. Action aborted under production fail-closed policy.",
+      };
+    }
+    const token = IN_MEMORY_APPROVAL_TOKENS[args.tokenId];
     if (!token) return { error: "not_found" };
     if (!canAccess(session.role, "VIEW_CROSS_TENANT") && token.tenant_id !== session.tenantId) {
       return { error: "not_found" };
@@ -597,8 +581,11 @@ export async function listApprovalTokens(
     );
     return { tokens: result.rows };
   } catch {
-    // Dev fallback if database is offline
-    const list = Object.values(MOCK_APPROVAL_TOKENS).filter((t) => {
+    if (shouldFailClosed()) {
+      return { tokens: [] };
+    }
+    // In-memory fallback if database is offline (test / dev)
+    const list = Object.values(IN_MEMORY_APPROVAL_TOKENS).filter((t) => {
       if (!canAccess(session.role, "VIEW_CROSS_TENANT") && t.tenant_id !== session.tenantId) {
         return false;
       }
@@ -635,10 +622,14 @@ export async function getApprovalToken(
       return result.rows[0];
     }
   } catch {
-    // mock fallback
+    // Database query fallback
   }
 
-  const token = MOCK_APPROVAL_TOKENS[tokenId];
+  if (shouldFailClosed()) {
+    return null;
+  }
+
+  const token = IN_MEMORY_APPROVAL_TOKENS[tokenId];
   if (!token) return null;
   if (!canAccess(role, "VIEW_CROSS_TENANT") && token.tenant_id !== tenantId) {
     return null; // Anti-enumeration 404
@@ -664,12 +655,14 @@ export async function markApprovalTokenConsumed(
       [commandId, tokenId]
     );
   } catch {
-    const token = MOCK_APPROVAL_TOKENS[tokenId];
-    if (token) {
-      token.status = "consumed";
-      token.used_at = new Date().toISOString();
-      token.command_id = commandId;
-      token.updated_at = new Date().toISOString();
+    if (!shouldFailClosed()) {
+      const token = IN_MEMORY_APPROVAL_TOKENS[tokenId];
+      if (token) {
+        token.status = "consumed";
+        token.used_at = new Date().toISOString();
+        token.command_id = commandId;
+        token.updated_at = new Date().toISOString();
+      }
     }
   }
 

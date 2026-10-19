@@ -28,6 +28,15 @@ export const DEFAULT_ACTION_POLICIES: Record<string, ActionPolicy> = {
     requireMfa: false,
   },
 
+  unblock_ip: {
+    action: "unblock_ip",
+    description: "Remove firewall drop rule and restore IP connectivity",
+    conditions: { minRisk: "low" },
+    modeBehaviors: { observe: "DENY", assist: "ALLOW", autopilot: "ALLOW" },
+    maxBlastRadiusScore: 20,
+    requireMfa: false,
+  },
+
   isolate_host: {
     action: "isolate_host",
     description: "Sever host network interfaces to contain active lateral movement",

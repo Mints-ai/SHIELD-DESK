@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getQueuedCommandsForAgent, getEndpointAgent } from "@/lib/fleet/fleet";
 import { query } from "@/lib/db";
 import { trackError } from "@/lib/observability/errorTracker";
+import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
 
 /**
  * GET /api/agent/commands?agent_id=<id>
@@ -20,15 +21,17 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Verify agent status and kill switch
+    // Verify agent status, IP containment, and kill switch
     let agentFound = false;
+    let effectiveAgentId = agentId;
     try {
-      const { rows } = await query<{ id: string; kill_switch_active: boolean; tenant_id: string }>(
-        `SELECT id, kill_switch_active, tenant_id FROM endpoint_agents WHERE id = $1`,
+      const { rows } = await query<{ id: string; ip_address: string; kill_switch_active: boolean; tenant_id: string }>(
+        `SELECT id, ip_address, kill_switch_active, tenant_id FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`,
         [agentId]
       );
       if (rows.length > 0) {
         agentFound = true;
+        effectiveAgentId = rows[0].id;
         if (rows[0].kill_switch_active) {
           return NextResponse.json(
             { error: "KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch." },
@@ -49,6 +52,7 @@ export async function GET(req: NextRequest) {
       if (!mockAgent) {
         return NextResponse.json({ error: "Agent not found" }, { status: 404 });
       }
+      effectiveAgentId = mockAgent.id;
       if (mockAgent.kill_switch_active) {
         return NextResponse.json(
           { error: "KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch." },
@@ -57,7 +61,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const commands = await getQueuedCommandsForAgent(agentId);
+    const commands = await getQueuedCommandsForAgent(effectiveAgentId);
     return NextResponse.json({ commands });
   } catch (err: unknown) {
     trackError(err, { endpoint: "/api/agent/commands" });

@@ -3,6 +3,7 @@ import type OpenAI from "openai";
 import { query, withTenantContext } from "@/lib/db";
 import { canAccess } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
+import { isDemoMode } from "@/lib/config/environment";
 
 export type { ChatSession } from "@/lib/auth/session";
 
@@ -157,17 +158,63 @@ export const CHAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
-const MOCK_CVE_RECORDS: Record<string, Record<string, unknown>> = {
-  "CVE-2024-3400": {
-    cve_id: "CVE-2024-3400",
-    cvss_score: 10.0,
-    severity: "CRITICAL",
-    cisa_kev: true,
-    remediation_tier: "IMMEDIATE_ACTION",
-    description: "Command injection vulnerability in PAN-OS GlobalProtect feature allows an unauthenticated attacker to execute arbitrary code with root privileges.",
-    recommended_mitigation: "Apply vendor hotfixes immediately. Disable device telemetry as temporary workaround if hotfix cannot be immediately deployed.",
+interface IncidentDbRow {
+  id: string;
+  incident_code: string;
+  severity: string;
+  status: string;
+  title: string;
+  description: string;
+  created_at: string;
+}
+
+interface IncidentSummaryRow {
+  incident_code: string;
+  severity: string;
+  status: string;
+  title: string;
+  created_at: string;
+}
+
+interface IncidentEventRow {
+  occurred_at: string;
+  description: string;
+}
+
+interface IncidentAssetRow {
+  hostname: string;
+  asset_type: string;
+}
+
+export const DEMO_FALLBACK_INCIDENTS: IncidentDbRow[] = [
+  {
+    id: "00000000-0000-0000-0000-000000001042",
+    incident_code: "INC-1042",
+    severity: "critical",
+    status: "open",
+    title: "Unauthorized Lateral Movement via SSH & Suspicious RCE Probe",
+    description: "Detected multi-stage intrusion attempt targeting internal production cluster. Exploit payload observed attempting CVE-2024-6387 OpenSSH race condition with subsequent privileged credential dumping.",
+    created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
   },
-};
+  {
+    id: "00000000-0000-0000-0000-000000002045",
+    incident_code: "INC-2045",
+    severity: "high",
+    status: "investigating",
+    title: "Anomalous Outbound C2 Beaconing to High-Risk IP",
+    description: "Endpoint agent reported unexpected HTTPS connection to known malicious threat group infrastructure with recurring 60s jitter interval.",
+    created_at: new Date(Date.now() - 3600000 * 6).toISOString(),
+  },
+  {
+    id: "00000000-0000-0000-0000-000000003089",
+    incident_code: "INC-3089",
+    severity: "medium",
+    status: "open",
+    title: "Repeated Failed Administrative Logins (Brute Force)",
+    description: "Multiple failed authentication attempts across 14 workstations originating from subnet 10.0.4.0/24 within a 5-minute window.",
+    created_at: new Date(Date.now() - 3600000 * 12).toISOString(),
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Tool: getIncidents
@@ -199,15 +246,32 @@ export async function getIncidents(
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   params.push(limit);
 
-  const result = await query(
-    `SELECT incident_code, severity, status, title, created_at
-     FROM incidents
-     ${where}
-     ORDER BY created_at DESC
-     LIMIT $${params.length}`,
-    params
-  );
-  return { incidents: result.rows };
+  try {
+    const result = await query<IncidentSummaryRow>(
+      `SELECT incident_code, severity, status, title, created_at
+       FROM incidents
+       ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+    if (result.rows.length > 0 || !isDemoMode()) {
+      return { incidents: result.rows };
+    }
+  } catch (err) {
+    if (!isDemoMode()) {
+      throw err;
+    }
+    console.warn("[getIncidents] Database query error in demo mode, returning fallback incidents:", err);
+  }
+
+  const filtered = DEMO_FALLBACK_INCIDENTS.filter((inc) => {
+    if (args.severity && inc.severity.toLowerCase() !== args.severity.toLowerCase()) return false;
+    if (args.status && inc.status.toLowerCase() !== args.status.toLowerCase()) return false;
+    return true;
+  }).slice(0, limit);
+
+  return { incidents: filtered };
 }
 
 // ---------------------------------------------------------------------------
@@ -226,29 +290,67 @@ export async function investigateIncident(
     ? [args.incidentId]
     : [args.incidentId, session.tenantId];
 
-  const incidentResult = await query(
-    `SELECT id, incident_code, severity, status, title, description, created_at
-     FROM incidents WHERE incident_code = $1 ${tenantScope}
-     LIMIT 1`,
-    params
-  );
+  let incident: IncidentDbRow | undefined = undefined;
+  let eventsRows: IncidentEventRow[] = [];
+  let assetsRows: IncidentAssetRow[] = [];
 
-  const incident = incidentResult.rows[0];
-  if (!incident) return { error: "not_found" };
+  try {
+    const incidentResult = await query<IncidentDbRow>(
+      `SELECT id, incident_code, severity, status, title, description, created_at
+       FROM incidents WHERE incident_code = $1 ${tenantScope}
+       LIMIT 1`,
+      params
+    );
+    incident = incidentResult.rows[0];
 
-  const [events, assets] = await Promise.all([
-    query(
-      `SELECT occurred_at, description FROM incident_events
-       WHERE incident_id = $1 ORDER BY occurred_at ASC`,
-      [incident.id]
-    ),
-    query(
-      `SELECT a.hostname, a.asset_type FROM assets a
-       JOIN incident_assets ia ON ia.asset_id = a.id
-       WHERE ia.incident_id = $1`,
-      [incident.id]
-    ),
-  ]);
+    if (incident?.id) {
+      const targetId = incident.id;
+      const [events, assets] = await Promise.all([
+        query<IncidentEventRow>(
+          `SELECT occurred_at, description FROM incident_events
+           WHERE incident_id = $1 ORDER BY occurred_at ASC`,
+          [targetId]
+        ),
+        query<IncidentAssetRow>(
+          `SELECT a.hostname, a.asset_type FROM assets a
+           JOIN incident_assets ia ON ia.asset_id = a.id
+           WHERE ia.incident_id = $1`,
+          [targetId]
+        ),
+      ]);
+      eventsRows = events.rows;
+      assetsRows = assets.rows;
+    }
+  } catch (err) {
+    if (!isDemoMode()) throw err;
+    console.warn("[investigateIncident] Database query error in demo mode, returning fallback detail:", err);
+  }
+
+  if (!incident) {
+    if (isDemoMode()) {
+      const demo = DEMO_FALLBACK_INCIDENTS.find(i => i.incident_code === args.incidentId) || DEMO_FALLBACK_INCIDENTS[0]!;
+      return {
+        incident: {
+          incidentCode: demo.incident_code,
+          severity: demo.severity,
+          status: demo.status,
+          title: demo.title,
+          description: demo.description,
+          createdAt: demo.created_at,
+        },
+        events: [
+          { occurred_at: demo.created_at, description: "Initial threat detection event triggered by endpoint heuristic sensor" },
+          { occurred_at: new Date(Date.now() - 1800000).toISOString(), description: "Suspicious child process spawned under elevated privileges" },
+          { occurred_at: new Date(Date.now() - 900000).toISOString(), description: "Threat containment alert dispatched to SOC team" },
+        ],
+        affectedAssets: [
+          { hostname: "prod-db-cluster-01", asset_type: "database_server" },
+          { hostname: "sec-ops-jumpbox", asset_type: "bastion_host" },
+        ],
+      };
+    }
+    return { error: "not_found" };
+  }
 
   return {
     incident: {
@@ -259,8 +361,8 @@ export async function investigateIncident(
       description: incident.description,
       createdAt: incident.created_at,
     },
-    events: events.rows,
-    affectedAssets: assets.rows,
+    events: eventsRows,
+    affectedAssets: assetsRows,
   };
 }
 
@@ -296,22 +398,9 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
     }
   }
 
-  // Dev fallback:
-  const cveUpper = args.cveId.toUpperCase();
-  if (MOCK_CVE_RECORDS[cveUpper]) {
-    return { record: MOCK_CVE_RECORDS[cveUpper] };
-  }
-
   return {
-    record: {
-      cve_id: cveUpper,
-      cvss_score: 8.8,
-      severity: "HIGH",
-      cisa_kev: false,
-      remediation_tier: "SCHEDULED_PATCH",
-      description: `Threat intelligence analysis for ${cveUpper}.`,
-      recommended_mitigation: `Apply vendor patches for ${cveUpper}, enforce boundary firewalls, and monitor endpoint logs.`,
-    },
+    error: "cve_service_unavailable",
+    message: `CVE threat intelligence service is unreachable or offline for ${args.cveId}.`,
   };
 }
 
@@ -328,80 +417,18 @@ export async function analyzeCve(_session: ChatSession, args: { cveId?: string }
 // "not_found" in the trained knowledge base, or the engine being
 // unreachable) are noted rather than failing the whole plan.
 // ---------------------------------------------------------------------------
-// In-memory plan storage for development / offline mode.
-// Pre-seeded test fixtures are isolated strictly to test runner executions (NODE_ENV === "test").
-const MOCK_STORED_PLANS: Record<string, Record<string, unknown>> =
-  process.env.NODE_ENV === "test"
-    ? {
-        "p1111111-1111-1111-1111-111111111111": {
-          id: "p1111111-1111-1111-1111-111111111111",
-          incident_code: "INC-1042",
-          incident_title: "Suspicious lateral movement on FIN-WS-042",
-          incident_severity: "critical",
-          tenant_id: "acme-tenant",
-          version: 1,
-          status: "active",
-          summary: "Multi-horizon containment and vulnerability remediation for lateral movement breach",
-          created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-        },
-      }
-    : {};
+// In-memory plan storage for development / offline fallback.
+export const IN_MEMORY_STORED_PLANS: Record<string, Record<string, unknown>> = {};
+export const IN_MEMORY_STORED_TASKS: Record<string, Array<Record<string, unknown>>> = {};
 
-const MOCK_STORED_TASKS: Record<string, Array<Record<string, unknown>>> =
-  process.env.NODE_ENV === "test"
-    ? {
-        "p1111111-1111-1111-1111-111111111111": [
-          {
-            id: "t1111111-1111-1111-1111-111111111111",
-            plan_id: "p1111111-1111-1111-1111-111111111111",
-            horizon: "immediate",
-            title: "Isolate affected host FIN-WS-042",
-            description: "Quarantine endpoint network interface to halt lateral movement toward database server",
-            tier: "Tier 2",
-            status: "pending",
-            blast_radius: "Single Workstation (FIN-WS-042)",
-            cve_id: null,
-            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          },
-          {
-            id: "t2222222-2222-2222-2222-222222222222",
-            plan_id: "p1111111-1111-1111-1111-111111111111",
-            horizon: "immediate",
-            title: "Revoke exposed user and administrative credentials",
-            description: "Terminate active session tokens for compromised user accounts",
-            tier: "Tier 1",
-            status: "completed",
-            blast_radius: "User Sessions",
-            cve_id: null,
-            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          },
-          {
-            id: "t3333333-3333-3333-3333-333333333333",
-            plan_id: "p1111111-1111-1111-1111-111111111111",
-            horizon: "short_term",
-            title: "Deploy vendor patch for CVE-2020-6240",
-            description: "Apply SAP Security Notes to resolve NetWeaver DoS vulnerability",
-            tier: "Tier 2",
-            status: "pending",
-            blast_radius: "Finance Subnet Application Servers",
-            cve_id: "CVE-2020-6240",
-            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          },
-          {
-            id: "t4444444-4444-4444-4444-444444444444",
-            plan_id: "p1111111-1111-1111-1111-111111111111",
-            horizon: "long_term",
-            title: "Implement zero-trust microsegmentation",
-            description: "Enforce strict firewall ACLs between general workstations and financial database tier",
-            tier: "Tier 2",
-            status: "pending",
-            blast_radius: "Entire Finance Zone",
-            cve_id: null,
-            created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          },
-        ],
-      }
-    : {};
+export function seedInMemoryPlanForTesting(
+  plan: Record<string, unknown>,
+  tasks: Array<Record<string, unknown>>
+): void {
+  const planId = String(plan.id);
+  IN_MEMORY_STORED_PLANS[planId] = plan;
+  IN_MEMORY_STORED_TASKS[planId] = tasks;
+}
 
 // ---------------------------------------------------------------------------
 // Tool: generateMitigationPlan
@@ -425,7 +452,7 @@ export async function generateMitigationPlan(
     .filter(Boolean);
 
   const cveResult = await query<{ cve_id: string }>(
-    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE incident_code = $1)",
+    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE (incident_code = $1 OR id::text = $1) LIMIT 1)",
     [args.incidentId]
   );
   const linkedCveRows = cveResult.rows;
@@ -442,54 +469,54 @@ export async function generateMitigationPlan(
 
   const immediateTasks = assetNames.length
     ? [
-        {
-          horizon: "immediate" as const,
-          title: `Isolate affected asset(s): ${assetNames.join(", ")}`,
-          description: "Contain compromised hosts to halt lateral network propagation",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: `Affected Hosts: ${assetNames.join(", ")}`,
-        },
-        {
-          horizon: "immediate" as const,
-          title: "Revoke exposed credentials and rotate session keys",
-          description: "Invalidate tokens associated with users on compromised hosts",
-          tier: "Tier 1",
-          status: "completed" as const,
-          blastRadius: "User Sessions",
-        },
-      ]
+      {
+        horizon: "immediate" as const,
+        title: `Isolate affected asset(s): ${assetNames.join(", ")}`,
+        description: "Contain compromised hosts to halt lateral network propagation",
+        tier: "Tier 2",
+        status: "pending" as const,
+        blastRadius: `Affected Hosts: ${assetNames.join(", ")}`,
+      },
+      {
+        horizon: "immediate" as const,
+        title: "Revoke exposed credentials and rotate session keys",
+        description: "Invalidate tokens associated with users on compromised hosts",
+        tier: "Tier 1",
+        status: "completed" as const,
+        blastRadius: "User Sessions",
+      },
+    ]
     : [
-        {
-          horizon: "immediate" as const,
-          title: "Confirm scope of affected assets before further containment",
-          description: "Scan subnet telemetry to discover unmapped affected hosts",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: "Audit Scope",
-        },
-      ];
+      {
+        horizon: "immediate" as const,
+        title: "Confirm scope of affected assets before further containment",
+        description: "Scan subnet telemetry to discover unmapped affected hosts",
+        tier: "Tier 2",
+        status: "pending" as const,
+        blastRadius: "Audit Scope",
+      },
+    ];
 
   const patchTasks = resolvedCves.length
     ? resolvedCves.map((c) => ({
+      horizon: "short_term" as const,
+      title: `Deploy remediation for ${c.cveId}`,
+      description: `Apply vendor patches and configuration hardening for ${c.cveId}`,
+      tier: "Tier 2",
+      status: "pending" as const,
+      blastRadius: "Target Service Endpoints",
+      cveId: c.cveId,
+    }))
+    : [
+      {
         horizon: "short_term" as const,
-        title: `Deploy remediation for ${c.cveId}`,
-        description: `Apply vendor patches and configuration hardening for ${c.cveId}`,
+        title: "Patch affected systems and review attack vector",
+        description: "Apply standard security updates and review lateral movement logs",
         tier: "Tier 2",
         status: "pending" as const,
-        blastRadius: "Target Service Endpoints",
-        cveId: c.cveId,
-      }))
-    : [
-        {
-          horizon: "short_term" as const,
-          title: "Patch affected systems and review attack vector",
-          description: "Apply standard security updates and review lateral movement logs",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: "Host Environment",
-        },
-      ];
+        blastRadius: "Host Environment",
+      },
+    ];
 
   const longTermTasks = [
     {
@@ -532,7 +559,7 @@ export async function generateMitigationPlan(
           tenant_id: string;
         }>(
           `SELECT id, tenant_id FROM incidents
-           WHERE incident_code = $1 ${incidentTenantScope}
+           WHERE (incident_code = $1 OR id::text = $1) ${incidentTenantScope}
            LIMIT 1 FOR UPDATE`,
           incidentParams
         );
@@ -610,8 +637,8 @@ export async function generateMitigationPlan(
     planId = transactionResult.id;
     storedTasks = transactionResult.tasks;
   } catch {
-    // Dev fallback if database is offline: save in mock store
-    const existingMockPlan = Object.values(MOCK_STORED_PLANS).find(
+    // Fallback if database is offline: save in memory store
+    const existingMockPlan = Object.values(IN_MEMORY_STORED_PLANS).find(
       (plan) =>
         plan.tenant_id === session.tenantId &&
         plan.incident_code === investigation.incident.incidentCode &&
@@ -619,9 +646,9 @@ export async function generateMitigationPlan(
     );
     if (existingMockPlan) {
       planId = String(existingMockPlan.id);
-      storedTasks = MOCK_STORED_TASKS[planId] || [];
+      storedTasks = IN_MEMORY_STORED_TASKS[planId] || [];
     } else {
-      MOCK_STORED_PLANS[planId] = {
+      IN_MEMORY_STORED_PLANS[planId] = {
         id: planId,
         incident_code: investigation.incident.incidentCode,
         incident_title: investigation.incident.title,
@@ -632,7 +659,7 @@ export async function generateMitigationPlan(
         summary: `Automated mitigation plan for ${args.incidentId}`,
         created_at: new Date().toISOString(),
       };
-      MOCK_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
+      IN_MEMORY_STORED_TASKS[planId] = allTasks.map((t, idx) => ({
         id: `task-${idx}-${Date.now()}`,
         plan_id: planId,
         horizon: t.horizon,
@@ -727,14 +754,14 @@ export async function getMitigationPlan(
       tasks: tasksResult.rows,
     };
   } catch {
-    // Dev fallback if database is offline: check mock stored plans
-    const plan = MOCK_STORED_PLANS[args.planId];
+    // Fallback if database is offline: check in-memory stored plans
+    const plan = IN_MEMORY_STORED_PLANS[args.planId];
     if (!plan) return { error: "not_found" };
     if (!canAccess(session.role, "VIEW_CROSS_TENANT") && plan.tenant_id !== session.tenantId) {
       return { error: "not_found" }; // anti-enumeration 404
     }
 
-    const tasks = MOCK_STORED_TASKS[args.planId] || [];
+    const tasks = IN_MEMORY_STORED_TASKS[args.planId] || [];
     return {
       plan,
       tasks,

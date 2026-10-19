@@ -4,6 +4,8 @@ import { recordHashChainEvent } from "@/lib/fleet/fleet";
 import type { OsType } from "@/lib/fleet/fleet";
 import type { SessionUser } from "@/lib/auth/session";
 
+import { normalizeEndpointIp } from "./ipAddress";
+
 export interface EnrollmentTokenRecord {
   id: string;
   tenant_id: string;
@@ -178,6 +180,59 @@ export async function enrollEndpointAgent({
   }
 
   const tenantId = tokenValidation.tenantId;
+  const cleanIp = normalizeEndpointIp(ipAddress);
+
+  // Single-endpoint-per-IP policy: ensure no other endpoint is currently active on this IP
+  if (cleanIp) {
+    try {
+      const { rows: existingActive } = await query<{ id: string; hostname: string }>(
+        `SELECT id, hostname FROM endpoint_agents
+         WHERE tenant_id = $1
+           AND ip_address = $2
+           AND status = 'connected'
+           AND kill_switch_active = false
+           AND (COALESCE(last_seen_at, created_at) > now() - INTERVAL '45 seconds')
+         LIMIT 1;`,
+        [tenantId, cleanIp]
+      );
+
+      if (existingActive.length > 0) {
+        const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+        await query(
+          `UPDATE endpoint_enrollment_tokens SET used_count = GREATEST(0, used_count - 1) WHERE token_hash = $1;`,
+          [tokenHash]
+        ).catch(() => {});
+
+        return {
+          success: false,
+          error: `Enrollment rejected: An active endpoint ('${existingActive[0].hostname}') is already connected from IP ${cleanIp}. Only one endpoint per IP address is allowed to connect at a time.`,
+        };
+      }
+    } catch {
+      // In-memory fallback check
+      const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+      const existingMock = MOCK_ENDPOINT_AGENTS.find(
+        (a) =>
+          a.tenant_id === tenantId &&
+          a.ip_address === cleanIp &&
+          a.status === "connected" &&
+          !a.kill_switch_active &&
+          Date.now() - new Date(a.last_heartbeat).getTime() <= 45000
+      );
+
+      if (existingMock) {
+        const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+        const tok = MOCK_ENROLLMENT_TOKENS.find((t) => t.token_hash === tokenHash);
+        if (tok && tok.used_count > 0) tok.used_count -= 1;
+
+        return {
+          success: false,
+          error: `Enrollment rejected: An active endpoint ('${existingMock.hostname}') is already connected from IP ${cleanIp}. Only one endpoint per IP address is allowed at a time.`,
+        };
+      }
+    }
+  }
+
   const agentId = crypto.randomUUID();
 
   try {

@@ -1,4 +1,5 @@
 import "./setup";
+import "./fixtures/fleet";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
@@ -83,6 +84,7 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
 
   it("Audit Item 44: Production environment strictly enforces RealAgentExecutor over SimulationExecutor", async () => {
     const origAppEnv = process.env.APP_ENV;
+    const previousPool = global.__shieldDeskPgPool;
     try {
       process.env.APP_ENV = "production";
 
@@ -107,6 +109,14 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
         licenseKey,
       });
 
+      const persisted: unknown[][] = [];
+      global.__shieldDeskPgPool = {
+        async query(sql: string, params: unknown[] = []) {
+          if (/INSERT INTO agent_commands/.test(sql)) { persisted.push(params); return {rows:[],rowCount:1}; }
+          throw new Error("Queue fixture does not implement this query");
+        }, async end() {},
+      } as unknown as import("pg").Pool;
+
       const res = await executeAgentCommand({
         agentId,
         command: "take_safety_snapshot",
@@ -117,9 +127,13 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
       assert.equal(res.success, true);
       assert.equal(res.state, "queued", "Production command must be enqueued, not simulated");
       assert.ok(
-        res.output.includes("Awaiting signed host execution report"),
+        res.output.includes("Awaiting endpoint execution report"),
         "Production output must explicitly await remote host execution report"
       );
+
+      assert.equal(persisted.length, 1, "Production dispatch must be persisted");
+      assert.equal(persisted[0][1], agentId);
+      assert.equal(persisted[0][8], "queued");
 
       // Verify SimulationExecutor throws when directly invoked in production
       const simExecutor = new SimulationExecutor();
@@ -140,6 +154,7 @@ describe("Launch Audit Hardening & Closed-Loop Security Verification Suite", () 
         "SimulationExecutor must reject execution in production"
       );
     } finally {
+      global.__shieldDeskPgPool = previousPool;
       if (origAppEnv !== undefined) {
         process.env.APP_ENV = origAppEnv;
       } else {

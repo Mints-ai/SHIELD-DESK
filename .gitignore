@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+*.exe~
 
 # debug
 npm-debug.log*
@@ -55,4 +56,10 @@ bin/
 *.key
 __pycache__/
 *.pyc
+
+# scratch and runtime cache
+scratch/go-cache/
+scratch/active_blocked_ips.json
+scratch/*.json
+
 

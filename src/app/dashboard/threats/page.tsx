@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
 import {
   ShieldAlert,
@@ -100,6 +100,18 @@ export interface ThreatSecurityAlert {
   createdAt: string;
 }
 
+export interface WebhookEndpointItem {
+  id: string;
+  name: string;
+  type: "discord" | "slack" | "teams" | "generic";
+  destination: string;
+  events: string[];
+  min_severity?: string;
+  is_custom?: boolean;
+  enabled?: boolean;
+  configured: boolean;
+}
+
 import { useChat } from "@/lib/context/ChatContext";
 
 export default function ThreatsDashboardPage() {
@@ -122,14 +134,25 @@ export default function ThreatsDashboardPage() {
   const [testingRule, setTestingRule] = useState<{ id: string; name?: string; raw_content?: string } | null>(null);
   const [yaraFilter, setYaraFilter] = useState("");
 
-  // System Admin (Company Admin) is the only one who can monitor, block, and unblock login containment.
-  // Globex Analyst is a developer persona and doesn't sync user login alerts (kept blank).
+  // Standardized operator roles for ShieldDesk SOC:
+  // system_admin / super_admin: Admin privileges, baseline simulation & reset
+  // responder: L3 containment operator (unblock/block IP, approve containment)
+  // analyst: L1/L2 investigator (read-only containment, full observability)
   const isSystemAdmin =
     activeUserId === "dev-admin" ||
     activeUser?.role === "system_admin" ||
     activeUser?.role === "super_admin";
 
-  const isAuthorizedForAlerts = isSystemAdmin || canViewAuthAlerts;
+  const isResponder =
+    activeUserId === "dev-responder" ||
+    activeUser?.role === "responder";
+
+  const isAnalyst =
+    activeUserId === "dev-analyst" ||
+    activeUser?.role === "analyst";
+
+  const canManageContainment = isSystemAdmin || isResponder;
+  const isAuthorizedForAlerts = isSystemAdmin || isResponder || isAnalyst || canViewAuthAlerts;
 
   // Auto-switch to anomaly tab if active persona is not authorized for alerts
   useEffect(() => {
@@ -141,8 +164,25 @@ export default function ThreatsDashboardPage() {
   // Simulation Feedback
   const [simFeedback, setSimFeedback] = useState<string | null>(null);
 
-  // Webhook Test State
+  // Webhook State & Admin Management
   const [webhookLog, setWebhookLog] = useState<Record<string, unknown> | null>(null);
+  const [webhookEndpoints, setWebhookEndpoints] = useState<WebhookEndpointItem[]>([]);
+  const [canManageWebhooks, setCanManageWebhooks] = useState(false);
+  const [addWebhookModalOpen, setAddWebhookModalOpen] = useState(false);
+  const [newWebhookName, setNewWebhookName] = useState("");
+  const [newWebhookType, setNewWebhookType] = useState<"slack" | "discord" | "teams" | "generic">("generic");
+  const [newWebhookUrl, setNewWebhookUrl] = useState("");
+  const [newWebhookSecret, setNewWebhookSecret] = useState("");
+  const [newWebhookMinSeverity, setNewWebhookMinSeverity] = useState<"low" | "medium" | "high" | "critical">("medium");
+  const [newWebhookEvents, setNewWebhookEvents] = useState<string[]>([
+    "threat_detected",
+    "approval_required",
+    "incident_created",
+    "lockdown.activated",
+  ]);
+  const [webhookCreating, setWebhookCreating] = useState(false);
+  const [webhookFeedback, setWebhookFeedback] = useState<string | null>(null);
+  const [selectedEndpointForTest, setSelectedEndpointForTest] = useState<string>("");
 
   const fetchThreatData = async (silent = false) => {
     try {
@@ -158,13 +198,8 @@ export default function ThreatsDashboardPage() {
       if (data.sigma_rules) setSigmaRules(data.sigma_rules);
       if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
       if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
-      if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
-      else setBlockedIps([]);
-      if (data.security_alerts && isSystemAdmin) {
-        setSecurityAlerts(data.security_alerts);
-      } else {
-        setSecurityAlerts([]);
-      }
+      if (data.blocked_ips) setBlockedIps(data.blocked_ips);
+      if (data.security_alerts) setSecurityAlerts(data.security_alerts);
       setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
 
     } catch (err) {
@@ -190,13 +225,8 @@ export default function ThreatsDashboardPage() {
         if (data.sigma_rules) setSigmaRules(data.sigma_rules);
         if (data.anomaly_baselines) setAnomalies(data.anomaly_baselines);
         if (data.ingest_telemetry) setTelemetry(data.ingest_telemetry);
-        if (data.blocked_ips && isSystemAdmin) setBlockedIps(data.blocked_ips);
-        else setBlockedIps([]);
-        if (data.security_alerts && isSystemAdmin) {
-          setSecurityAlerts(data.security_alerts);
-        } else {
-          setSecurityAlerts([]);
-        }
+        if (data.blocked_ips) setBlockedIps(data.blocked_ips);
+        if (data.security_alerts) setSecurityAlerts(data.security_alerts);
         setCanViewAuthAlerts(Boolean(data.can_view_auth_alerts));
 
       } catch (err) {
@@ -212,7 +242,7 @@ export default function ThreatsDashboardPage() {
       mounted = false;
       clearInterval(interval);
     };
-  }, [activeUserId, isSystemAdmin, activeUser?.tenantId]);
+  }, [activeUserId, isSystemAdmin, isResponder, isAnalyst, activeUser?.tenantId]);
 
   const triggerAnomalySimulation = async () => {
     setLoading(true);
@@ -403,16 +433,45 @@ export default function ThreatsDashboardPage() {
     }
   };
 
+  const fetchWebhookEndpoints = useCallback(async () => {
+    try {
+      const res = await fetch("/api/webhooks", {
+        headers: {
+          "X-ShieldDesk-User": activeUserId,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.endpoints)) {
+          setWebhookEndpoints(data.endpoints);
+          if (data.endpoints.length > 0) {
+            setSelectedEndpointForTest((prev) => prev || data.endpoints[0].id);
+          }
+        }
+        setCanManageWebhooks(Boolean(data.can_manage_webhooks));
+      }
+    } catch (err) {
+      console.error("Failed to load webhook endpoints:", err);
+    }
+  }, [activeUserId]);
+
+  useEffect(() => {
+    if (activeTab === "ingest") {
+      void fetchWebhookEndpoints();
+    }
+  }, [activeTab, fetchWebhookEndpoints]);
+
   const dispatchTestWebhook = async (endpointId?: string) => {
     setLoading(true);
     try {
+      const targetId = endpointId || selectedEndpointForTest;
       const res = await fetch("/api/webhooks", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify(endpointId ? { endpoint_id: endpointId } : {}),
+        body: JSON.stringify(targetId ? { endpoint_id: targetId } : {}),
       });
       const data = await res.json();
       setWebhookLog(data);
@@ -420,6 +479,93 @@ export default function ThreatsDashboardPage() {
       setWebhookLog({ message: "Failed to dispatch test webhook" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCreateWebhook = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newWebhookName.trim() || !newWebhookUrl.trim()) return;
+
+    setWebhookCreating(true);
+    setWebhookFeedback(null);
+    try {
+      const res = await fetch("/api/webhooks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({
+          action: "create_endpoint",
+          name: newWebhookName.trim(),
+          type: newWebhookType,
+          destination: newWebhookUrl.trim(),
+          secret_key: newWebhookSecret.trim() || undefined,
+          min_severity: newWebhookMinSeverity,
+          events: newWebhookEvents,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setWebhookFeedback(`Webhook '${newWebhookName}' created successfully.`);
+        setTimeout(() => setWebhookFeedback(null), 4000);
+        setAddWebhookModalOpen(false);
+        setNewWebhookName("");
+        setNewWebhookUrl("");
+        setNewWebhookSecret("");
+        await fetchWebhookEndpoints();
+      } else {
+        setWebhookFeedback(`Error: ${data.error || "Failed to create webhook"}`);
+      }
+    } catch {
+      setWebhookFeedback("Network error creating webhook endpoint.");
+    } finally {
+      setWebhookCreating(false);
+    }
+  };
+
+  const handleToggleWebhook = async (endpoint: WebhookEndpointItem) => {
+    try {
+      const nextEnabled = !endpoint.enabled;
+      const res = await fetch("/api/webhooks", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+        body: JSON.stringify({
+          id: endpoint.id,
+          enabled: nextEnabled,
+        }),
+      });
+      if (res.ok) {
+        setWebhookEndpoints((prev) =>
+          prev.map((ep) => (ep.id === endpoint.id ? { ...ep, enabled: nextEnabled, configured: nextEnabled } : ep))
+        );
+        setWebhookFeedback(`Webhook '${endpoint.name}' ${nextEnabled ? "resumed" : "paused"}.`);
+        setTimeout(() => setWebhookFeedback(null), 3000);
+      }
+    } catch (err) {
+      console.error("Failed to toggle webhook:", err);
+    }
+  };
+
+  const handleDeleteWebhook = async (id: string, name: string) => {
+    if (!confirm(`Delete custom webhook endpoint "${name}"?`)) return;
+    try {
+      const res = await fetch(`/api/webhooks?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: {
+          "X-ShieldDesk-User": activeUserId,
+        },
+      });
+      if (res.ok) {
+        setWebhookEndpoints((prev) => prev.filter((ep) => ep.id !== id));
+        setWebhookFeedback(`Webhook '${name}' deleted successfully.`);
+        setTimeout(() => setWebhookFeedback(null), 3000);
+      }
+    } catch (err) {
+      console.error("Failed to delete webhook:", err);
     }
   };
 
@@ -997,97 +1143,472 @@ export default function ThreatsDashboardPage() {
                 </div>
               </div>
 
-              {/* Webhook Dispatcher Card */}
-              <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-3 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
-                    <Send className="h-4 w-4 text-[var(--sd-pine)]" />
-                    HMAC-SHA256 Webhook Dispatcher (Real Channels)
-                  </h3>
-                  <button
-                    onClick={() => dispatchTestWebhook()}
-                    disabled={loading}
-                    className="sd-button sd-button-primary px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer"
-                  >
-                    Dispatch Live Test Webhook
-                  </button>
-                </div>
-                <p className="text-[13px] text-[var(--sd-text-muted)]">
-                  Dispatches real signed webhook payloads to your configured channels (e.g. Discord, Slack) with <code>X-ShieldDesk-Signature</code> and exponential backoff retry.
-                </p>
-
-                {webhookLog && (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs font-mono">
-                      <span className="text-[var(--sd-text-muted)]">Delivery Status:</span>
-                      <span className={webhookLog.success ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>
-                        {webhookLog.message ? String(webhookLog.message) : (webhookLog.success ? "Success" : "Failed")}
-                      </span>
+              {/* Webhook Management & Dynamic Dispatcher */}
+              <div className="p-5 rounded-xl border border-[var(--sd-border)] sd-surface space-y-5 shadow-xs">
+                {webhookFeedback && (
+                  <div className="p-3 rounded-lg border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs font-medium flex items-center justify-between gap-2 shadow-xs">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 shrink-0" />
+                      <span>{webhookFeedback}</span>
                     </div>
-                    <pre className="p-3 rounded-lg bg-[var(--sd-bg-alt)] text-[var(--sd-text-muted)] font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap leading-relaxed">
-                      {JSON.stringify(webhookLog, null, 2)}
-                    </pre>
+                    <button
+                      onClick={() => setWebhookFeedback(null)}
+                      className="text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] text-xs font-mono"
+                    >
+                      ✕
+                    </button>
                   </div>
                 )}
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--sd-border)] pb-4">
+                  <div>
+                    <h3 className="text-sm font-medium text-[var(--sd-text)] flex items-center gap-2">
+                      <Send className="h-4 w-4 text-[var(--sd-pine)]" />
+                      <span>Registered Webhook Endpoints (Multi-Tenant)</span>
+                      <span className="px-2 py-0.2 rounded-full text-[10px] font-mono bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]">
+                        {webhookEndpoints.length} configured
+                      </span>
+                    </h3>
+                    <p className="text-xs text-[var(--sd-text-muted)] mt-1">
+                      Real-time HMAC-SHA256 authenticated alert dispatching across Slack, Teams, Discord, and external SIEM/SOAR platforms.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-start sm:self-auto">
+                    {isSystemAdmin || canManageWebhooks ? (
+                      <button
+                        onClick={() => setAddWebhookModalOpen(true)}
+                        className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--sd-on-accent)] transition cursor-pointer shadow-xs"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Add Webhook Endpoint</span>
+                      </button>
+                    ) : (
+                      <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] text-xs font-medium shadow-xs">
+                        <Lock className="h-3 w-3" />
+                        <span>Admin Managed (Read-Only)</span>
+                      </span>
+                    )}
+
+                    <button
+                      onClick={() => fetchWebhookEndpoints()}
+                      disabled={loading}
+                      title="Refresh endpoints"
+                      className="p-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+                    >
+                      <RotateCcw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Webhooks Grid */}
+                {webhookEndpoints.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {webhookEndpoints.map((ep) => {
+                      const isDiscord = ep.type === "discord";
+                      const isSlack = ep.type === "slack";
+                      const isTeams = ep.type === "teams";
+
+                      return (
+                        <div
+                          key={ep.id}
+                          className={cn(
+                            "p-4 rounded-xl border transition shadow-xs space-y-3",
+                            ep.enabled !== false
+                              ? "border-[var(--sd-border)] bg-[var(--sd-panel)]"
+                              : "border-[var(--sd-border)] bg-[var(--sd-bg)] opacity-70"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className={cn(
+                                  "px-2 py-0.5 rounded text-[10px] font-mono font-medium uppercase tracking-wider",
+                                  isDiscord
+                                    ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20"
+                                    : isSlack
+                                      ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                      : isTeams
+                                        ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                        : "bg-[var(--sd-wheat)]/10 text-[var(--sd-wheat)] border border-[var(--sd-wheat)]/20"
+                                )}
+                              >
+                                {ep.type}
+                              </span>
+                              <h4 className="text-xs font-medium text-[var(--sd-text)] truncate" title={ep.name}>
+                                {ep.name}
+                              </h4>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span
+                                className={cn(
+                                  "px-2 py-0.5 rounded text-[10px] font-mono font-medium",
+                                  ep.enabled !== false
+                                    ? "bg-[var(--sd-success-dim)] text-[var(--sd-success)] border border-[var(--sd-success-border)]"
+                                    : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]"
+                                )}
+                              >
+                                {ep.enabled !== false ? "Active" : "Paused"}
+                              </span>
+
+                              {ep.is_custom ? (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                  Custom
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-[var(--sd-panel-raised)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]">
+                                  System
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5 text-xs">
+                            <div className="flex items-center justify-between text-[11px] font-mono text-[var(--sd-text-muted)] bg-[var(--sd-bg)] p-2 rounded-lg border border-[var(--sd-border)]">
+                              <span className="truncate" title={ep.destination}>
+                                {ep.destination}
+                              </span>
+                              <span className="uppercase text-[9px] px-1.5 py-0.2 rounded bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] ml-2 shrink-0">
+                                {ep.min_severity || "medium"} min
+                              </span>
+                            </div>
+
+                            {ep.events && ep.events.length > 0 && (
+                              <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                                {ep.events.slice(0, 3).map((ev) => (
+                                  <span
+                                    key={ev}
+                                    className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]"
+                                  >
+                                    {ev}
+                                  </span>
+                                ))}
+                                {ep.events.length > 3 && (
+                                  <span className="text-[9px] text-[var(--sd-text-muted)] font-mono">
+                                    +{ep.events.length - 3} more
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between pt-2 border-t border-[var(--sd-border)]">
+                            <button
+                              onClick={() => dispatchTestWebhook(ep.id)}
+                              disabled={loading}
+                              className="sd-button flex items-center gap-1 px-2.5 py-1 rounded bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text)] text-[11px] font-medium border border-[var(--sd-border)] transition cursor-pointer shadow-xs"
+                            >
+                              <Send className="h-3 w-3 text-[var(--sd-pine)]" />
+                              <span>Test Dispatch</span>
+                            </button>
+
+                            <div className="flex items-center gap-1.5">
+                              {ep.is_custom && (isSystemAdmin || canManageWebhooks) ? (
+                                <>
+                                  <button
+                                    onClick={() => handleToggleWebhook(ep)}
+                                    className="px-2 py-1 rounded text-[11px] font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] border border-[var(--sd-border)] transition cursor-pointer"
+                                  >
+                                    {ep.enabled !== false ? "Pause" : "Resume"}
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteWebhook(ep.id, ep.name)}
+                                    title="Delete endpoint"
+                                    className="p-1 rounded text-[var(--sd-text-muted)] hover:text-[var(--sd-danger)] hover:bg-[var(--sd-danger-dim)] transition cursor-pointer"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-[10px] text-[var(--sd-text-muted)] font-mono">
+                                  Server Env Controlled
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center rounded-xl border border-dashed border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-2">
+                    <Send className="h-8 w-8 text-[var(--sd-text-muted)] mx-auto opacity-50" />
+                    <p className="text-xs text-[var(--sd-text-muted)]">
+                      No webhook endpoints registered yet. Connect Slack, Discord, or your SIEM to stream live security alerts.
+                    </p>
+                    {(isSystemAdmin || canManageWebhooks) && (
+                      <button
+                        onClick={() => setAddWebhookModalOpen(true)}
+                        className="sd-button sd-button-primary px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--sd-on-accent)] inline-flex items-center gap-1.5 mt-2 cursor-pointer shadow-xs"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Add First Webhook</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Sandbox Dispatcher Card */}
+                <div className="p-4 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] space-y-3 shadow-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-xs font-medium text-[var(--sd-text)] flex items-center gap-1.5 font-mono uppercase tracking-wider">
+                        <Terminal className="h-3.5 w-3.5 text-[var(--sd-pine)]" />
+                        <span>Live HMAC Dispatch Sandbox</span>
+                      </h4>
+                      <p className="text-[11px] text-[var(--sd-text-muted)] mt-0.5">
+                        Fires an authenticated verification payload signed with <code>X-ShieldDesk-Signature</code>.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {webhookEndpoints.length > 0 && (
+                        <select
+                          value={selectedEndpointForTest}
+                          onChange={(e) => setSelectedEndpointForTest(e.target.value)}
+                          className="px-2.5 py-1.5 rounded-lg bg-[var(--sd-panel)] border border-[var(--sd-border)] text-xs text-[var(--sd-text)] font-mono cursor-pointer shadow-xs"
+                        >
+                          {webhookEndpoints.map((ep) => (
+                            <option key={ep.id} value={ep.id}>
+                              {ep.name} ({ep.type})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+
+                      <button
+                        onClick={() => dispatchTestWebhook()}
+                        disabled={loading || webhookEndpoints.length === 0}
+                        className="sd-button sd-button-primary px-3 py-1.5 rounded-lg text-[var(--sd-on-accent)] text-xs font-medium shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Send className={cn("h-3 w-3", loading && "animate-spin")} />
+                        <span>Dispatch Test Webhook</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {webhookLog && (
+                    <div className="space-y-2 pt-2 border-t border-[var(--sd-border)]">
+                      <div className="flex items-center justify-between text-xs font-mono">
+                        <span className="text-[var(--sd-text-muted)]">Dispatch Result:</span>
+                        <span className={webhookLog.success ? "text-emerald-500 font-semibold" : "text-amber-500 font-semibold"}>
+                          {webhookLog.message ? String(webhookLog.message) : (webhookLog.success ? "Success (200 OK)" : "Failed")}
+                        </span>
+                      </div>
+                      <pre className="p-3 rounded-lg bg-[var(--sd-panel)] text-[var(--sd-text-muted)] font-mono text-[11px] overflow-x-auto max-h-48 whitespace-pre-wrap leading-relaxed border border-[var(--sd-border)]">
+                        {JSON.stringify(webhookLog, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* Add Webhook Endpoint Modal */}
+              {addWebhookModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+                  <div className="relative w-full max-w-lg rounded-2xl border border-[var(--sd-border)] bg-[var(--sd-panel)] p-6 shadow-xl space-y-4">
+                    <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-lg bg-[var(--sd-pine)]/10 text-[var(--sd-pine)] border border-[var(--sd-pine)]/20">
+                          <Send className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-medium text-[var(--sd-text)]">
+                            Add Webhook Endpoint
+                          </h3>
+                          <p className="text-[11px] text-[var(--sd-text-muted)]">
+                            Configure real-time alert routing for your SOC team.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setAddWebhookModalOpen(false)}
+                        className="text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] p-1 rounded-lg text-sm"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleCreateWebhook} className="space-y-3.5 text-xs">
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                          Endpoint Name
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={newWebhookName}
+                          onChange={(e) => setNewWebhookName(e.target.value)}
+                          placeholder="e.g. Incident Response Slack Channel"
+                          className="w-full px-3 py-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs text-[var(--sd-text)] focus:outline-hidden focus:border-[var(--sd-pine)] transition"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                            Webhook Platform
+                          </label>
+                          <select
+                            value={newWebhookType}
+                            onChange={(e) => setNewWebhookType(e.target.value as "slack" | "discord" | "teams" | "generic")}
+                            className="w-full px-3 py-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs text-[var(--sd-text)] focus:outline-hidden focus:border-[var(--sd-pine)] transition cursor-pointer"
+                          >
+                            <option value="slack">Slack</option>
+                            <option value="discord">Discord</option>
+                            <option value="teams">Microsoft Teams</option>
+                            <option value="generic">Generic SIEM / SOAR</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                            Minimum Severity
+                          </label>
+                          <select
+                            value={newWebhookMinSeverity}
+                            onChange={(e) => setNewWebhookMinSeverity(e.target.value as "low" | "medium" | "high" | "critical")}
+                            className="w-full px-3 py-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs text-[var(--sd-text)] focus:outline-hidden focus:border-[var(--sd-pine)] transition cursor-pointer"
+                          >
+                            <option value="low">Low (All Events)</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical Only</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                          Destination URL
+                        </label>
+                        <input
+                          type="url"
+                          required
+                          value={newWebhookUrl}
+                          onChange={(e) => setNewWebhookUrl(e.target.value)}
+                          placeholder="https://hooks.slack.com/services/... or https://siem.corp/webhook"
+                          className="w-full px-3 py-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs text-[var(--sd-text)] font-mono focus:outline-hidden focus:border-[var(--sd-pine)] transition"
+                        />
+                        <p className="text-[10px] text-[var(--sd-text-muted)]">
+                          Must be a valid HTTPS webhook URL. SSRF protection blocks cloud metadata and loopback destinations.
+                        </p>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                          HMAC Secret Key (Optional)
+                        </label>
+                        <input
+                          type="password"
+                          value={newWebhookSecret}
+                          onChange={(e) => setNewWebhookSecret(e.target.value)}
+                          placeholder="Shared secret for X-ShieldDesk-Signature validation"
+                          className="w-full px-3 py-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-xs text-[var(--sd-text)] font-mono focus:outline-hidden focus:border-[var(--sd-pine)] transition"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5 pt-1">
+                        <label className="text-[11px] font-medium text-[var(--sd-text-muted)] uppercase tracking-wider">
+                          Subscribed Events
+                        </label>
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            { id: "threat_detected", label: "Threat Detections (YARA/Sigma)" },
+                            { id: "approval_required", label: "Human Approval Requests" },
+                            { id: "incident_created", label: "Incident Creation" },
+                            { id: "lockdown.activated", label: "Emergency Containment / Lockdown" },
+                          ].map((ev) => (
+                            <label
+                              key={ev.id}
+                              className="flex items-center gap-2 p-2 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] cursor-pointer text-[11px]"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={newWebhookEvents.includes(ev.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setNewWebhookEvents((prev) => [...prev, ev.id]);
+                                  } else {
+                                    setNewWebhookEvents((prev) => prev.filter((x) => x !== ev.id));
+                                  }
+                                }}
+                                className="rounded text-[var(--sd-pine)] focus:ring-0"
+                              />
+                              <span className="text-[var(--sd-text)]">{ev.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--sd-border)]">
+                        <button
+                          type="button"
+                          onClick={() => setAddWebhookModalOpen(false)}
+                          className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] text-xs font-medium text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] bg-[var(--sd-bg)] hover:bg-[var(--sd-panel-hover)] transition cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={webhookCreating}
+                          className="sd-button sd-button-primary flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-medium text-[var(--sd-on-accent)] transition cursor-pointer shadow-xs"
+                        >
+                          {webhookCreating && <RotateCcw className="h-3 w-3 animate-spin" />}
+                          <span>Save Webhook</span>
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
 
         {/* Tab 5: Alerts (Real-time Authentication Failures & Threats) */}
         {activeTab === "alerts" && (
-          !isSystemAdmin ? (
-            <div className="p-8 rounded-xl border border-[var(--sd-border)] sd-surface text-center space-y-3">
-              <div className="inline-flex p-3 rounded-full bg-[var(--sd-warning-dim)] text-[var(--sd-warning)]">
-                <Lock className="h-6 w-6" />
+          <div className="space-y-4">
+            {/* Feedback toast */}
+            {unblockFeedback && (
+              <div className="p-3 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs font-medium flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>{unblockFeedback}</span>
               </div>
-              <h4 className="text-sm font-medium text-[var(--sd-text)]">
-                Access Restricted: Security Alerts
-              </h4>
-              <p className="text-xs text-[var(--sd-text-muted)] max-w-md mx-auto">
-                User login alerts and autonomous IP containment are restricted to Company System Administrators. Globex Analyst (Developer persona) has a blank view and does not monitor company user logins.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Feedback toast */}
-              {unblockFeedback && (
-                <div className="p-3 rounded-xl border border-[var(--sd-success-border)] bg-[var(--sd-success-dim)] text-[var(--sd-success)] text-xs font-medium flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  <span>{unblockFeedback}</span>
-                </div>
-              )}
+            )}
 
-              {/* Autonomous IP Containment Active Banner */}
-              {blockedIps.length > 0 && (
-                <div className="p-4 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] space-y-3 shadow-xs">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-2 rounded-lg bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
-                        <Ban className="h-4 w-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-medium text-[var(--sd-danger)] uppercase tracking-wider font-mono flex items-center gap-2">
-                          <span>Autonomous IP Containment Active</span>
-                          <span className="px-2 py-0.2 rounded-full bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] text-[10px]">
-                            {blockedIps.length} Blocked
-                          </span>
-                        </h4>
-                        <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">
-                          IPs attempting login more than 5 times with invalid credentials are automatically blocked from authenticating.
-                        </p>
-                      </div>
+            {/* Autonomous IP Containment Active Banner */}
+            {blockedIps.length > 0 && (
+              <div className="p-4 rounded-xl border border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] space-y-3 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]">
+                      <Ban className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-medium text-[var(--sd-danger)] uppercase tracking-wider font-mono flex items-center gap-2">
+                        <span>Autonomous IP Containment Active</span>
+                        <span className="px-2 py-0.2 rounded-full bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)] text-[10px]">
+                          {blockedIps.length} Blocked
+                        </span>
+                      </h4>
+                      <p className="text-xs text-[var(--sd-text-muted)] mt-0.5">
+                        IPs attempting login more than 5 times with invalid credentials are automatically blocked from authenticating.
+                      </p>
                     </div>
                   </div>
+                </div>
 
-                  <div className="flex items-center gap-2 flex-wrap pt-1">
-                    {blockedIps.map((b) => (
-                      <div
-                        key={b.ip}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--sd-panel)] border border-[var(--sd-danger-border)] text-xs font-mono shadow-xs"
-                      >
-                        <span className="text-[var(--sd-danger)] font-medium">{b.ip}</span>
-                        <span className="text-[10px] text-[var(--sd-text-muted)]">({b.attempts} attempts)</span>
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  {blockedIps.map((b) => (
+                    <div
+                      key={b.ip}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[var(--sd-panel)] border border-[var(--sd-danger-border)] text-xs font-mono shadow-xs"
+                    >
+                      <span className="text-[var(--sd-danger)] font-medium">{b.ip}</span>
+                      <span className="text-[10px] text-[var(--sd-text-muted)]">({b.attempts} attempts)</span>
+                      {canManageContainment ? (
                         <button
                           onClick={() => handleUnblockIp(b.ip)}
                           className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded bg-[var(--sd-success-dim)] hover:bg-[var(--sd-success-border)] text-[var(--sd-success)] text-[11px] font-sans font-medium cursor-pointer transition"
@@ -1095,11 +1616,17 @@ export default function ThreatsDashboardPage() {
                           <Unlock className="h-3 w-3" />
                           <span>Unblock</span>
                         </button>
-                      </div>
-                    ))}
-                  </div>
+                      ) : (
+                        <span className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded bg-[var(--sd-panel)] text-[var(--sd-text-muted)] border border-[var(--sd-border)] text-[10px] font-sans">
+                          <Lock className="h-2.5 w-2.5" />
+                          <span>View Only</span>
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </div>
-              )}
+              </div>
+            )}
 
               <div className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface space-y-1 shadow-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1127,7 +1654,7 @@ export default function ThreatsDashboardPage() {
                       <span>Refresh</span>
                     </button>
 
-                    {securityAlerts.length > 0 && (
+                    {canManageContainment && securityAlerts.length > 0 && (
                       <button
                         onClick={() => {
                           fetch("/api/threats", {
@@ -1276,7 +1803,7 @@ export default function ThreatsDashboardPage() {
                         </div>
 
                         <div className="flex items-center justify-end gap-2.5 pt-1 flex-wrap">
-                          {isSystemAdmin && (
+                          {canManageContainment ? (
                             isIpCurrentlyBlocked ? (
                               <button
                                 onClick={() => handleUnblockIp(alert.clientIp)}
@@ -1294,14 +1821,21 @@ export default function ThreatsDashboardPage() {
                                 <span>Block IP</span>
                               </button>
                             )
+                          ) : (
+                            <span className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] text-[var(--sd-text-muted)] text-xs font-medium shadow-xs">
+                              <Lock className="h-3.5 w-3.5" />
+                              <span>View Only · Requires Responder to Unblock</span>
+                            </span>
                           )}
 
-                          <button
-                            onClick={() => handleAcknowledgeAlert(alert.id)}
-                            className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
-                          >
-                            Acknowledge Alert
-                          </button>
+                          {canManageContainment && (
+                            <button
+                              onClick={() => handleAcknowledgeAlert(alert.id)}
+                              className="px-3.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-panel)] hover:bg-[var(--sd-panel-hover)] text-xs font-medium text-[var(--sd-text)] transition cursor-pointer shadow-xs"
+                            >
+                              Acknowledge Alert
+                            </button>
+                          )}
 
                           <button
                             onClick={() => handleInvestigateInChat(alert)}
@@ -1329,7 +1863,6 @@ export default function ThreatsDashboardPage() {
                 </div>
               )}
             </div>
-          )
         )}
 
         {/* YARA Interactive Modals */}

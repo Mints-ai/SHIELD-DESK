@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -25,12 +27,17 @@ import (
 
 // JobRecord is an in-memory record of a job + its live streamed logs.
 type JobRecord struct {
-	mu          sync.RWMutex
-	Job         *models.PatchJob
-	Logs        []string
-	Error       string
-	Orch        *orchestrator.Orchestrator
-	AuditWriter *audit.MemoryWriter
+	RollbackReady   bool
+	RollbackPending bool
+	DryRun          bool
+	Reconnect       func(context.Context) error
+	CloseRunner     func() error
+	mu              sync.RWMutex
+	Job             *models.PatchJob
+	Logs            []string
+	Error           string
+	Orch            *orchestrator.Orchestrator
+	AuditWriter     *audit.MemoryWriter
 }
 
 func (r *JobRecord) appendLog(msg string) {
@@ -235,10 +242,10 @@ func (s *PatchServer) getJob(w http.ResponseWriter, r *http.Request, jobID strin
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
-		"job":    job,
-		"logs":   logs,
-		"error":  errMsg,
-		"audit":  auditEvents,
+		"job":   job,
+		"logs":  logs,
+		"error": errMsg,
+		"audit": auditEvents,
 	})
 }
 
@@ -313,8 +320,8 @@ func (s *PatchServer) createJob(w http.ResponseWriter, r *http.Request) {
 
 	restartServices := req.RestartServices
 	plan := &models.RemediationPlan{
-		PlanID:      fmt.Sprintf("plan_%s", jobID),
-		Confidence:  models.ConfidenceHigh,
+		PlanID:     fmt.Sprintf("plan_%s", jobID),
+		Confidence: models.ConfidenceHigh,
 		Operations: []models.RemediationOperation{
 			{
 				Type:            models.OpPkgUpgrade,
@@ -386,8 +393,14 @@ func (s *PatchServer) createJob(w http.ResponseWriter, r *http.Request) {
 	apr := approval.NewDefaultEvaluator(false)
 
 	orch := orchestrator.NewOrchestrator(job, asset, plan, memAudit, pre, snap, pat, val, rb, apr)
+	orch.RetainSnapshots()
 	rec.mu.Lock()
 	rec.Orch = orch
+	rec.DryRun = req.DryRun
+	rec.CloseRunner = runner.Close
+	if sshMgr != nil {
+		rec.Reconnect = sshMgr.Connect
+	}
 	rec.mu.Unlock()
 
 	// Return immediately with job ID — run in background
@@ -399,11 +412,15 @@ func (s *PatchServer) createJob(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer func() {
+			// Mock runners have no live connections and must remain usable for dry-run rollback.
 			if sshMgr != nil {
 				_ = sshMgr.Close()
-			} else if runner != nil {
+			} else if orch.State() != models.StateRemediated {
 				_ = runner.Close()
 			}
+			rec.mu.Lock()
+			rec.RollbackReady = orch.State() == models.StateRemediated
+			rec.mu.Unlock()
 		}()
 
 		if req.DryRun {
@@ -456,31 +473,70 @@ func (s *PatchServer) triggerRollback(w http.ResponseWriter, r *http.Request, jo
 		return
 	}
 
-	rec.mu.RLock()
+	rec.mu.Lock()
 	orch := rec.Orch
-	currentState := rec.Job.State
-	rec.mu.RUnlock()
-
-	if orch == nil {
-		jsonResponse(w, http.StatusConflict, map[string]string{"error": "orchestrator not initialized for this job"})
+	expectedToken := os.Getenv("PATCH_ORCHESTRATOR_API_TOKEN")
+	providedToken := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !rec.DryRun && (expectedToken == "" || subtle.ConstantTimeCompare([]byte(providedToken), []byte(expectedToken)) != 1) {
+		rec.mu.Unlock()
+		jsonResponse(w, http.StatusForbidden, map[string]string{"error": "A configured control-plane service token is required for live rollback"})
 		return
 	}
-
-	// Manual rollback is only meaningful if job ended in REMEDIATED (rollback a successful patch)
-	// or in intermediate states that can accept rollback
-	if currentState.IsTerminal() && currentState != models.StateRemediated {
-		jsonResponse(w, http.StatusConflict, map[string]string{
-			"error": fmt.Sprintf("job is in terminal state %s and cannot be rolled back", currentState),
-		})
+	if orch == nil || !rec.RollbackReady || rec.RollbackPending {
+		rec.mu.Unlock()
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": "Job has no available completed patch snapshot, or an operation is already running"})
 		return
 	}
+	rec.RollbackPending = true
+	reconnect := rec.Reconnect
+	closeRunner := rec.CloseRunner
+	rec.mu.Unlock()
 
-	rec.appendLog("[MANUAL ROLLBACK] Operator-initiated rollback requested.")
-	jsonResponse(w, http.StatusAccepted, map[string]interface{}{
-		"job_id":  jobID,
-		"message": "Manual rollback is only available when the orchestrator is in a rollback-eligible state. The pipeline handles rollback automatically on failure.",
-		"state":   currentState,
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	if reconnect != nil {
+		if err := reconnect(ctx); err != nil {
+			cancel()
+			rec.mu.Lock()
+			rec.RollbackPending = false
+			rec.mu.Unlock()
+			rec.appendLog("[ROLLBACK ERROR] SSH reconnect failed: " + err.Error())
+			jsonResponse(w, http.StatusBadGateway, map[string]string{"error": "Could not reconnect to the patch target"})
+			return
+		}
+	}
+	done, err := orch.StartManualRollback(ctx)
+	if err != nil {
+		cancel()
+		if closeRunner != nil {
+			_ = closeRunner()
+		}
+		rec.mu.Lock()
+		rec.RollbackPending = false
+		rec.mu.Unlock()
+		jsonResponse(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	rec.appendLog("[MANUAL ROLLBACK] Recovery started using this job's retained snapshots.")
+	go func() {
+		defer cancel()
+		if closeRunner != nil {
+			defer closeRunner()
+		}
+		err := <-done
+		rec.mu.Lock()
+		rec.RollbackPending = false
+		rec.RollbackReady = false
+		if err != nil {
+			rec.Error = err.Error()
+		}
+		rec.mu.Unlock()
+		if err != nil {
+			rec.appendLog("[ROLLBACK FAILED] " + err.Error())
+		} else {
+			rec.appendLog("[ROLLBACK VERIFIED] Baseline restored; the original vulnerability remains present.")
+		}
+	}()
+	jsonResponse(w, http.StatusAccepted, map[string]interface{}{"job_id": jobID, "message": "Rollback started. Poll this job for its verified outcome.", "state": orch.State()})
 }
 
 // TestSSHRequest represents an incoming request to probe SSH connectivity and authentication.
@@ -692,13 +748,20 @@ func newSimulationRunner(pkg, targetVersion string) ssh.Runner {
 			return &models.CommandResult{ExitCode: &zero, Stdout: ""}, nil
 		}
 		if strings.HasPrefix(op.Ref, "op:lvm.rollback.check_merged:") {
-			return &models.CommandResult{ExitCode: &zero, Stdout: ""}, nil
+			one := 1
+			return &models.CommandResult{ExitCode: &one, Stdout: ""}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:rollback.check_version:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: "1.0.0-baseline\n"}, nil
+		}
+		if strings.HasPrefix(op.Ref, "op:rollback.check_service:") {
+			return &models.CommandResult{ExitCode: &zero, Stdout: "active\n"}, nil
 		}
 		if strings.HasPrefix(op.Ref, "op:lvm.snapshot.remove:") {
 			return &models.CommandResult{ExitCode: &zero, Stdout: "Logical volume removed\n"}, nil
 		}
 		if strings.HasPrefix(op.Ref, "op:lvm.rollback.merge:") {
-			return &models.CommandResult{ExitCode: &zero, Stdout: "Logical volume vg0/root will be merged on next activation\n"}, nil
+			return &models.CommandResult{ExitCode: &zero, Stdout: "Logical volume merged\n"}, nil
 		}
 		return &models.CommandResult{ExitCode: &zero, Stdout: "OK\n"}, nil
 	})

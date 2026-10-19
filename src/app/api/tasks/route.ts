@@ -4,7 +4,6 @@ import { canAccess, canAssignTask, getRoleTier } from "@/lib/permissions";
 import { getUserRole } from "@/lib/constants/devUsers";
 import { query } from "@/lib/db";
 import { trackError } from "@/lib/observability/errorTracker";
-import { isDemoModeActive } from "@/lib/config/environment";
 import { requestApprovalToken } from "@/lib/governance/approvalTokens";
 import crypto from "crypto";
 
@@ -16,10 +15,11 @@ export interface MitigationTaskRecord {
   title: string;
   description: string;
   tier: "Tier 0" | "Tier 1" | "Tier 2" | "Tier 3";
-  status: "pending" | "approved" | "rejected" | "in_progress" | "completed";
+  status: "pending" | "approved" | "rejected" | "in_progress" | "completed" | "failed";
   blast_radius?: string | null;
   cve_id?: string | null;
   assigned_to?: string | null;
+  execution_command_id?: string | null;
   incident_code?: string;
   created_at: string;
 }
@@ -80,16 +80,6 @@ export async function GET(req: NextRequest) {
       _source: "database",
     });
   } catch (err) {
-    // If DB is offline, fall back safely if demo mode is permitted
-    if (isDemoModeActive()) {
-      return NextResponse.json({
-        tasks: [],
-        count: 0,
-        tenantId: session.tenantId,
-        _source: "demo_fallback",
-      });
-    }
-
     trackError(err, {
       endpoint: "/api/tasks",
       userId: session.uid,
@@ -177,7 +167,9 @@ export async function POST(req: NextRequest) {
     }
 
     const taskId = crypto.randomUUID();
-    let planId = body.planId;
+    let planId = body.planId && typeof body.planId === "string" && body.planId.trim()
+      ? body.planId.trim()
+      : null;
 
     // If planId specified, verify it belongs to caller's tenant
     if (planId) {
@@ -189,26 +181,8 @@ export async function POST(req: NextRequest) {
           ? [planId]
           : [planId, session.tenantId];
         const planCheck = await query<{ id: string; tenant_id: string }>(checkSql, checkParams);
-        if (planCheck.rows.length === 0 && !isDemoModeActive()) {
-          return NextResponse.json(
-            { error: "Mitigation plan not found" },
-            { status: 404 }
-          );
-        }
-      } catch {
-        // In demo mode with DB offline, allow proceeding
-      }
-    } else {
-      // If no planId specified, link to the tenant's latest active incident mitigation plan
-      try {
-        const planRes = await query<{ id: string }>(
-          "SELECT id FROM mitigation_plans WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1",
-          [session.tenantId]
-        );
-        if (planRes.rows.length > 0) {
-          planId = planRes.rows[0].id;
-        } else {
-          planId = null;
+        if (planCheck.rows.length === 0) {
+          planId = null; // Do not fail task creation; treat as standalone task
         }
       } catch {
         planId = null;
@@ -256,41 +230,6 @@ export async function POST(req: NextRequest) {
         _source: "database",
       });
     } catch (dbErr) {
-      if (isDemoModeActive()) {
-        const newTask: MitigationTaskRecord = {
-          id: taskId,
-          plan_id: planId || "p1111111-1111-1111-1111-111111111111",
-          tenant_id: session.tenantId,
-          horizon: horizon as MitigationTaskRecord["horizon"],
-          title,
-          description,
-          tier: tier as MitigationTaskRecord["tier"],
-          status: "pending",
-          blast_radius: blastRadius,
-          cve_id: cveId,
-          assigned_to: assignedTo,
-          incident_code: "INC-1042",
-          created_at: new Date().toISOString(),
-        };
-
-        if (tier !== "Tier 0") {
-          try {
-            await requestApprovalToken(session, {
-              taskId,
-              actionType: title,
-              blastRadius,
-              tier,
-            });
-          } catch {}
-        }
-
-        return NextResponse.json({
-          success: true,
-          task: newTask,
-          _source: "demo_fallback",
-        });
-      }
-
       trackError(dbErr, {
         endpoint: "/api/tasks (POST)",
         userId: session.uid,
