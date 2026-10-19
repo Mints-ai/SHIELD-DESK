@@ -2,7 +2,7 @@ import { query } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth/session";
 import { canAccess } from "@/lib/permissions";
 import { getApprovalToken, markApprovalTokenConsumed } from "@/lib/governance/approvalTokens";
-import { checkThrottle, recordMockThrottleCommand } from "@/lib/governance/blastRadiusThrottle";
+import { checkThrottle, recordThrottleCommand } from "@/lib/governance/blastRadiusThrottle";
 import { signCommand } from "@/lib/fleet/commandSigning";
 import { isDemoMode, isProduction, isSimulationAllowed } from "@/lib/config/environment";
 import { validateCapabilitySupport, getCapability } from "./capabilities";
@@ -463,7 +463,7 @@ export class RealAgentExecutor {
       } catch {
         MOCK_AGENT_COMMANDS.push(queueRecord);
         if (tier === "Tier 1") {
-          recordMockThrottleCommand(caller.tenant_id, "Tier 1");
+          recordThrottleCommand(caller.tenant_id, "Tier 1");
         }
       }
     }
@@ -565,7 +565,7 @@ export class SimulationExecutor {
       } catch {
         MOCK_AGENT_COMMANDS.push(queueRecord);
         if (tier === "Tier 1") {
-          recordMockThrottleCommand(caller.tenant_id, "Tier 1");
+          recordThrottleCommand(caller.tenant_id, "Tier 1");
         }
       }
     }
