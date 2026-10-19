@@ -14,6 +14,7 @@ import {
   acknowledgeThreatAlert,
   resetThreatAlerts,
   getBlockedIps,
+  isIpBlocked,
   unblockIp,
   blockIp,
   getLiveFailureRatePerMin,
