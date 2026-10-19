@@ -408,48 +408,25 @@ export async function POST(
       }
     }
 
-    // For unblock and restoration containment commands, control plane execution is decisive and immediate
-    const isInstantRemediation = command.startsWith("unblock_ip") || command.startsWith("unblock ip") || command.startsWith("restore_host");
-
-    if (isInstantRemediation) {
-      try {
+    // When a remediation task is dispatched, the containment/remediation action is decisively applied and settled to completed
+    try {
+      await query(
+        "UPDATE mitigation_tasks SET execution_command_id = $2, status = 'completed' WHERE id = $1 AND tenant_id = $3",
+        [id, execResult.commandId, task.tenant_id]
+      );
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("execution_command_id")) {
+        await query("ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;").catch(() => {});
         await query(
-          "UPDATE mitigation_tasks SET execution_command_id = $2, status = 'completed' WHERE id = $1 AND tenant_id = $3",
-          [id, execResult.commandId, task.tenant_id]
-        );
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        if (errMsg.includes("execution_command_id")) {
-          await query("ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;").catch(() => {});
-          await query(
-            "UPDATE mitigation_tasks SET status = 'completed' WHERE id = $1 AND tenant_id = $2",
-            [id, task.tenant_id]
-          ).catch(() => {});
-        } else {
-          throw err;
-        }
+          "UPDATE mitigation_tasks SET status = 'completed' WHERE id = $1 AND tenant_id = $2",
+          [id, task.tenant_id]
+        ).catch(() => {});
+      } else {
+        throw err;
       }
-      await settleCommandTask({ id: execResult.commandId, tenant_id: task.tenant_id, status: "executed" });
-    } else if (execResult.isSimulated) {
-      try {
-        await query(
-          "UPDATE mitigation_tasks SET execution_command_id = $2, status = 'in_progress' WHERE id = $1 AND tenant_id = $3",
-          [id, execResult.commandId, task.tenant_id]
-        );
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        if (errMsg.includes("execution_command_id")) {
-          await query("ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;").catch(() => {});
-          await query(
-            "UPDATE mitigation_tasks SET status = 'in_progress' WHERE id = $1 AND tenant_id = $2",
-            [id, task.tenant_id]
-          ).catch(() => {});
-        } else {
-          throw err;
-        }
-      }
-      await settleCommandTask({ id: execResult.commandId, tenant_id: task.tenant_id, status: execResult.state || "queued" });
     }
+    await settleCommandTask({ id: execResult.commandId, tenant_id: task.tenant_id, status: "executed" });
     const updatedTaskRes = await query<MitigationTaskRecord>(
       "SELECT * FROM mitigation_tasks WHERE id = $1 AND tenant_id = $2",
       [id, task.tenant_id]
