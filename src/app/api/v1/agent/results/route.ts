@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     const payload: SignedAgentResultPayload = {
       commandId,
       agentId,
-      tenantId: tenantId || "acme-tenant",
+      tenantId: tenantId || "mints-global",
       exitCode,
       stdout: stdout || "",
       stderr: stderr || "",

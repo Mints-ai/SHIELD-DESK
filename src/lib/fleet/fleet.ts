@@ -6,7 +6,10 @@ import { checkThrottle, recordMockThrottleCommand } from "@/lib/governance/blast
 import { signCommand } from "@/lib/fleet/commandSigning";
 import { isDemoMode, isProduction, isSimulationAllowed } from "@/lib/config/environment";
 import { validateCapabilitySupport, getCapability } from "./capabilities";
+import { validateIpAddress } from "@/lib/utils/ipValidation";
 import crypto from "crypto";
+import os from "os";
+import { settleCommandTask } from "./taskCompletion";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
 export type OsType = "linux" | "windows" | "darwin";
@@ -63,7 +66,8 @@ export interface AgentCommandQueueRecord {
   completed_at?: string | null;
 }
 
-export const MOCK_AGENT_COMMANDS: AgentCommandQueueRecord[] = [];
+export const IN_MEMORY_AGENT_COMMANDS: AgentCommandQueueRecord[] = [];
+export const MOCK_AGENT_COMMANDS = IN_MEMORY_AGENT_COMMANDS;
 
 export interface AgentCommandLogRecord {
   id: string;
@@ -89,104 +93,15 @@ export interface HashChainAuditRecord {
   created_at: string;
 }
 
-// In-memory fallback mock store for tests / offline mode
-export const MOCK_ENDPOINT_AGENTS: EndpointAgentRecord[] = [
-  {
-    id: "ea111111-1111-1111-1111-111111111111",
-    tenant_id: "acme-tenant",
-    hostname: "FIN-WS-042",
-    ip_address: "10.0.4.42",
-    os_type: "windows",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 42.5,
-    memory_usage: 68.2,
-    eps: 145,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-finws042-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: "ea222222-2222-2222-2222-222222222222",
-    tenant_id: "acme-tenant",
-    hostname: "FIN-DB-01",
-    ip_address: "10.0.4.10",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 18.2,
-    memory_usage: 84.1,
-    eps: 412,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-findb01-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
-  },
-  {
-    id: "ea333333-3333-3333-3333-333333333333",
-    tenant_id: "acme-tenant",
-    hostname: "ENG-LAPTOP-09",
-    ip_address: "10.0.12.9",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 12.1,
-    memory_usage: 45.0,
-    eps: 32,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-eng09-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-  {
-    id: "ea444444-4444-4444-4444-444444444444",
-    tenant_id: "acme-tenant",
-    hostname: "PROD-API-01",
-    ip_address: "10.0.2.100",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 64.8,
-    memory_usage: 71.3,
-    eps: 890,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-prodapi-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-  },
-  {
-    id: "ea555555-5555-5555-5555-555555555555",
-    tenant_id: "globex-tenant",
-    hostname: "GLX-SEC-01",
-    ip_address: "192.168.1.15",
-    os_type: "linux",
-    agent_version: "0.4.2",
-    status: "connected",
-    cpu_usage: 15.0,
-    memory_usage: 38.0,
-    eps: 80,
-    kill_switch_active: false,
-    safety_snapshot_id: "snap-glx01-baseline",
-    last_heartbeat: new Date().toISOString(),
-    created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
-  },
-];
+// In-memory fallback registries for live-connected agents when PostgreSQL is offline
+export const IN_MEMORY_ENDPOINT_AGENTS: EndpointAgentRecord[] = [];
+export const MOCK_ENDPOINT_AGENTS = IN_MEMORY_ENDPOINT_AGENTS;
 
-export const MOCK_COMMAND_LOGS: AgentCommandLogRecord[] = [];
+export const IN_MEMORY_COMMAND_LOGS: AgentCommandLogRecord[] = [];
+export const MOCK_COMMAND_LOGS = IN_MEMORY_COMMAND_LOGS;
 
-export const MOCK_HASH_CHAINS: HashChainAuditRecord[] = [
-  {
-    id: "hc000000-0000-0000-0000-000000000000",
-    tenant_id: "acme-tenant",
-    event_type: "GENESIS",
-    actor_id: "system-init",
-    payload: { msg: "ShieldDesk Hash Chain Genesis" },
-    prev_hash: "0".repeat(64),
-    current_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    created_at: new Date(Date.now() - 86400000 * 10).toISOString(),
-  },
-];
+export const IN_MEMORY_HASH_CHAINS: HashChainAuditRecord[] = [];
+export const MOCK_HASH_CHAINS = IN_MEMORY_HASH_CHAINS;
 
 /**
  * Computes SHA-256 for hash-chaining audit entries.
@@ -199,6 +114,17 @@ function computeHash(prevHash: string, payload: Record<string, unknown>, actorId
 /**
  * Lists endpoint agents for the caller with strict tenant boundary.
  */
+export function removeMockEndpointAgent(agentId: string, tenantId?: string): boolean {
+  const idx = MOCK_ENDPOINT_AGENTS.findIndex(
+    (a) => (a.id === agentId || a.hostname === agentId) && (!tenantId || a.tenant_id === tenantId)
+  );
+  if (idx !== -1) {
+    MOCK_ENDPOINT_AGENTS.splice(idx, 1);
+    return true;
+  }
+  return false;
+}
+
 export async function listEndpointAgents(caller: SessionUser): Promise<EndpointAgentRecord[]> {
   const canCrossTenant =
     canAccess(caller.role, "VIEW_CROSS_TENANT") ||
@@ -206,51 +132,27 @@ export async function listEndpointAgents(caller: SessionUser): Promise<EndpointA
     caller.role === "super_admin";
 
   try {
-    const sql = canCrossTenant
-      ? `SELECT * FROM endpoint_agents ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`
-      : `SELECT * FROM endpoint_agents WHERE tenant_id = $1 ORDER BY COALESCE(last_seen_at, created_at) DESC NULLS LAST;`;
-    const params = canCrossTenant ? [] : [caller.tenant_id];
-
-    const result = await query(sql, params);
-    if (result && result.rows.length > 0) {
-      return result.rows.map((row: Record<string, unknown>) => {
-        const lastSeenRaw = row.last_seen_at || row.last_heartbeat || row.created_at || new Date();
-        const lastSeenDate = new Date(lastSeenRaw as string | number | Date);
-        const createdRaw = row.created_at || new Date();
-        const createdDate = new Date(createdRaw as string | number | Date);
-        return {
-          id: String(row.id),
-          tenant_id: String(row.tenant_id),
-          hostname: String(row.hostname),
-          ip_address: String(row.ip_address || "Unknown"),
-          os_type: (row.os_type || "linux") as OsType,
-          agent_version: String(row.agent_version || "0.4.2"),
-          status: (row.status || "connected") as AgentStatus,
-          cpu_usage: Number(row.cpu_usage || 0),
-          memory_usage: Number(row.memory_usage || 0),
-          eps: Number(row.eps || 0),
-          kill_switch_active: Boolean(row.kill_switch_active),
-          safety_snapshot_id: row.safety_snapshot_id ? String(row.safety_snapshot_id) : null,
-          last_heartbeat: isNaN(lastSeenDate.getTime()) ? new Date().toISOString() : lastSeenDate.toISOString(),
-          created_at: isNaN(createdDate.getTime()) ? new Date().toISOString() : createdDate.toISOString(),
-        };
-      });
-    }
-  } catch {
-    // Fall back to in-memory live telemetry store
-  }
-
-  try {
     const { getLiveFleetAgents } = await import("./liveTelemetry");
-    const live = await getLiveFleetAgents(caller);
-    if (live && live.length > 0) return live;
+    // When PostgreSQL is reachable, return the exact live fleet (even if 0 rows remain after user removal)
+    // and enforce the 15-second heartbeat timeout so offline/stopped endpoints are marked 'disconnected'.
+    return await getLiveFleetAgents(caller);
   } catch {
-    // Fall back to in-memory store
+    // Database offline or test mode — fall back to in-memory store
   }
 
+  const connectedIps = new Set<string>();
   return MOCK_ENDPOINT_AGENTS.filter(
     (a) => canCrossTenant || a.tenant_id === caller.tenant_id
-  );
+  ).map((a) => {
+    if (a.status === "connected" && a.ip_address) {
+      const key = `${a.tenant_id}:${a.ip_address}`;
+      if (connectedIps.has(key)) {
+        return { ...a, status: "disconnected" as const, cpu_usage: 0, memory_usage: 0, eps: 0 };
+      }
+      connectedIps.add(key);
+    }
+    return a;
+  });
 }
 
 /**
@@ -308,7 +210,7 @@ export async function getEndpointAgent(
       (a) => a.id === identifier || a.hostname === identifier
     );
     if (liveMatch) return liveMatch;
-  } catch {}
+  } catch { }
 
   const agent = MOCK_ENDPOINT_AGENTS.find(
     (a) => a.id === identifier || a.hostname === identifier
@@ -343,25 +245,30 @@ export async function triggerKillSwitch({
   }
 
   let count = 0;
+  const isCrossTenant =
+    caller.role === "system_admin" || caller.role === "super_admin";
+
   try {
     if (agentId) {
-      const res = await query(
-        `UPDATE endpoint_agents SET kill_switch_active = $1, status = CASE WHEN $1 = true THEN 'disconnected' ELSE 'connected' END WHERE (id::text = $2 OR hostname = $2) AND tenant_id = $3 RETURNING id;`,
-        [active, agentId, caller.tenant_id]
-      );
+      const sql = isCrossTenant
+        ? `UPDATE endpoint_agents SET kill_switch_active = $1, status = CASE WHEN $1 = true THEN 'disconnected' ELSE 'connected' END WHERE (id::text = $2 OR hostname = $2) RETURNING id;`
+        : `UPDATE endpoint_agents SET kill_switch_active = $1, status = CASE WHEN $1 = true THEN 'disconnected' ELSE 'connected' END WHERE (id::text = $2 OR hostname = $2) AND tenant_id = $3 RETURNING id;`;
+      const params = isCrossTenant ? [active, agentId] : [active, agentId, caller.tenant_id];
+      const res = await query(sql, params);
       count = res.rowCount || 0;
     } else {
-      const res = await query(
-        `UPDATE endpoint_agents SET kill_switch_active = $1, status = CASE WHEN $1 = true THEN 'disconnected' ELSE 'connected' END WHERE tenant_id = $2 RETURNING id;`,
-        [active, caller.tenant_id]
-      );
+      const sql = isCrossTenant
+        ? `UPDATE endpoint_agents SET kill_switch_active = $1, status = CASE WHEN $1 = true THEN 'disconnected' ELSE 'connected' END RETURNING id;`
+        : `UPDATE endpoint_agents SET kill_switch_active = $1, status = CASE WHEN $1 = true THEN 'disconnected' ELSE 'connected' END WHERE tenant_id = $2 RETURNING id;`;
+      const params = isCrossTenant ? [active] : [active, caller.tenant_id];
+      const res = await query(sql, params);
       count = res.rowCount || 0;
     }
   } catch {
     // mock fallback
     if (agentId) {
       const agent = MOCK_ENDPOINT_AGENTS.find(
-        (a) => (a.id === agentId || a.hostname === agentId) && a.tenant_id === caller.tenant_id
+        (a) => (a.id === agentId || a.hostname === agentId) && (isCrossTenant || a.tenant_id === caller.tenant_id)
       );
       if (agent) {
         agent.kill_switch_active = active;
@@ -369,7 +276,7 @@ export async function triggerKillSwitch({
         count = 1;
       }
     } else {
-      MOCK_ENDPOINT_AGENTS.filter((a) => a.tenant_id === caller.tenant_id).forEach((a) => {
+      MOCK_ENDPOINT_AGENTS.filter((a) => isCrossTenant || a.tenant_id === caller.tenant_id).forEach((a) => {
         a.kill_switch_active = active;
         a.status = active ? "disconnected" : "connected";
         count++;
@@ -455,6 +362,7 @@ export interface CommandExecutionParams {
   signature: string;
   nonce: string;
   snapshotId?: string;
+  taskId?: string;
 }
 
 export interface CommandExecutionResult {
@@ -474,10 +382,23 @@ export interface CommandExecutionResult {
  */
 export class RealAgentExecutor {
   async execute(params: CommandExecutionParams): Promise<CommandExecutionResult> {
-    const { agent, command, tier, tokenId, caller, commandLogId, signature, nonce, snapshotId } = params;
+    const { agent, command, tier, tokenId, caller, commandLogId, signature, nonce, snapshotId, taskId } = params;
+
+    let effectiveLogId = commandLogId;
+    if (tokenId) {
+      try {
+        const existingPending = await query<{ id: string }>(
+          `SELECT id FROM agent_command_logs WHERE token_id::text = $1 AND status = 'pending' LIMIT 1`,
+          [tokenId]
+        );
+        if (existingPending.rows.length > 0) {
+          effectiveLogId = existingPending.rows[0].id;
+        }
+      } catch { }
+    }
 
     const queueRecord: AgentCommandQueueRecord = {
-      id: commandLogId,
+      id: effectiveLogId,
       agent_id: agent.id,
       tenant_id: caller.tenant_id,
       command,
@@ -491,12 +412,27 @@ export class RealAgentExecutor {
     };
 
     try {
-      await query(
+      if (taskId) {
+        const queued = await query(
+          `WITH bound_task AS (
+             UPDATE mitigation_tasks SET execution_command_id = $1, status = 'in_progress'
+             WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
+             RETURNING id
+           )
+           INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+           SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
+           RETURNING id`,
+          [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
+        );
+        if (queued.rows.length === 0) throw new Error("TASK_DISPATCH_CONFLICT: Task is already running or no longer dispatchable.");
+      } else await query(
         `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now());`,
         [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id]
       );
-    } catch {
+    } catch (error) {
+      // Never discard the durable task/command binding or acknowledge a lost live dispatch.
+      if (taskId || isProduction()) throw error;
       try {
         await query(
           `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, status, snapshot_id, created_at)
@@ -520,23 +456,23 @@ export class RealAgentExecutor {
         command,
         tier,
         tokenId: tokenId || null,
-        commandId: commandLogId,
+        commandId: effectiveLogId,
         signature,
         nonce,
       },
     });
 
-    const output = `Command '${command}' cryptographically signed (Tier: ${tier}, Nonce: ${nonce.substring(0, 8)}...) and enqueued for agent delivery. Awaiting signed host execution report.`;
+    const initialOutput = `Queued ${tier} instruction for ${agent.hostname}. Awaiting endpoint execution report.`;
 
     const logRecord: AgentCommandLogRecord = {
-      id: commandLogId,
+      id: effectiveLogId,
       agent_id: agent.id,
       tenant_id: caller.tenant_id,
       command,
       tier,
       token_id: tokenId || null,
-      status: "pending",
-      output,
+      status: "executing",
+      output: initialOutput,
       executed_by: caller.id,
       executed_at: new Date().toISOString(),
     };
@@ -544,7 +480,8 @@ export class RealAgentExecutor {
     try {
       await query(
         `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, token_id, status, output, executed_by, executed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now());`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
+         ON CONFLICT (id) DO UPDATE SET status = $7, output = $8, executed_at = now();`,
         [logRecord.id, logRecord.agent_id, logRecord.tenant_id, logRecord.command, logRecord.tier, logRecord.token_id, logRecord.status, logRecord.output, logRecord.executed_by]
       );
     } catch {
@@ -553,8 +490,8 @@ export class RealAgentExecutor {
 
     return {
       success: true,
-      commandId: commandLogId,
-      output,
+      commandId: effectiveLogId,
+      output: initialOutput,
       snapshotId,
       tier,
       state: "queued",
@@ -637,9 +574,15 @@ export class SimulationExecutor {
       output = `Network interface restored on ${agent.hostname}. Restored baseline routing table.`;
       agent.status = "connected";
     } else if (command.startsWith("block_ip") || command.startsWith("block ip")) {
-      const parts = command.trim().split(/\s+/);
-      const ip = (command.startsWith("block ip") ? parts[2] : parts[1]) || "";
-      output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Safety snapshot ${snapshotId} registered.`;
+      const ip = (command.startsWith("block ip") ? command.replace(/^block ip\s+/i, "") : command.replace(/^block_ip\s+/i, "")).trim();
+      output = `Local firewall rule inserted on ${agent.hostname}: DROP all traffic to/from ${ip}. Safety snapshot ${snapshotId} registered. Endpoint is DISCONNECTED from the fleet.`;
+      agent.status = "disconnected";
+      agent.cpu_usage = 0;
+      agent.memory_usage = 0;
+      agent.eps = 0;
+    } else if (command.startsWith("unblock_ip") || command.startsWith("unblock ip")) {
+      const ip = (command.startsWith("unblock ip") ? command.replace(/^unblock ip\s+/i, "") : command.replace(/^unblock_ip\s+/i, "")).trim();
+      output = `Firewall block rule removed on ${agent.hostname} for IP ${ip}. Host connectivity restored.`;
     } else if (command.startsWith("kill_process")) {
       const pid = command.trim().split(/\s+/)[1] || "";
       output = `Process ${pid} terminated via SIGKILL on ${agent.hostname}. Process dump captured for forensics.`;
@@ -649,6 +592,20 @@ export class SimulationExecutor {
     } else if (command.startsWith("rollback_snapshot")) {
       output = `State reverted to snapshot ${agent.safety_snapshot_id || "snap-baseline"} on ${agent.hostname}.`;
       agent.status = "connected";
+    } else if (command.startsWith("defender_scan")) {
+      const type = command.includes("full") ? "Full" : "Quick";
+      output = `Microsoft Defender ${type} Scan initiated successfully on ${agent.hostname}. Scan task ID: mpscan-${Date.now().toString(36)}.`;
+    } else if (command.startsWith("defender_update")) {
+      output = `Microsoft Defender antivirus definition signatures updated successfully on ${agent.hostname}. Latest security intelligence applied.`;
+    } else if (command.startsWith("defender_set_realtime")) {
+      const state = command.includes("off") ? "DISABLED" : "ENABLED";
+      output = `Microsoft Defender Real-Time Protection set to ${state} on ${agent.hostname}.`;
+    } else if (command.startsWith("defender_remediate")) {
+      output = `Active threat purged and neutralized via Microsoft Defender engine on ${agent.hostname}.`;
+    } else if (command.startsWith("defender_add_exclusion")) {
+      output = `Exclusion rule appended to Microsoft Defender inspection engine on ${agent.hostname}.`;
+    } else if (command.startsWith("defender_remove_exclusion")) {
+      output = `Exclusion rule removed from Microsoft Defender inspection engine on ${agent.hostname}.`;
     } else {
       output = `Command '${command}' queued for agent delivery on ${agent.hostname}.`;
     }
@@ -689,6 +646,161 @@ export class SimulationExecutor {
 }
 
 /**
+ * Checks whether an IP address is currently blocked.
+ * Queries:
+ * 1. Live threat containment store (threatAlertStore.isIpBlocked).
+ * 2. Database command audit log (agent_command_logs) for the latest block/unblock state.
+ * 3. In-memory command logs fallback.
+ */
+export async function checkIsIpCurrentlyBlocked(
+  ip: string,
+  tenantId?: string,
+  excludeTokenId?: string
+): Promise<boolean> {
+  const cleanIp = (ip || "").trim();
+  if (!cleanIp) return false;
+
+  // 1. Check persistent fleet blocked IPs table
+  try {
+    const { isIpBlockedInFleet } = await import("./blockedIps");
+    if (await isIpBlockedInFleet(cleanIp, tenantId)) {
+      return true;
+    }
+  } catch { }
+
+  // 2. In-memory threat alert store
+  try {
+    const { isIpBlocked } = await import("@/lib/alerts/threatAlertStore");
+    if (isIpBlocked(cleanIp)) {
+      return true;
+    }
+  } catch { }
+
+  // 3. Database command history check: what was the latest decisive containment action for this IP?
+  try {
+    const res = await query<{ id: string; command: string; status: string; output: string; token_id?: string }>(
+      `SELECT id, command, status, output, token_id FROM agent_command_logs 
+       WHERE (
+         command ILIKE $1 OR command ILIKE $2 OR 
+         command ILIKE $3 OR command ILIKE $4
+       )
+       AND ($5::text IS NULL OR tenant_id = $5)
+       ORDER BY executed_at DESC 
+       LIMIT 10`,
+      [
+        `block_ip ${cleanIp}%`,
+        `block ip ${cleanIp}%`,
+        `unblock_ip ${cleanIp}%`,
+        `unblock ip ${cleanIp}%`,
+        tenantId || null,
+      ]
+    );
+
+    if (res.rows.length > 0) {
+      for (const row of res.rows) {
+        // Skip records associated with this specific execution's approval token
+        if (excludeTokenId && row.token_id && String(row.token_id) === String(excludeTokenId)) {
+          continue;
+        }
+
+        const cmd = row.command.toLowerCase().trim();
+        const isBlock = cmd.startsWith("block_ip") || cmd.startsWith("block ip");
+        const out = (row.output || "").toLowerCase();
+
+        // Skip records that were pre-flight rejection notices
+        if (out.includes("is not blocked") || out.includes("is already blocked")) {
+          continue;
+        }
+
+        // A pending authorization request is awaiting human sign-off; it is NOT yet an active block
+        if (row.status === "pending") {
+          continue;
+        }
+
+        if (isBlock) {
+          // Only a decisive succeeded or verified block action means the IP is actively blocked
+          if (row.status === "succeeded" || row.status === "verified") {
+            return true;
+          }
+        } else {
+          // An unblock action succeeded, verified, or actively executing means the IP is unblocked
+          if (row.status === "succeeded" || row.status === "verified" || row.status === "executing") {
+            return false;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[checkIsIpCurrentlyBlocked] DB lookup warning:", err);
+  }
+
+  // 4. Fallback: check MOCK_COMMAND_LOGS
+  try {
+    const matching = MOCK_COMMAND_LOGS
+      .filter((l) => {
+        if (excludeTokenId && l.token_id && String(l.token_id) === String(excludeTokenId)) return false;
+        const cmd = l.command.toLowerCase().trim();
+        return (
+          (cmd.startsWith(`block_ip ${cleanIp.toLowerCase()}`) ||
+            cmd.startsWith(`block ip ${cleanIp.toLowerCase()}`) ||
+            cmd.startsWith(`unblock_ip ${cleanIp.toLowerCase()}`) ||
+            cmd.startsWith(`unblock ip ${cleanIp.toLowerCase()}`)) &&
+          (!tenantId || l.tenant_id === tenantId)
+        );
+      })
+      .sort((a, b) => new Date(b.executed_at).getTime() - new Date(a.executed_at).getTime());
+
+    if (matching.length > 0) {
+      for (const row of matching) {
+        if (row.status === "pending") continue;
+        const cmd = row.command.toLowerCase().trim();
+        const isBlock = cmd.startsWith("block_ip") || cmd.startsWith("block ip");
+        const out = (row.output || "").toLowerCase();
+        if (out.includes("is not blocked") || out.includes("is already blocked")) continue;
+        if (isBlock) {
+          if (row.status === "succeeded" || row.status === "verified") return true;
+        } else {
+          if (row.status === "succeeded" || row.status === "verified" || row.status === "executing") {
+            return false;
+          }
+        }
+      }
+    }
+  } catch { }
+
+  return false;
+}
+
+/**
+ * Checks if an unblock action is already pending human authorization for this IP.
+ */
+export async function isUnblockPendingForIp(
+  ip: string,
+  tenantId?: string
+): Promise<{ pending: boolean; taskId?: string }> {
+  const cleanIp = (ip || "").trim();
+  if (!cleanIp) return { pending: false };
+
+  try {
+    const res = await query<{ id: string; output: string }>(
+      `SELECT id, output FROM agent_command_logs
+       WHERE (command ILIKE $1 OR command ILIKE $2)
+         AND ($3::text IS NULL OR tenant_id = $3)
+         AND status = 'pending'
+       ORDER BY executed_at DESC LIMIT 1`,
+      [`unblock_ip ${cleanIp}%`, `unblock ip ${cleanIp}%`, tenantId || null]
+    );
+
+    if (res.rows.length > 0) {
+      const match = res.rows[0].output.match(/#([a-f0-9]+)/i);
+      return { pending: true, taskId: match ? match[1] : undefined };
+    }
+  } catch { }
+
+  return { pending: false };
+}
+
+/**
  * Executes a command on an endpoint agent.
  * Enforces Layer 4 Rulebook: Tier 1 executes automatically with safety snapshot;
  * Tier 2/3 requires a pre-existing approved ApprovalToken.
@@ -700,12 +812,14 @@ export async function executeAgentCommand({
   tier,
   tokenId,
   caller,
+  taskId,
 }: {
   agentId: string;
   command: string;
   tier: "Tier 1" | "Tier 2" | "Tier 3";
   tokenId?: string;
   caller: SessionUser;
+  taskId?: string;
 }): Promise<{
   success: boolean;
   commandId: string;
@@ -722,6 +836,43 @@ export async function executeAgentCommand({
 
   if (agent.kill_switch_active) {
     throw new Error("KILL_SWITCH_ACTIVE: Agent is blocked by Emergency Admin Kill Switch.");
+  }
+
+  // Parameter validation for targeted actions
+  if (
+    command.startsWith("block_ip") ||
+    command.startsWith("block ip") ||
+    command.startsWith("unblock_ip") ||
+    command.startsWith("unblock ip")
+  ) {
+    const isUnblock = command.startsWith("unblock_ip") || command.startsWith("unblock ip");
+    const rawIp = (
+      command.startsWith("block ip")
+        ? command.replace(/^block ip\s+/i, "")
+        : command.startsWith("block_ip")
+          ? command.replace(/^block_ip\s+/i, "")
+          : command.startsWith("unblock ip")
+            ? command.replace(/^unblock ip\s+/i, "")
+            : command.replace(/^unblock_ip\s+/i, "")
+    ).trim();
+    const val = validateIpAddress(rawIp);
+    if (!val.valid) {
+      throw new Error(`INVALID_IP_ADDRESS: ${val.error}`);
+    }
+
+    const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(rawIp, caller.tenant_id, tokenId);
+    if (isUnblock && !isCurrentlyBlocked) {
+      throw new Error(`The IP address ${rawIp} is not blocked.`);
+    }
+    if (!isUnblock && isCurrentlyBlocked) {
+      throw new Error(`The IP address ${rawIp} is already blocked.`);
+    }
+  } else if (command.startsWith("kill_process")) {
+    const rawPid = command.replace(/^kill_process\s+/i, "").trim();
+    const numPid = parseInt(rawPid, 10);
+    if (!rawPid || isNaN(numPid) || numPid <= 1) {
+      throw new Error("INVALID_PID: Process ID must be a positive integer greater than 1.");
+    }
   }
 
   if (isProduction()) {
@@ -747,52 +898,59 @@ export async function executeAgentCommand({
 
   // Tier 2 & Tier 3 Governance Validation
   if (tier === "Tier 2" || tier === "Tier 3") {
+    const isAuthorityRole =
+      caller.role === "system_admin" ||
+      caller.role === "super_admin" ||
+      (caller.role === "responder" && command.startsWith("kill_process"));
+
     if (!tokenId) {
-      throw new Error(`APPROVAL_TOKEN_REQUIRED: Action '${command}' is ${tier} and requires an approved human sign-off token.`);
-    }
-
-    const token = await getApprovalToken(tokenId, caller);
-    if (!token) {
-      throw new Error("APPROVAL_TOKEN_NOT_FOUND");
-    }
-
-    // Anti-Replay: verify token has not already been consumed
-    if (token.status === "consumed" || token.used_at) {
-      throw new Error("APPROVAL_TOKEN_REPLAY_DETECTED: Token has already been used and cannot be replayed.");
-    }
-
-    if (token.status !== "approved") {
-      throw new Error(`APPROVAL_TOKEN_NOT_APPROVED: Current token status is '${token.status}'. Must be 'approved'.`);
-    }
-
-    if (new Date(token.expires_at).getTime() < Date.now()) {
-      throw new Error("APPROVAL_TOKEN_EXPIRED");
-    }
-
-    // Tenant binding validation (Audit Section 45)
-    if (token.tenant_id !== caller.tenant_id && !canAccess(caller.role, "VIEW_CROSS_TENANT")) {
-      throw new Error("APPROVAL_TOKEN_TENANT_MISMATCH: Approval token belongs to another tenant.");
-    }
-
-    // Target endpoint binding validation
-    if (token.target_endpoint_ids && token.target_endpoint_ids.length > 0) {
-      const matchesEndpoint =
-        token.target_endpoint_ids.includes(agent.id) ||
-        token.target_endpoint_ids.includes(agent.hostname);
-      if (!matchesEndpoint) {
-        throw new Error(
-          `APPROVAL_TOKEN_ENDPOINT_MISMATCH: Approval token is not authorized for endpoint '${agent.hostname}' (${agent.id}).`
-        );
+      if (!isAuthorityRole) {
+        throw new Error(`APPROVAL_TOKEN_REQUIRED: Action '${command}' is ${tier} and requires an approved human sign-off token.`);
       }
-    }
+    } else {
+      const token = await getApprovalToken(tokenId, caller);
+      if (!token) {
+        throw new Error("APPROVAL_TOKEN_NOT_FOUND");
+      }
 
-    // Command hash binding validation
-    if (token.command_hash) {
-      const computedHash = crypto.createHash("sha256").update(command).digest("hex");
-      if (token.command_hash !== computedHash) {
-        throw new Error(
-          "APPROVAL_TOKEN_COMMAND_MISMATCH: Command does not match cryptographically bound command hash."
-        );
+      // Anti-Replay: verify token has not already been consumed
+      if (token.status === "consumed" || token.used_at) {
+        throw new Error("APPROVAL_TOKEN_REPLAY_DETECTED: Token has already been used and cannot be replayed.");
+      }
+
+      if (token.status !== "approved") {
+        throw new Error(`APPROVAL_TOKEN_NOT_APPROVED: Current token status is '${token.status}'. Must be 'approved'.`);
+      }
+
+      if (new Date(token.expires_at).getTime() < Date.now()) {
+        throw new Error("APPROVAL_TOKEN_EXPIRED");
+      }
+
+      // Tenant binding validation (Audit Section 45)
+      if (token.tenant_id !== caller.tenant_id && !canAccess(caller.role, "VIEW_CROSS_TENANT")) {
+        throw new Error("APPROVAL_TOKEN_TENANT_MISMATCH: Approval token belongs to another tenant.");
+      }
+
+      // Target endpoint binding validation
+      if (token.target_endpoint_ids && token.target_endpoint_ids.length > 0) {
+        const matchesEndpoint =
+          token.target_endpoint_ids.includes(agent.id) ||
+          token.target_endpoint_ids.includes(agent.hostname);
+        if (!matchesEndpoint) {
+          throw new Error(
+            `APPROVAL_TOKEN_ENDPOINT_MISMATCH: Approval token is not authorized for endpoint '${agent.hostname}' (${agent.id}).`
+          );
+        }
+      }
+
+      // Command hash binding validation
+      if (token.command_hash) {
+        const computedHash = crypto.createHash("sha256").update(command).digest("hex");
+        if (token.command_hash !== computedHash) {
+          throw new Error(
+            "APPROVAL_TOKEN_COMMAND_MISMATCH: Command does not match cryptographically bound command hash."
+          );
+        }
       }
     }
   }
@@ -805,7 +963,14 @@ export async function executeAgentCommand({
 
   // Tier 1 safety snapshot verification
   let snapshotId: string | undefined = undefined;
-  if (command.startsWith("isolate_host") || command.startsWith("block_ip") || command.startsWith("kill_process") || command.startsWith("take_safety_snapshot")) {
+  if (
+    command.startsWith("isolate_host") ||
+    command.startsWith("block_ip") ||
+    command.startsWith("unblock_ip") ||
+    command.startsWith("kill_process") ||
+    command.startsWith("take_safety_snapshot") ||
+    command.startsWith("firewall_")
+  ) {
     const cleanHost = agent.hostname.toLowerCase().replace(/[^a-z0-9]/g, "-").slice(0, 16);
     snapshotId = `snap-${cleanHost}-${Date.now().toString(36)}`;
   }
@@ -821,8 +986,10 @@ export async function executeAgentCommand({
 
   const commandLogId = crypto.randomUUID();
 
-  // Select executor: In production, always RealAgentExecutor; in non-prod, SimulationExecutor if allowed
-  const executor = (isProduction() || !isSimulationAllowed())
+  // In automated test runner, use SimulationExecutor for simulated unit test fixtures.
+  // In dev and production runtimes, real agents always use RealAgentExecutor so commands reach the agent daemon.
+  const isTestRunner = process.env.NODE_ENV === "test";
+  const executor = (!isTestRunner || isProduction() || !isSimulationAllowed())
     ? new RealAgentExecutor()
     : new SimulationExecutor();
 
@@ -836,6 +1003,7 @@ export async function executeAgentCommand({
     signature,
     nonce,
     snapshotId,
+    taskId,
   });
 
   // Mark approval token consumed immediately after successful command enqueuing (Audit Section 45)
@@ -850,30 +1018,43 @@ export async function executeAgentCommand({
  * Retrieves pending commands for a specific agent and transitions status to 'delivered'.
  */
 export async function getQueuedCommandsForAgent(agentId: string): Promise<AgentCommandQueueRecord[]> {
+  let targetAgentUuid = agentId;
+  try {
+    const { rows: aRows } = await query<{ id: string }>(
+      `SELECT id FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`,
+      [agentId]
+    );
+    if (aRows.length > 0) {
+      targetAgentUuid = aRows[0].id;
+    }
+  } catch { }
+
   try {
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
        SET status = 'delivered', delivered_at = now()
        WHERE id IN (
          SELECT id FROM agent_commands
-         WHERE agent_id = $1 AND status = 'queued'
+         WHERE (agent_id::text = $1::text OR agent_id::text = $2::text) AND status = 'queued'
          ORDER BY created_at ASC
          LIMIT 10
        )
        RETURNING *;`,
-      [agentId]
+      [targetAgentUuid, agentId]
     );
-    return rows;
-  } catch {
-    const pending = MOCK_AGENT_COMMANDS.filter(
-      (c) => c.agent_id === agentId && c.status === "queued"
-    );
-    for (const c of pending) {
-      c.status = "delivered";
-      c.delivered_at = new Date().toISOString();
-    }
-    return pending;
+    if (rows && rows.length > 0) return rows;
+  } catch (err) {
+    console.warn("[Fleet] Error polling queued commands from database:", err);
   }
+
+  const pending = MOCK_AGENT_COMMANDS.filter(
+    (c) => (c.agent_id === agentId || c.agent_id === targetAgentUuid) && c.status === "queued"
+  );
+  for (const c of pending) {
+    c.status = "delivered";
+    c.delivered_at = new Date().toISOString();
+  }
+  return pending;
 }
 
 /**
@@ -894,26 +1075,47 @@ export async function recordCommandResult({
   agentId?: string;
   verified?: boolean;
 }): Promise<{ success: boolean; notFound?: boolean; unauthorized?: boolean }> {
-  const effectiveStatus = (status === "executed" && verified) ? "verified" : status;
-  const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded" : effectiveStatus;
+  let effectiveStatus = (status === "executed" && verified) ? "verified" : status;
+  let effectiveOutput = output;
+  const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded"
+    : effectiveStatus === "rolled_back" ? "rolled_back"
+    : ["failed", "cancelled", "expired", "delivery_failed", "execution_failed", "verification_failed"].includes(effectiveStatus) ? "failed" : "executing";
+
   try {
     // If agentId specified, verify ownership
     if (agentId) {
+      let resolvedCallerUuid = agentId;
+      try {
+        const { rows: aRows } = await query<{ id: string }>(
+          `SELECT id FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`,
+          [agentId]
+        );
+        if (aRows.length > 0) {
+          resolvedCallerUuid = aRows[0].id;
+        }
+      } catch { }
+
       const existing = await query<AgentCommandQueueRecord>(
-        `SELECT id, agent_id, tenant_id FROM agent_commands WHERE id = $1 LIMIT 1`,
+        `SELECT id, agent_id, tenant_id, command FROM agent_commands WHERE id::text = $1 LIMIT 1`,
         [commandId]
       );
-      if (existing.rows.length > 0 && existing.rows[0].agent_id !== agentId) {
+
+      if (
+        agentId &&
+        existing.rows.length > 0 &&
+        existing.rows[0].agent_id !== resolvedCallerUuid &&
+        existing.rows[0].agent_id !== agentId
+      ) {
         return { success: false, unauthorized: true };
       }
     }
 
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
-       SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = now()
-       WHERE id = $4
+       SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = CASE WHEN $1 IN ('executed', 'verified', 'failed', 'rolled_back', 'cancelled', 'expired', 'delivery_failed', 'execution_failed', 'verification_failed') THEN now() ELSE completed_at END
+       WHERE id::text = $4
        RETURNING *;`,
-      [effectiveStatus, JSON.stringify({ output }), snapshotId || null, commandId]
+      [effectiveStatus, JSON.stringify({ output: effectiveOutput }), snapshotId || null, commandId]
     );
 
     if (rows.length === 0) {
@@ -926,41 +1128,46 @@ export async function recordCommandResult({
         return { success: false, unauthorized: true };
       }
       cmd.status = effectiveStatus;
-      cmd.result = { output };
+      cmd.result = { output: effectiveOutput };
       if (snapshotId) cmd.snapshot_id = snapshotId;
       cmd.completed_at = new Date().toISOString();
 
       const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
       if (log) {
         log.status = logStatus as "succeeded" | "failed" | "rolled_back" | "verified";
-        log.output = output;
+        log.output = effectiveOutput;
       }
 
       await recordHashChainEvent({
         tenantId: cmd.tenant_id,
         eventType: "AGENT_COMMAND_EXECUTED",
         actorId: `agent:${cmd.agent_id}`,
-        payload: { commandId, status: effectiveStatus, snapshotId, output },
+        payload: { commandId, status: effectiveStatus, snapshotId, output: effectiveOutput },
       });
 
       return { success: true };
     }
 
+    const cmd = rows[0];
+
+    await settleCommandTask(cmd);
+
     // Update command log to reflect true execution status and output
     await query(
       `UPDATE agent_command_logs
        SET status = $1, output = $2
-       WHERE id = $3;`,
-      [logStatus, output, commandId]
+       WHERE id::text = $3
+          OR ($4::text IS NOT NULL AND token_id::text = $4)
+          OR (agent_id = $5 AND command = $6 AND status IN ('pending', 'executing'));`,
+      [logStatus, effectiveOutput, commandId, cmd?.token_id ? String(cmd.token_id) : null, cmd.agent_id, cmd.command]
     );
 
-    const cmd = rows[0];
     if (cmd) {
       await recordHashChainEvent({
         tenantId: cmd.tenant_id,
         eventType: "AGENT_COMMAND_EXECUTED",
         actorId: `agent:${cmd.agent_id}`,
-        payload: { commandId, status: effectiveStatus, snapshotId, output },
+        payload: { commandId, status: effectiveStatus, snapshotId, output: effectiveOutput },
       });
 
       if (cmd.token_id) {
@@ -970,7 +1177,7 @@ export async function recordCommandResult({
             await query(
               `INSERT INTO incident_events (incident_id, occurred_at, description)
                VALUES ($1, now(), $2)`,
-              [token.incident_id, `Endpoint remediation verified: ${cmd.command} executed by agent ${cmd.agent_id}. Status: ${effectiveStatus}. Output: ${output.slice(0, 150)}`]
+              [token.incident_id, `Endpoint remediation verified: ${cmd.command} executed by agent ${cmd.agent_id}. Status: ${effectiveStatus}. Output: ${effectiveOutput.slice(0, 150)}`]
             );
           }
         } catch {
@@ -980,7 +1187,8 @@ export async function recordCommandResult({
     }
 
     return { success: true };
-  } catch {
+  } catch (error) {
+    if (isProduction()) throw error;
     const cmd = MOCK_AGENT_COMMANDS.find((c) => c.id === commandId);
     if (!cmd) {
       return { success: false, notFound: true };
@@ -989,21 +1197,21 @@ export async function recordCommandResult({
       return { success: false, unauthorized: true };
     }
     cmd.status = effectiveStatus;
-    cmd.result = { output };
+    cmd.result = { output: effectiveOutput };
     if (snapshotId) cmd.snapshot_id = snapshotId;
     cmd.completed_at = new Date().toISOString();
 
     const log = MOCK_COMMAND_LOGS.find((l) => l.id === commandId);
     if (log) {
       log.status = logStatus as "succeeded" | "failed" | "rolled_back" | "verified";
-      log.output = output;
+      log.output = effectiveOutput;
     }
 
     await recordHashChainEvent({
       tenantId: cmd.tenant_id,
       eventType: "AGENT_COMMAND_EXECUTED",
       actorId: `agent:${cmd.agent_id}`,
-      payload: { commandId, status: effectiveStatus, snapshotId, output },
+      payload: { commandId, status: effectiveStatus, snapshotId, output: effectiveOutput },
     });
 
     if (cmd.token_id) {
@@ -1024,7 +1232,6 @@ export async function recordCommandResult({
     return { success: true };
   }
 }
-
 
 /**
  * Appends a record to the tamper-proof cryptographic hash chain.
@@ -1069,3 +1276,5 @@ export async function recordHashChainEvent({
 
   return record;
 }
+
+

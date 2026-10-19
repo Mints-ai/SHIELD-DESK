@@ -6,63 +6,6 @@ import { hasPermission } from "@/lib/permissions";
 import { runTrivyScan, isTrivyAvailable, getOrRunTrivyScan, getLastScanResult } from "@/lib/trivy";
 import { runGitleaksScan, isGitleaksAvailable, getLastGitleaksScanResult } from "@/lib/gitleaks";
 
-/**
- * DEMO/FALLBACK DATA — returned when running in DEMO_MODE and the live scan
- * service (SCAN_SERVICE_URL) is unreachable. These CVE findings are illustrative
- * examples drawn from real public CVE disclosures.
- * In production with FAIL_CLOSED=true, this endpoint returns 503 if the live
- * service is unreachable.
- */
-const MOCK_CVE_FINDINGS = [
-  {
-    cve_id: "CVE-2024-6387",
-    package_name: "openssh-server",
-    installed_version: "8.9p1-3ubuntu0.1",
-    fixed_version: "8.9p1-3ubuntu0.10",
-    severity: "CRITICAL",
-    cvss_score: 8.1,
-    epss_score: 0.92,
-    asset_id: "srv-prod-api-01",
-    description: "Signal handler race condition in OpenSSH server (regreSSHion) allowing unauthenticated RCE as root.",
-    remediation: "Upgrade openssh-server via apt-get or apply LVM rollback snapshot after testing.",
-  },
-  {
-    cve_id: "CVE-2024-3094",
-    package_name: "xz-utils",
-    installed_version: "5.6.0-0.2",
-    fixed_version: "5.6.1+really5.4.5-1",
-    severity: "CRITICAL",
-    cvss_score: 10.0,
-    epss_score: 0.97,
-    asset_id: "srv-prod-gateway-01",
-    description: "Malicious code backdoor in upstream xz/liblzma tarballs leading to SSH authentication bypass.",
-    remediation: "Downgrade xz-utils to safe version 5.4.5 and revoke all active host SSH keys.",
-  },
-  {
-    cve_id: "CVE-2023-4863",
-    package_name: "libwebp7",
-    installed_version: "1.2.2-2",
-    fixed_version: "1.2.2-2+deb11u1",
-    severity: "HIGH",
-    cvss_score: 8.8,
-    epss_score: 0.88,
-    asset_id: "srv-app-worker-02",
-    description: "Heap buffer overflow in WebP image processing allowing arbitrary code execution.",
-    remediation: "Update libwebp package and restart container workloads.",
-  },
-  {
-    cve_id: "CVE-2024-21626",
-    package_name: "runc",
-    installed_version: "1.1.11-0ubuntu1",
-    fixed_version: "1.1.12-0ubuntu1",
-    severity: "HIGH",
-    cvss_score: 8.6,
-    epss_score: 0.74,
-    asset_id: "k8s-node-worker-03",
-    description: "Internal file descriptor leak in runc allowing container breakout to host filesystem.",
-    remediation: "Patch container runtime runc across Kubernetes worker nodes.",
-  },
-];
 
 
 export async function GET(req: NextRequest) {
@@ -133,9 +76,31 @@ export async function GET(req: NextRequest) {
     critical: lastScan ? lastScan.summary.critical : 0,
     high: lastScan ? lastScan.summary.high : 0,
     secretsExposed: secretFindings.length,
-    patchedHosts: 14,
-    pendingPatches: 2,
+    patchedHosts: 0,
+    pendingPatches: 0,
   };
+
+  const recentScans: Array<Record<string, unknown>> = [];
+  if (lastScan) {
+    recentScans.push({
+      id: `scan-trivy-${lastScan.scannedTarget.replace(/[^a-zA-Z0-9]/g, "-")}`,
+      type: "Trivy Container & OS Scan",
+      target: lastScan.scannedTarget,
+      status: "COMPLETED",
+      vulnerabilities: lastScan.findings.length,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  if (cachedGitleaks) {
+    recentScans.push({
+      id: `scan-git-${cachedGitleaks.scannedTarget.replace(/[^a-zA-Z0-9]/g, "-")}`,
+      type: "Gitleaks Secrets Scan",
+      target: cachedGitleaks.scannedTarget,
+      status: "COMPLETED",
+      secretsFound: cachedGitleaks.findings.length,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   return NextResponse.json({
     status: "ok",
@@ -151,31 +116,7 @@ export async function GET(req: NextRequest) {
     findings: cveFindings,
     cveFindings,
     secretFindings,
-    recentScans: [
-      {
-        id: "scan-trivy-9012",
-        type: "Trivy Container & OS Scan",
-        target: "registry.shielddesk.internal/api:v2.4",
-        status: "COMPLETED",
-        vulnerabilities: 4,
-        timestamp: "5 mins ago",
-      },
-      {
-        id: "scan-git-4421",
-        type: "Gitleaks Secrets Scan",
-        target: "repo/shielddesk-backend (main)",
-        status: "COMPLETED",
-        secretsFound: 2,
-        timestamp: "18 mins ago",
-      },
-      {
-        id: "scan-patch-1092",
-        type: "SSH Patch Orchestrator (LVM Snapshot)",
-        target: "srv-prod-api-01 (10.0.4.12)",
-        status: "VERIFIED_SAFE",
-        timestamp: "1 hour ago",
-      },
-    ],
+    recentScans,
   });
 }
 
@@ -284,26 +225,13 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // 4. Return demo simulated scan
-      return NextResponse.json({
-        success: true,
-        status: "success",
-        _demo_mode: true,
-        scan_id: `scan-${Date.now().toString(36)}`,
-        message: "Trivy vulnerability scan simulated across fleet targets (Demo Mode).",
-        scan_type: body.scan_type || "full",
-        target: body.target_path || "fleet-all",
-        findings: MOCK_CVE_FINDINGS,
-        cveFindings: MOCK_CVE_FINDINGS,
-        metrics: {
-          total: 4,
-          totalVulnerabilities: 4,
-          critical: 2,
-          high: 2,
-          medium: 0,
-          low: 0,
+      return NextResponse.json(
+        {
+          error: "Scan service (Trivy pipeline) is unreachable.",
+          code: "SCAN_SERVICE_OFFLINE",
         },
-      });
+        { status: 503 }
+      );
     }
 
     if (action === "secrets_scan") {
@@ -401,7 +329,7 @@ export async function POST(req: NextRequest) {
         // Fallback or fail closed
       }
 
-      if (shouldFailClosed()) {
+      if (shouldFailClosed() || isProduction()) {
         return NextResponse.json(
           {
             error: "KMS / IAM key rotation service is unreachable. Action aborted under production fail-closed policy.",
@@ -424,7 +352,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "apply_patch") {
-      if (shouldFailClosed()) {
+      if (shouldFailClosed() || isProduction()) {
         return NextResponse.json(
           {
             error: "Remote host patch daemon is not connected. Patching cannot be executed or claimed without a live agent connection.",

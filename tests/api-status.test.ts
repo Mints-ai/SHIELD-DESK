@@ -1,5 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { NextRequest } from "next/server";
 import { getSystemStatusReport } from "@/lib/status/serviceStatus";
 import { GET as statusGetHandler } from "@/app/api/status/route";
 
@@ -49,7 +50,7 @@ describe("Public API Status & Subsystem Health Monitoring Suite", () => {
   });
 
   test("GET /api/status route handler returns valid HTTP response and headers", async () => {
-    const res = await statusGetHandler();
+    const res = await statusGetHandler(new NextRequest("http://localhost:3000/api/status"));
 
     // Either 200 (operational/degraded) or 503 (outage)
     assert.ok(res.status === 200 || res.status === 503);
@@ -63,6 +64,30 @@ describe("Public API Status & Subsystem Health Monitoring Suite", () => {
 
     const json = await res.json();
     assert.ok(json.version);
+    assert.ok(json.services);
+    assert.ok(json.summary);
+  });
+
+  test("browser requests redirect to the status page", async () => {
+    const request = new NextRequest("http://localhost:3000/api/status", {
+      headers: { accept: "text/html" },
+    });
+    const res = await statusGetHandler(request);
+
+    assert.equal(res.status, 307);
+    assert.equal(res.headers.get("location"), "http://localhost:3000/status");
+  });
+
+  test("format=json keeps browser requests on the telemetry API", async () => {
+    const request = new NextRequest("http://localhost:3000/api/status?format=json", {
+      headers: { accept: "text/html" },
+    });
+    const res = await statusGetHandler(request);
+
+    assert.ok(res.status === 200 || res.status === 503);
+    assert.equal(res.headers.get("location"), null);
+    assert.match(res.headers.get("content-type") || "", /application\/json/);
+    const json = await res.json();
     assert.ok(json.services);
     assert.ok(json.summary);
   });

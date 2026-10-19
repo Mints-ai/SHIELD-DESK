@@ -14,6 +14,7 @@ import {
   acknowledgeThreatAlert,
   resetThreatAlerts,
   getBlockedIps,
+  isIpBlocked,
   unblockIp,
   blockIp,
   getLiveFailureRatePerMin,
@@ -30,98 +31,6 @@ import {
 } from "@/lib/alerts/threatAlertStore";
 import { resolveClientIp } from "@/lib/network/clientIp";
 
-const YARA_RULES = [
-  {
-    id: "yara_webshell_c99",
-    name: "Webshell_C99_PHP",
-    category: "Malware / Webshell",
-    severity: "CRITICAL",
-    matches_today: 3,
-    status: "ACTIVE",
-    target: "filesystem / webroot",
-    description: "Detects obfuscated PHP C99/b374k webshell headers, base64_decode, and passthru command execution payloads.",
-  },
-  {
-    id: "yara_ransomware_extensions",
-    name: "Ransomware_LockBit_Indicators",
-    category: "Ransomware",
-    severity: "CRITICAL",
-    matches_today: 0,
-    status: "ACTIVE",
-    target: "filesystem write operations",
-    description: "Detects mass extension renaming (.lockbit, .blackcat) and automated shadow copy deletion commands.",
-  },
-  {
-    id: "yara_cobalt_beacon",
-    name: "Cobalt_Strike_Beacon_Memory",
-    category: "C2 / Post-Exploitation",
-    severity: "HIGH",
-    matches_today: 1,
-    status: "ACTIVE",
-    target: "process memory",
-    description: "Detects known Cobalt Strike malleable C2 reflective DLL loader memory patterns.",
-  },
-];
-
-const SIGMA_RULES = [
-  {
-    id: "sigma_encoded_powershell",
-    title: "Suspicious Encoded PowerShell Execution",
-    logsource: "windows: process_creation",
-    severity: "HIGH",
-    matches_today: 4,
-    status: "ACTIVE",
-    detection_logic: "CommandLine matches -enc / -EncodedCommand with bypass execution policy.",
-  },
-  {
-    id: "sigma_ssh_bruteforce",
-    title: "SSH Distributed Brute Force Attempt",
-    logsource: "linux: auth.log / sshd",
-    severity: "MEDIUM",
-    matches_today: 28,
-    status: "ACTIVE",
-    detection_logic: "More than 15 failed password authentications from single source IP within 60s window.",
-  },
-  {
-    id: "sigma_shadow_copy_deletion",
-    title: "VSS Volume Shadow Copy Deletion",
-    logsource: "windows: vssadmin",
-    severity: "CRITICAL",
-    matches_today: 0,
-    status: "ACTIVE",
-    detection_logic: "vssadmin.exe delete shadows /all /quiet or wmic shadowcopy delete.",
-  },
-];
-
-const ANOMALY_BASELINES = [
-  {
-    metric: "Failed Authentications / Min",
-    mean: 4.2,
-    stdDev: 2.1,
-    threshold_3sigma: 10.5,
-    current_value: 0.0,
-    is_anomaly: false,
-    unit: "attempts/min",
-  },
-  {
-    metric: "Outbound Network Egress Rate",
-    mean: 145.0,
-    stdDev: 35.0,
-    threshold_2sigma: 215.0,
-    current_value: 0.0,
-    is_anomaly: false,
-    unit: "MB/min",
-  },
-  {
-    metric: "Sudo Execution Frequency",
-    mean: 1.1,
-    stdDev: 0.8,
-    threshold_3sigma: 3.5,
-    current_value: 0.0,
-    is_anomaly: false,
-    unit: "cmds/min",
-  },
-];
 
 const BASELINE_INGEST_POLICY = {
   agent_handshake_protocol: "mTLS v1.3 with X.509 cert (gRPC :50051)",
@@ -137,8 +46,8 @@ export async function GET(req: NextRequest) {
     session = {
       uid: "dev-analyst",
       role: "analyst",
-      tenantId: "acme-tenant",
-      email: "analyst@acme.corp",
+      tenantId: "mints-global",
+      email: "analyst@mintsglobal.ae",
     };
   }
   if (!session) {
@@ -176,32 +85,44 @@ export async function GET(req: NextRequest) {
   let liveConnectedAgents = 0;
   let liveSudoDbCount = 0;
 
+  const isCrossTenant = session.role === "system_admin" || session.role === "super_admin";
+
   try {
-    const telRes = await query<{ count: string }>(
-      `SELECT count(*) FROM endpoint_telemetry WHERE tenant_id = $1`,
-      [session.tenantId]
-    );
+    const telSql = isCrossTenant
+      ? `SELECT count(*) FROM endpoint_telemetry`
+      : `SELECT count(*) FROM endpoint_telemetry WHERE tenant_id = $1`;
+    const telParams = isCrossTenant ? [] : [session.tenantId];
+    const telRes = await query<{ count: string }>(telSql, telParams);
     if (telRes.rows.length > 0) {
       liveEventsCount = parseInt(telRes.rows[0].count, 10);
     }
-    const agentRes = await query<{ count: string }>(
-      `SELECT count(*) FROM endpoint_agents
-       WHERE tenant_id = $1
-         AND status = 'connected'
-         AND kill_switch_active = false
-         AND COALESCE(last_seen_at, created_at) >= now() - interval '15 seconds'`,
-      [session.tenantId]
-    );
+
+    const agentSql = isCrossTenant
+      ? `SELECT count(*) FROM endpoint_agents
+         WHERE status = 'connected'
+           AND kill_switch_active = false
+           AND COALESCE(last_seen_at, created_at) >= now() - interval '45 seconds'`
+      : `SELECT count(*) FROM endpoint_agents
+         WHERE tenant_id = $1
+           AND status = 'connected'
+           AND kill_switch_active = false
+           AND COALESCE(last_seen_at, created_at) >= now() - interval '45 seconds'`;
+    const agentParams = isCrossTenant ? [] : [session.tenantId];
+    const agentRes = await query<{ count: string }>(agentSql, agentParams);
     if (agentRes.rows.length > 0) {
       liveConnectedAgents = parseInt(agentRes.rows[0].count, 10);
     }
-    const sudoRes = await query<{ count: string }>(
-      `SELECT count(*) FROM endpoint_telemetry 
-       WHERE tenant_id = $1 
-         AND timestamp >= now() - interval '1 minute'
-         AND (payload::text ILIKE '%sudo%' OR payload::text ILIKE '%command%')`,
-      [session.tenantId]
-    );
+
+    const sudoSql = isCrossTenant
+      ? `SELECT count(*) FROM endpoint_telemetry 
+         WHERE timestamp >= now() - interval '1 minute'
+           AND (payload::text ILIKE '%sudo%' OR payload::text ILIKE '%command%')`
+      : `SELECT count(*) FROM endpoint_telemetry 
+         WHERE tenant_id = $1 
+           AND timestamp >= now() - interval '1 minute'
+           AND (payload::text ILIKE '%sudo%' OR payload::text ILIKE '%command%')`;
+    const sudoParams = isCrossTenant ? [] : [session.tenantId];
+    const sudoRes = await query<{ count: string }>(sudoSql, sudoParams);
     if (sudoRes.rows.length > 0) {
       const parsed = parseInt(sudoRes.rows[0].count, 10);
       if (!isNaN(parsed)) {
@@ -214,65 +135,93 @@ export async function GET(req: NextRequest) {
 
   let liveAuthDbCount = 0;
   try {
-      const authRes = await query<{ count: string }>(
-        `SELECT count(*) FROM endpoint_telemetry 
+    const authSql = isCrossTenant
+      ? `SELECT count(*) FROM endpoint_telemetry 
+         WHERE timestamp >= now() - interval '1 minute'
+           AND (event_type = 'auth_failure' OR payload::text ILIKE '%auth_fail%' OR payload::text ILIKE '%login_failed%')`
+      : `SELECT count(*) FROM endpoint_telemetry 
          WHERE tenant_id = $1 
            AND timestamp >= now() - interval '1 minute'
-           AND (event_type = 'auth_failure' OR payload::text ILIKE '%auth_fail%' OR payload::text ILIKE '%login_failed%')`,
-        [session.tenantId]
-      );
-      if (authRes.rows.length > 0) {
-        const parsed = parseInt(authRes.rows[0].count, 10);
-        if (!isNaN(parsed)) {
-          liveAuthDbCount = parsed;
-        }
+           AND (event_type = 'auth_failure' OR payload::text ILIKE '%auth_fail%' OR payload::text ILIKE '%login_failed%')`;
+    const authParams = isCrossTenant ? [] : [session.tenantId];
+    const authRes = await query<{ count: string }>(authSql, authParams);
+    if (authRes.rows.length > 0) {
+      const parsed = parseInt(authRes.rows[0].count, 10);
+      if (!isNaN(parsed)) {
+        liveAuthDbCount = parsed;
       }
-    } catch {
-      // Telemetry table optional
     }
+  } catch {
+    // Telemetry table optional
+  }
 
-    // Determine if this user can view authentication security alerts.
-    // Restricted to System Admin and Super Admin roles only.
-    const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
-    const canViewAuthAlerts = Boolean(session && isSystemAdmin);
+  // Cross-reference with live fleet agents fallback to prevent agent drift
+  try {
+    const { getLiveFleetAgents } = await import("@/lib/fleet/liveTelemetry");
+    const fleetAgents = await getLiveFleetAgents({
+      id: session.uid,
+      email: session.email || "operator@mintsglobal.ae",
+      role: session.role as any,
+      tenant_id: session.tenantId,
+    });
+    const activeFleet = fleetAgents.filter(
+      (a) => a.status === "connected" && !a.kill_switch_active
+    ).length;
+    if (activeFleet > liveConnectedAgents) {
+      liveConnectedAgents = activeFleet;
+    }
+  } catch {
+    // Live fleet fallback
+  }
 
-    // Use dynamic threat alert store for authorized users only.
-    const securityAlerts = canViewAuthAlerts
-      ? getThreatAlertsForUser(session.uid, session.tenantId, session.role)
-      : [];
+  // Determine if this user can view authentication security alerts.
+  // Observability & alerts are available to all standard operator roles: system_admin, super_admin, responder, analyst.
+  const isSystemAdmin = session.role === "system_admin" || session.role === "super_admin";
+  const isResponder = session.role === "responder";
+  const isAnalyst = session.role === "analyst";
+  const isOperator = isSystemAdmin || isResponder || isAnalyst;
+
+  const canViewAuthAlerts = Boolean(session && isOperator);
+
+  // Use dynamic threat alert store for authorized operators.
+  const securityAlerts = canViewAuthAlerts
+    ? getThreatAlertsForUser(session.uid, session.tenantId, session.role)
+    : [];
 
     // Dynamically compute all 3 anomaly metrics from real live telemetry stores
     const liveFailureRate = Math.max(getLiveFailureRatePerMin(), liveAuthDbCount);
     const liveSudoRate = Math.max(getLiveSudoRatePerMin(), liveSudoDbCount);
     const liveEgress = getLiveEgressRateMBPerMin();
 
-    const anomalyBaselines = ANOMALY_BASELINES.map((b) => {
-      if (b.metric === "Failed Authentications / Min") {
-        const threshold = b.threshold_3sigma ?? 10.5;
-        return {
-          ...b,
-          current_value: Number(liveFailureRate.toFixed(1)),
-          is_anomaly: liveFailureRate > threshold,
-        };
-      }
-      if (b.metric === "Outbound Network Egress Rate") {
-        const threshold = b.threshold_2sigma ?? 215.0;
-        return {
-          ...b,
-          current_value: Number(liveEgress.current_value.toFixed(1)),
-          is_anomaly: liveEgress.is_anomaly,
-        };
-      }
-      if (b.metric === "Sudo Execution Frequency") {
-        const threshold = b.threshold_3sigma ?? 3.5;
-        return {
-          ...b,
-          current_value: Number(liveSudoRate.toFixed(1)),
-          is_anomaly: liveSudoRate > threshold,
-        };
-      }
-      return b;
-    });
+    const anomalyBaselines = [
+      {
+        metric: "Failed Authentications / Min",
+        mean: 4.2,
+        stdDev: 2.1,
+        threshold_3sigma: 10.5,
+        current_value: Number(liveFailureRate.toFixed(1)),
+        is_anomaly: liveFailureRate > 10.5,
+        unit: "attempts/min",
+      },
+      {
+        metric: "Outbound Network Egress Rate",
+        mean: 145.0,
+        stdDev: 35.0,
+        threshold_2sigma: 215.0,
+        current_value: Number(liveEgress.current_value.toFixed(1)),
+        is_anomaly: liveEgress.is_anomaly,
+        unit: "MB/min",
+      },
+      {
+        metric: "Sudo Execution Frequency",
+        mean: 1.1,
+        stdDev: 0.8,
+        threshold_3sigma: 3.5,
+        current_value: Number(liveSudoRate.toFixed(1)),
+        is_anomaly: liveSudoRate > 3.5,
+        unit: "cmds/min",
+      },
+    ];
 
     // Query Go Threat Service if online (port 8003)
     const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
@@ -329,21 +278,27 @@ export async function GET(req: NextRequest) {
       emails: 0,
     };
     try {
+      const piiSql = isCrossTenant
+        ? `SELECT 
+            COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_JWT]%') as jwt_count,
+            COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_SENSITIVE_KEY]%' OR payload::text ILIKE '%[REDACTED_BEARER]%') as pass_count,
+            COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_CREDIT_CARD]%') as cc_count,
+            COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_EMAIL]%') as email_count
+           FROM endpoint_telemetry`
+        : `SELECT 
+            COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_JWT]%') as jwt_count,
+            COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_SENSITIVE_KEY]%' OR payload::text ILIKE '%[REDACTED_BEARER]%') as pass_count,
+            COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_CREDIT_CARD]%') as cc_count,
+            COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_EMAIL]%') as email_count
+           FROM endpoint_telemetry
+           WHERE tenant_id = $1`;
+      const piiParams = isCrossTenant ? [] : [session.tenantId];
       const piiDbRes = await query<{
         jwt_count: string;
         pass_count: string;
         cc_count: string;
         email_count: string;
-      }>(
-        `SELECT 
-          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_JWT]%') as jwt_count,
-          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_SENSITIVE_KEY]%' OR payload::text ILIKE '%[REDACTED_BEARER]%') as pass_count,
-          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_CREDIT_CARD]%') as cc_count,
-          COUNT(*) FILTER (WHERE payload::text ILIKE '%[REDACTED_EMAIL]%') as email_count
-         FROM endpoint_telemetry
-         WHERE tenant_id = $1`,
-        [session.tenantId]
-      );
+      }>(piiSql, piiParams);
       if (piiDbRes.rows.length > 0) {
         dbPiiCategories.jwt_tokens = parseInt(piiDbRes.rows[0].jwt_count || "0", 10) || 0;
         dbPiiCategories.passwords_and_secrets = parseInt(piiDbRes.rows[0].pass_count || "0", 10) || 0;
@@ -388,7 +343,7 @@ export async function GET(req: NextRequest) {
       events_per_minute: liveEventRate,
     };
 
-    let liveYaraRules = YARA_RULES;
+    let liveYaraRules: any[] = [];
     try {
       const dynamicYara = await getYaraRules(session.tenantId);
       if (dynamicYara && dynamicYara.length > 0) {
@@ -420,13 +375,13 @@ export async function GET(req: NextRequest) {
         : null,
       tenantId: session.tenantId,
       detection_rules: engineRules,
-      yara_rules: liveYaraRules.length > 0 ? liveYaraRules : (goThreatState?.yara_rules || YARA_RULES),
-      sigma_rules: goThreatState?.sigma_rules || SIGMA_RULES,
+      yara_rules: liveYaraRules.length > 0 ? liveYaraRules : (goThreatState?.yara_rules || []),
+      sigma_rules: goThreatState?.sigma_rules || [],
       anomaly_baselines: goThreatState?.anomaly_baselines || anomalyBaselines,
       ingest_telemetry: mergedTelemetry,
       can_view_auth_alerts: canViewAuthAlerts,
       security_alerts: securityAlerts,
-      blocked_ips: isSystemAdmin ? (goThreatState?.blocked_ips || getBlockedIps()) : [],
+      blocked_ips: goThreatState?.blocked_ips || getBlockedIps(),
     });
 }
 
@@ -459,8 +414,8 @@ export async function POST(req: NextRequest) {
       session = {
         uid: "dev-admin",
         role: "system_admin",
-        tenantId: "acme-tenant",
-        email: "admin@acme.corp",
+        tenantId: "mints-global",
+        email: "admin@mintsglobal.ae",
       };
     }
     if (!session) {
@@ -468,7 +423,9 @@ export async function POST(req: NextRequest) {
     }
 
     const isSystemAdmin = session.role === "system_admin" || session.uid === "dev-admin" || session.role === "super_admin";
-    const canManageContainment = isSystemAdmin;
+    const isResponder = session.role === "responder" || session.uid === "dev-responder";
+    const isAnalyst = session.role === "analyst" || session.uid === "dev-analyst";
+    const canManageContainment = isSystemAdmin || isResponder;
 
     if (action === "unblock_ip") {
       if (!canManageContainment) {
@@ -476,6 +433,9 @@ export async function POST(req: NextRequest) {
       }
       if (!body.ip) {
         return NextResponse.json({ error: "Missing target IP to unblock" }, { status: 400 });
+      }
+      if (!isIpBlocked(body.ip)) {
+        return NextResponse.json({ error: `The IP address ${body.ip} is not blocked.` }, { status: 400 });
       }
       const unblocked = unblockIp(body.ip);
 
@@ -511,6 +471,9 @@ export async function POST(req: NextRequest) {
       if (!body.ip) {
         return NextResponse.json({ error: "Missing target IP to block" }, { status: 400 });
       }
+      if (isIpBlocked(body.ip)) {
+        return NextResponse.json({ error: `The IP address ${body.ip} is already blocked.` }, { status: 400 });
+      }
       blockIp(body.ip, body.reason || "Manual SOC IP containment");
 
       // Sync with Go Threat Service if online
@@ -539,6 +502,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "simulate_burst") {
+      if (!isSystemAdmin) {
+        return NextResponse.json(
+          { error: "Forbidden: Baseline simulation restricted to System Administrators" },
+          { status: 403 }
+        );
+      }
+
       if (shouldFailClosed()) {
         return NextResponse.json(
           { error: "Synthetic anomaly burst simulation is prohibited in production mode." },
@@ -548,8 +518,7 @@ export async function POST(req: NextRequest) {
 
       // Record simulated anomaly alert in the active store
       const simulatedAlert = recordThreatAlert({
-        targetUser: session.uid || "admin@acme.corp",
-
+        targetUser: session.uid || "admin@mintsglobal.ae",
         clientIp: "192.168.1.105",
         failureReason: "Synthetic Anomaly Burst (+4.8σ baseline spike)",
         severity: "critical",
@@ -587,7 +556,7 @@ export async function POST(req: NextRequest) {
         threshold: 10.5,
         sigma_deviation: "+4.8σ above baseline",
         alert_dispatched: true,
-        alert_subject: "alerts.tenant_acme.auth_anomaly_burst",
+        alert_subject: "alerts.tenant_mints_global.auth_anomaly_burst",
         alert: simulatedAlert,
       });
     }
@@ -646,6 +615,13 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "reset_anomalies" || action === "reset_baseline") {
+      if (!isSystemAdmin) {
+        return NextResponse.json(
+          { error: "Forbidden: Baseline reset restricted to System Administrators" },
+          { status: 403 }
+        );
+      }
+
       resetAnomalyBaselines(session.tenantId);
 
       // Sync reset with Go Threat Service
@@ -663,17 +639,43 @@ export async function POST(req: NextRequest) {
         // Go service offline fallback
       }
 
-      const nominalBaselines = ANOMALY_BASELINES.map((b) => ({
-        ...b,
-        current_value: 0.0,
-        is_anomaly: false,
-      }));
+      const nominalBaselines = [
+        {
+          metric: "Failed Authentications / Min",
+          mean: 4.2,
+          stdDev: 2.1,
+          threshold_3sigma: 10.5,
+          current_value: 0.0,
+          is_anomaly: false,
+          unit: "attempts/min",
+        },
+        {
+          metric: "Outbound Network Egress Rate",
+          mean: 145.0,
+          stdDev: 35.0,
+          threshold_2sigma: 215.0,
+          current_value: 0.0,
+          is_anomaly: false,
+          unit: "MB/min",
+        },
+        {
+          metric: "Sudo Execution Frequency",
+          mean: 1.1,
+          stdDev: 0.8,
+          threshold_3sigma: 3.5,
+          current_value: 0.0,
+          is_anomaly: false,
+          unit: "cmds/min",
+        },
+      ];
 
       return NextResponse.json({
         success: true,
         message: "Anomaly telemetry reset to nominal baselines.",
         anomaly_baselines: nominalBaselines,
-        security_alerts: isSystemAdmin ? getThreatAlertsForUser(session.uid, session.tenantId, session.role) : [],
+        security_alerts: (isSystemAdmin || isResponder || isAnalyst)
+          ? getThreatAlertsForUser(session.uid, session.tenantId, session.role)
+          : [],
       });
     }
 

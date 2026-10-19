@@ -23,6 +23,7 @@ import {
   Server,
   ShieldAlert,
   UserCheck,
+  Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TopNavBar } from "@/components/navigation/TopNavBar";
@@ -31,7 +32,7 @@ import { AutonomyTierBadge } from "@/components/governance/AutonomyTierBadge";
 import { ApprovalModal } from "@/components/governance/ApprovalModal";
 import { GlassDialog } from "@/components/ui/GlassDialog";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
-import { DEV_USERS, type DevUserId } from "@/lib/constants/devUsers";
+import { DEV_USERS, type DevUserId, getRoleTier, getUserRole, canAssignTaskToUser } from "@/lib/constants/devUsers";
 
 interface MitigationTaskItem {
   id: string;
@@ -40,7 +41,7 @@ interface MitigationTaskItem {
   title: string;
   description: string;
   tier: string;
-  status: "pending" | "approved" | "rejected" | "in_progress" | "completed";
+  status: "pending" | "approved" | "rejected" | "in_progress" | "completed" | "failed";
   blast_radius?: string;
   cve_id?: string | null;
   assigned_to?: string | null;
@@ -68,11 +69,13 @@ interface TaskDetailData {
 export default function SOCTaskBoardPage() {
   const taskDialogId = useId();
   const detailDialogId = useId();
-  const { activeUserId, activeUser } = useChat();
+  const { activeUserId, activeUser, devPersonasAllowed } = useChat();
+  const assignableOperators = devPersonasAllowed ? Object.values(DEV_USERS) : activeUserId ? [activeUser] : [];
 
   const canEditTask = activeUser.role !== "analyst";
   const canAssignTask = activeUser.role !== "analyst";
   const canDispatch = activeUser.role === "system_admin" || activeUser.role === "super_admin" || activeUser.role === "responder";
+  const currentUserTier = getRoleTier(activeUser.role);
   // Responders can approve Tier 1 & Tier 2; Admins can approve all tiers; Analysts cannot approve any tier
   const canUserSignOffTask = (taskTier?: string) => {
     if (activeUser.role === "system_admin" || activeUser.role === "super_admin") {
@@ -84,7 +87,6 @@ export default function SOCTaskBoardPage() {
     return false;
   };
 
-  const [isSampleData, setIsSampleData] = useState(false);
   const [tasks, setTasks] = useState<MitigationTaskItem[]>([]);
   const [filterHorizon, setFilterHorizon] = useState<string>("all");
   const [filterTier, setFilterTier] = useState<string>("all");
@@ -98,6 +100,18 @@ export default function SOCTaskBoardPage() {
   const [newTaskTier, setNewTaskTier] = useState<"Tier 1" | "Tier 2" | "Tier 3">("Tier 2");
   const [newTaskPlanId, setNewTaskPlanId] = useState("");
   const [newTaskAssignedTo, setNewTaskAssignedTo] = useState<string>("dev-responder");
+
+  // Keep default assignee compatible with active operator's hierarchy tier
+  useEffect(() => {
+    if (!devPersonasAllowed && newTaskAssignedTo in DEV_USERS) {
+      setNewTaskAssignedTo("");
+      return;
+    }
+    const targetRole = getUserRole(newTaskAssignedTo);
+    if (targetRole && getRoleTier(targetRole) > currentUserTier) {
+      setNewTaskAssignedTo(activeUserId in DEV_USERS ? activeUserId : "dev-responder");
+    }
+  }, [activeUserId, currentUserTier, newTaskAssignedTo, devPersonasAllowed]);
   const [availablePlans, setAvailablePlans] = useState<
     Array<{
       id: string;
@@ -131,7 +145,6 @@ export default function SOCTaskBoardPage() {
       if (resTasks.ok) {
         const data = await resTasks.json();
         setTasks(data.tasks || []);
-        setIsSampleData(data._source === "demo_fallback");
       }
       if (resPlans.ok) {
         const plansData = await resPlans.json();
@@ -290,15 +303,16 @@ export default function SOCTaskBoardPage() {
       const body = await res.json();
       if (res.ok && body.success) {
         setTasks((prev) =>
-          prev.map((t) => (t.id === task.id ? { ...t, status: "completed" } : t))
+          prev.map((t) => (t.id === task.id ? { ...t, status: body.task?.status || body.status || "in_progress" } : t))
         );
         if (selectedTask?.id === task.id) {
-          setSelectedTask((prev) => (prev ? { ...prev, status: "completed" } : null));
-          openTaskDetail({ ...task, status: "completed" });
+          const updatedTask = body.task || { ...task, status: body.status || "in_progress" };
+          setSelectedTask(updatedTask);
+          openTaskDetail(updatedTask);
         }
         setExecutionNotice({
           taskId: task.id,
-          message: `Executed on ${body.agent?.hostname || "Endpoint"}: ${body.output || "Execution verified & recorded in audit log."}`,
+          message: `${body.status === "completed" ? "Completed" : "Dispatched"} on ${body.agent?.hostname || "Endpoint"}: ${body.output || "Awaiting endpoint execution report."}`,
         });
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("shielddesk:approvals-changed"));
@@ -425,6 +439,19 @@ export default function SOCTaskBoardPage() {
     e.preventDefault();
     if (!newTaskTitle.trim() || isSubmitting) return;
 
+    // Client-side Hierarchy Constraint Guard: Lower tier employee cannot assign to higher tier employee
+    if (newTaskAssignedTo) {
+      const targetUserRole = getUserRole(newTaskAssignedTo);
+      if (targetUserRole && getRoleTier(targetUserRole) > currentUserTier) {
+        setExecutionNotice({
+          taskId: "create-task",
+          message: `Hierarchy violation: Lower tier employee (${activeUser.role}) cannot assign a task to higher tier employee (${targetUserRole}).`,
+          isError: true,
+        });
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       const res = await fetch("/api/tasks", {
@@ -452,13 +479,25 @@ export default function SOCTaskBoardPage() {
             window.dispatchEvent(new CustomEvent("shielddesk:approvals-changed"));
           }
         }
+        setNewTaskTitle("");
+        setIsCreatingTask(false);
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setExecutionNotice({
+          taskId: "create-task",
+          message: errData.error || "Failed to create task",
+          isError: true,
+        });
       }
     } catch (err) {
       console.error("Network error during task creation:", err);
+      setExecutionNotice({
+        taskId: "create-task",
+        message: "Network error during task creation",
+        isError: true,
+      });
     } finally {
       setIsSubmitting(false);
-      setNewTaskTitle("");
-      setIsCreatingTask(false);
     }
   };
 
@@ -502,6 +541,12 @@ export default function SOCTaskBoardPage() {
       headerBadge: "bg-[var(--sd-success-dim)] text-[var(--sd-success)] border-[var(--sd-success-border)]",
       items: filteredTasks.filter((t) => t.status === "completed"),
     },
+    ...(filteredTasks.some((t) => t.status === "failed") ? [{
+      id: "failed",
+      label: "Execution Failed",
+      headerBadge: "bg-[var(--sd-critical-dim)] text-[var(--sd-critical)] border-[var(--sd-critical-border)]",
+      items: filteredTasks.filter((t) => t.status === "failed"),
+    }] : []),
   ];
 
   return (
@@ -509,8 +554,6 @@ export default function SOCTaskBoardPage() {
       <TopNavBar />
 
       <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-6">
-        {isSampleData && <p className="sd-sample-label w-fit">Sample tasks · Local fallback data</p>}
-
         {/* Execution Banner Notice */}
         {executionNotice && (
           <div
@@ -552,9 +595,18 @@ export default function SOCTaskBoardPage() {
                 Tenant: {activeUser.tenantName}
               </span>
             </div>
-            <p className="text-[13px] text-[var(--sd-text-muted)] mt-1">
-              Multi-Tenant Remediation Task Board with Closed-Loop Agent Dispatch
-            </p>
+            <div className="flex flex-wrap items-center gap-3 mt-1.5">
+              <p className="text-[13px] text-[var(--sd-text-muted)]">
+                Multi-Tenant Remediation Task Board with Closed-Loop Agent Dispatch
+              </p>
+              <Link
+                href="/dashboard/fleet"
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono hover:bg-emerald-500/20 transition shadow-xs"
+              >
+                <Cpu className="h-3.5 w-3.5" />
+                <span>Open Endpoint Task Manager &amp; Telemetry &rarr;</span>
+              </Link>
+            </div>
           </div>
 
           <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
@@ -860,10 +912,16 @@ export default function SOCTaskBoardPage() {
                 onChange={(e) => setNewTaskAssignedTo(e.target.value)}
                 className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
               >
-                <option value="dev-responder">Responder (dev-responder)</option>
-                <option value="dev-admin">System Admin (dev-admin)</option>
-                <option value="dev-super">Super Admin (dev-super)</option>
-                <option value="dev-analyst">SOC Analyst (dev-analyst)</option>
+                {assignableOperators.map((user) => {
+                  const userId = user.id;
+                  const userTier = getRoleTier(user.role);
+                  const isHigherTier = userTier > currentUserTier;
+                  return (
+                    <option key={userId} value={userId} disabled={isHigherTier}>
+                      {user.label} ({userId}){isHigherTier ? " — Higher tier (Restricted)" : ""}
+                    </option>
+                  );
+                })}
                 <option value="">Unassigned</option>
               </select>
               <p className="text-[10.5px] text-[var(--sd-text-muted)]">
@@ -1051,8 +1109,19 @@ export default function SOCTaskBoardPage() {
                     value={selectedTask.assigned_to || ""}
                     onChange={async (e) => {
                       const newAssignee = e.target.value || null;
+                      if (newAssignee) {
+                        const targetUserRole = getUserRole(newAssignee);
+                        if (targetUserRole && getRoleTier(targetUserRole) > currentUserTier) {
+                          setExecutionNotice({
+                            taskId: selectedTask.id,
+                            message: `Hierarchy violation: Lower tier employee (${activeUser.role}) cannot assign a task to higher tier employee (${targetUserRole}).`,
+                            isError: true,
+                          });
+                          return;
+                        }
+                      }
                       try {
-                        await fetch(`/api/tasks/${encodeURIComponent(selectedTask.id)}`, {
+                        const res = await fetch(`/api/tasks/${encodeURIComponent(selectedTask.id)}`, {
                           method: "PATCH",
                           headers: {
                             "Content-Type": "application/json",
@@ -1060,18 +1129,38 @@ export default function SOCTaskBoardPage() {
                           },
                           body: JSON.stringify({ assignedTo: newAssignee }),
                         });
-                        setSelectedTask((prev) => prev ? { ...prev, assigned_to: newAssignee } : null);
-                        setTasks((prev) => prev.map((t) => t.id === selectedTask.id ? { ...t, assigned_to: newAssignee } : t));
+                        if (res.ok) {
+                          setSelectedTask((prev) => prev ? { ...prev, assigned_to: newAssignee } : null);
+                          setTasks((prev) => prev.map((t) => t.id === selectedTask.id ? { ...t, assigned_to: newAssignee } : t));
+                        } else {
+                          const errData = await res.json().catch(() => ({}));
+                          setExecutionNotice({
+                            taskId: selectedTask.id,
+                            message: errData.error || "Failed to re-assign task",
+                            isError: true,
+                          });
+                        }
                       } catch (err) {
                         console.error("Failed to re-assign task:", err);
+                        setExecutionNotice({
+                          taskId: selectedTask.id,
+                          message: "Network error during re-assignment",
+                          isError: true,
+                        });
                       }
                     }}
                     className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-wheat)] font-semibold border border-[var(--sd-border)] rounded-lg px-2.5 py-1.5 outline-none font-mono cursor-pointer"
                   >
-                    <option value="dev-responder">Responder (dev-responder)</option>
-                    <option value="dev-admin">System Admin (dev-admin)</option>
-                    <option value="dev-super">Super Admin (dev-super)</option>
-                    <option value="dev-analyst">Analyst (dev-analyst)</option>
+                    {assignableOperators.map((user) => {
+                      const userId = user.id;
+                      const userTier = getRoleTier(user.role);
+                      const isHigherTier = userTier > currentUserTier;
+                      return (
+                        <option key={userId} value={userId} disabled={isHigherTier}>
+                          {user.label} ({userId}){isHigherTier ? " — Higher tier (Restricted)" : ""}
+                        </option>
+                      );
+                    })}
                     <option value="">Unassigned</option>
                   </select>
                 </div>
@@ -1095,7 +1184,7 @@ export default function SOCTaskBoardPage() {
                   <ShieldAlert className="h-4 w-4 text-[var(--sd-wheat)] shrink-0" />
                   <div className="min-w-0">
                     <span className="text-xs font-semibold text-[var(--sd-text)] truncate block">
-                      Incident {detailData?.task.incident_code || (availablePlans[0]?.incident_code ?? "INC-4223")}: {detailData?.task.incident_title || (availablePlans[0]?.incident_title ?? "Active Incident Remediation")}
+                      Incident {detailData?.task.incident_code || (availablePlans[0]?.incident_code ?? "—")}: {detailData?.task.incident_title || (availablePlans[0]?.incident_title ?? "General Remediation Sequence")}
                     </span>
                     <span className="text-[10.5px] text-[var(--sd-text-muted)] font-mono block">
                       Plan Version {detailData?.task.plan_version || 1} · Severity: {detailData?.task.incident_severity || "Routine"}

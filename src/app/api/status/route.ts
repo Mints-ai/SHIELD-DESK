@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
  * - When requested from a web browser (Accept: text/html), seamlessly redirects to the /status UI.
  * - When requested via curl, monitoring agents, or with ?format=json, returns indented JSON telemetry.
  */
-export async function GET(req?: NextRequest) {
+export async function GET(req: NextRequest) {
   const acceptHeader = req?.headers?.get("accept") || "";
   const format = req?.nextUrl?.searchParams?.get("format");
 
@@ -34,12 +34,15 @@ export async function GET(req?: NextRequest) {
       },
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Internal status probe error";
+    const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+    const errorMessage = isProd
+      ? "Internal status probe unavailable."
+      : (error instanceof Error ? error.message : "Internal status probe error");
     return new Response(
       JSON.stringify(
         {
           status: "outage",
-          version: "2.4.0",
+          version: process.env.APP_VERSION || "2.4.0",
           timestamp: new Date().toISOString(),
           error: errorMessage,
         },

@@ -21,7 +21,7 @@ export interface GeneratedApiKey {
 }
 
 // In-memory key store for dev/testing when PostgreSQL is offline
-export const MOCK_API_KEYS: ApiKeyRecord[] = [];
+export const IN_MEMORY_API_KEYS: ApiKeyRecord[] = [];
 
 /**
  * Computes a SHA-256 hash of an API key for safe storage.
@@ -64,7 +64,7 @@ export function generateApiKey(params: {
     last_used_at: null,
   };
 
-  MOCK_API_KEYS.push(keyRecord);
+  IN_MEMORY_API_KEYS.push(keyRecord);
 
   return {
     rawKey,
@@ -88,7 +88,7 @@ export function verifyApiKey(
   }
 
   const computedHash = hashApiKey(rawKey);
-  const record = MOCK_API_KEYS.find((k) => k.key_hash === computedHash);
+  const record = IN_MEMORY_API_KEYS.find((k) => k.key_hash === computedHash);
 
   if (!record) {
     return { valid: false, reason: "API key not found or invalid." };
@@ -123,7 +123,7 @@ export function verifyApiKey(
  * Revokes an API key by ID.
  */
 export function revokeApiKey(keyId: string, tenantId: string): boolean {
-  const record = MOCK_API_KEYS.find((k) => k.id === keyId && k.tenant_id === tenantId);
+  const record = IN_MEMORY_API_KEYS.find((k) => k.id === keyId && k.tenant_id === tenantId);
   if (!record) return false;
   record.revoked_at = new Date().toISOString();
   return true;

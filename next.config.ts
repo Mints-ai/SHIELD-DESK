@@ -33,6 +33,17 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+  devIndicators: false,
+  onDemandEntries: {
+    maxInactiveAge: 60 * 60 * 1000,
+    pagesBufferLength: 20,
+  },
+  experimental: {
+    staleTimes: {
+      dynamic: 30,
+      static: 300,
+    },
+  },
   async headers() {
     return [
       {
@@ -48,7 +59,6 @@ export default process.env.NODE_ENV === "production"
       silent: true,
       widenClientFileUpload: true,
       tunnelRoute: "/monitoring",
-      disableLogger: true,
     })
   : nextConfig;
 

@@ -29,9 +29,6 @@ interface ChatMessage {
 const DEFAULT_SUGGESTIONS = [
   "Run a full Trivy vulnerability scan",
   "Show me todays critical incidents",
-  "Investigate INC-1042",
-  "Generate automated remediation runbook",
-  "Check for leaked secrets and exposed tokens",
 ];
 
 export function ChatWidget() {
@@ -40,6 +37,7 @@ export function ChatWidget() {
 
   const {
     activeUserId,
+    devPersonasAllowed,
     setActiveUserId,
     activeUser,
     activeIncidentId,
@@ -363,7 +361,7 @@ export function ChatWidget() {
                   </button>
                 </div>
               </div>
-              {process.env.NODE_ENV !== "production" && (
+              {devPersonasAllowed && (
                 <div className="relative mt-3 flex items-center justify-between gap-2 border-t border-[var(--sd-border)] pt-3">
                   <span className="text-[11px] text-[var(--sd-text-dim)]">Development persona</span>
                   <button

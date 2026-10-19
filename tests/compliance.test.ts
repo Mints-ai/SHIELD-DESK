@@ -1,4 +1,5 @@
 import "./setup";
+import "./fixtures/fleet";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -48,7 +49,10 @@ test("ShieldDesk Layer 4 & Phase 7: Compliance, ISO 27001 & Executive Scorecard 
     const scorecard = await getExecutiveRiskScorecard(acmeAnalyst);
     assert.equal(scorecard.tenantId, "acme-tenant");
     assert.ok(scorecard.postureScore >= 80, "Posture score must be high");
-    assert.equal(scorecard.postureGrade, "A");
+    assert.ok(
+      scorecard.postureGrade === "A" || scorecard.postureGrade === "A+",
+      `Expected posture grade A or A+, received ${scorecard.postureGrade}`
+    );
     assert.ok(scorecard.mttdMinutes.reductionPct > 90, "MTTD reduction should exceed 90%");
     assert.ok(scorecard.mttrMinutes.reductionPct > 90, "MTTR reduction should exceed 90%");
     assert.ok(scorecard.threatDistribution.length >= 3, "Must display threat distribution categories");

@@ -20,6 +20,7 @@ export interface SessionUser {
   role: ShieldDeskRole;
   uid?: string;
   tenantId?: string;
+  email?: string;
 }
 
 /**
@@ -50,6 +51,7 @@ export async function getSessionFromRequest(
           uid: devHeaderUid,
           tenantId: devUser.tenantId,
           role: devUser.role,
+          email: devUser.email,
         };
       }
     }
@@ -73,6 +75,7 @@ export async function getSessionFromRequest(
         uid: verifiedPayload.uid,
         tenantId: verifiedPayload.tenantId,
         role: verifiedPayload.role,
+        email: verifiedPayload.email,
       };
     }
 
@@ -126,6 +129,7 @@ export async function getSessionUser(req: Request): Promise<SessionUser | null> 
     role: session.role,
     tenant_id: session.tenantId,
     tenantId: session.tenantId,
+    email: session.email,
   };
 }
 

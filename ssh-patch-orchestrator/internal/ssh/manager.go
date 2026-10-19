@@ -198,6 +198,15 @@ func (m *Manager) Run(ctx context.Context, op models.Operation) (*models.Command
 
 	session, err := client.NewSession()
 	if err != nil {
+		// A reboot invalidates the cached transport. Let the next probe reconnect
+		// with the same pinned host key instead of repeatedly using a dead client.
+		m.mu.Lock()
+		if m.client == client {
+			m.client = nil
+			m.closed = true
+		}
+		m.mu.Unlock()
+		_ = client.Close()
 		return nil, NewSSHError(ErrClassDisconnected, "failed to create SSH session", err)
 	}
 	defer session.Close()

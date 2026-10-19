@@ -108,10 +108,10 @@ export async function POST(req: NextRequest) {
 
       // Initialize default community tier subscription record
       await query(
-        `INSERT INTO tenant_subscriptions (tenant_id, tier, status, current_period_end, updated_at)
-         VALUES ($1, 'community', 'active', NOW() + INTERVAL '14 days', NOW())
+        `INSERT INTO tenant_subscriptions (id, tenant_id, tier, status, current_period_end, updated_at)
+         VALUES ($2, $1, 'community', 'active', NOW() + INTERVAL '14 days', NOW())
          ON CONFLICT (tenant_id) DO NOTHING`,
-        [tenantId]
+        [tenantId, `ts_${crypto.randomUUID()}`]
       );
     } catch (dbErr) {
       if (isProd) {
@@ -141,7 +141,7 @@ export async function POST(req: NextRequest) {
 
     res.cookies.set("shielddesk_session", sessionToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: process.env.NODE_ENV === "production" || process.env.APP_ENV === "production",
       sameSite: "lax",
       maxAge: 86400 * 7,
       path: "/",

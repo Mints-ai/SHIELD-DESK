@@ -109,3 +109,33 @@ export function canExecuteTool(role: string, toolName: string): boolean {
   if (!requiredPermission) return false;
   return canAccess(role, requiredPermission);
 }
+
+/**
+ * Numeric tier levels corresponding to operator authority hierarchy:
+ * 4: system_admin (Platform Admin / Cross-tenant / Tier 3 break-glass)
+ * 3: super_admin (Tenant Admin / Full tenant authority / Tier 3)
+ * 2: responder (L3 Responder / Tier 1 & 2 containment)
+ * 1: analyst (L1/L2 Investigation / Read-only / cannot assign tasks)
+ */
+export const ROLE_HIERARCHY_TIERS: Record<string, number> = {
+  system_admin: 4,
+  super_admin: 3,
+  responder: 2,
+  analyst: 1,
+  user: 0,
+  viewer: 0,
+};
+
+export function getRoleTier(role?: string | null): number {
+  if (!role) return 0;
+  return ROLE_HIERARCHY_TIERS[role] ?? 0;
+}
+
+/**
+ * Enforces hierarchy rule: Lower tier employees cannot assign a task to higher tier employees.
+ * Assigning to equal or lower tier is permitted.
+ */
+export function canAssignTaskToAssignee(assignerRole: string, assigneeRole: string): boolean {
+  return getRoleTier(assignerRole) >= getRoleTier(assigneeRole);
+}
+

@@ -179,7 +179,7 @@ export function getOrCreateTenantStore(tenantId: string): StatefulTenantStore {
     "GOVERNANCE_TOKEN_APPROVED",
     "manager:john.reese",
     { taskId: "tsk-isolate-01", status: "GRANTED", dualCustodyVerified: true },
-    86400000 * 1.9
+    86400000 * 2 - 4.2 * 60 * 1000
   );
 
   appendEvent(
@@ -208,7 +208,7 @@ export function getOrCreateTenantStore(tenantId: string): StatefulTenantStore {
       command: "firewall-cmd --set-isolation on",
       action_type: "ISOLATE_HOST",
       created_at: new Date(now - 86400000 * 2).toISOString(),
-      consumed_at: new Date(now - 86400000 * 1.9).toISOString(),
+      consumed_at: new Date(now - 86400000 * 2 + 4.2 * 60 * 1000).toISOString(),
       model_confidence: 0.98,
     },
     {

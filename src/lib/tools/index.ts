@@ -13,6 +13,7 @@ export {
   generateMitigationPlan,
   simulateBlastRadius,
   getMitigationPlan,
+  seedInMemoryPlanForTesting,
   type ChatSession,
 } from "./shieldDeskChatTools";
 

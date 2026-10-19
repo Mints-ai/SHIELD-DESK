@@ -22,50 +22,28 @@ export interface TenantSsoConfig {
   updatedAt: string;
 }
 
-export const MOCK_SSO_CONFIGS: Map<string, TenantSsoConfig> = new Map([
-  [
-    "acme-tenant",
-    {
-      tenantId: "acme-tenant",
-      provider: "okta",
-      enabled: true,
-      issuer: "https://acme.okta.com/oauth2/default",
-      ssoUrl: "https://acme.okta.com/app/shielddesk/sso/saml",
-      domainHint: "acme.com",
-      defaultRole: "analyst",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ],
-  [
-    "responder-tenant",
-    {
-      tenantId: "responder-tenant",
-      provider: "azure_ad",
-      enabled: true,
-      issuer: "https://login.microsoftonline.com/responder-tenant-id/v2.0",
-      ssoUrl: "https://login.microsoftonline.com/responder-tenant-id/saml2",
-      domainHint: "responder.corp",
-      defaultRole: "responder",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
-  ],
-]);
+export const TENANT_SSO_CONFIGS: Map<string, TenantSsoConfig> = new Map();
+
+/**
+ * Registers or updates runtime SSO configuration for a tenant.
+ */
+export function registerTenantSsoConfig(config: TenantSsoConfig): void {
+  TENANT_SSO_CONFIGS.set(config.tenantId, config);
+}
 
 /**
  * Resolves SSO configuration for a tenant by ID or user email domain.
  */
 export function resolveTenantSsoConfig(identifier: string): TenantSsoConfig | null {
   // 1. Direct tenant ID match
-  if (MOCK_SSO_CONFIGS.has(identifier)) {
-    return MOCK_SSO_CONFIGS.get(identifier) || null;
+  if (TENANT_SSO_CONFIGS.has(identifier)) {
+    return TENANT_SSO_CONFIGS.get(identifier) || null;
   }
 
   // 2. Email domain match (e.g. "analyst@acme.com")
   if (identifier.includes("@")) {
     const domain = identifier.split("@")[1].toLowerCase();
-    for (const config of MOCK_SSO_CONFIGS.values()) {
+    for (const config of TENANT_SSO_CONFIGS.values()) {
       if (config.domainHint && config.domainHint.toLowerCase() === domain) {
         return config;
       }
@@ -90,7 +68,7 @@ export function processSsoCallback(params: {
   tenantId: string;
   role: ShieldDeskRole;
 } {
-  const config = MOCK_SSO_CONFIGS.get(params.tenantId);
+  const config = TENANT_SSO_CONFIGS.get(params.tenantId);
   if (!config || !config.enabled) {
     throw new Error(`SSO_DISABLED_FOR_TENANT: Tenant '${params.tenantId}' has not configured or enabled SSO.`);
   }

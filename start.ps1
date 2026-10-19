@@ -26,7 +26,7 @@ function Write-Status {
 }
 
 # ---- Prerequisite checks -----------------------------------
-function Check-Prerequisites {
+function Test-Prerequisites {
     Write-Host "  Checking prerequisites..." -ForegroundColor DarkGray
     $missing = @()
     if (-not (Get-Command "python"  -ErrorAction SilentlyContinue)) { $missing += "python  (Python 3.10+)" }
@@ -96,7 +96,7 @@ function Wait-ForPort {
 }
 
 # ---- Stream all job output until Ctrl+C --------------------
-function Stream-Jobs {
+function Watch-Jobs {
     param($Jobs)
     while ($true) {
         foreach ($job in $Jobs) {
@@ -160,7 +160,7 @@ function Stop-AllServices {
 # ============================================================
 
 Write-Banner
-Check-Prerequisites
+Test-Prerequisites
 
 # Ensure no orphaned microservices from previous sessions are blocking ports
 Get-Process -Name "ingest", "threat", "webhook", "orchestrator", "nats-server", "shielddesk-agent" -ErrorAction SilentlyContinue |
@@ -187,7 +187,7 @@ if ($hasNats) {
     $natsExe = if (Test-Path $natsLocal) { $natsLocal } else { "nats-server" }
     $natsData = Join-Path $ROOT "tools\nats\data"
     if (!(Test-Path $natsData)) { New-Item -ItemType Directory -Force -Path $natsData | Out-Null }
-    $natsCmd = "cmd.exe /c `"`"$natsExe`" -js -sd `"$natsData`" -p 4222 -m 8222`""
+    $natsCmd = "& `"$natsExe`" -js -sd `"$natsData`" -p 4222 -m 8222"
     $natsJob = Start-Service "NATS" $natsCmd $ROOT $envMap
     Wait-ForPort 4222 "NATS JetStream" 20 | Out-Null
 } else {
@@ -205,26 +205,40 @@ $pythonJob  = Start-Service "PythonBrain" "python server.py" $PYTHON    $envMap
 $nextJob    = Start-Service "NextJS"      "npm run dev"    $ROOT        $envMap
 $threatDir  = Join-Path $ROOT "services\threat"
 $threatExe  = Join-Path $threatDir "threat.exe"
-$threatCmd  = if (Test-Path $threatExe) { "cmd.exe /c threat.exe" } else { "go run ." }
+$threatCmd  = if (Test-Path $threatExe) { ".\threat.exe" } else { "go run ." }
 $threatJob  = Start-Service "GoThreat"    $threatCmd       $threatDir   $envMap
 $webhookDir = Join-Path $ROOT "services\webhooks"
 $webhookExe = Join-Path $webhookDir "webhook.exe"
-$webhookCmd = if (Test-Path $webhookExe) { "cmd.exe /c webhook.exe" } else { "go run ." }
+$webhookCmd = if (Test-Path $webhookExe) { ".\webhook.exe" } else { "go run ." }
 $webhookJob = Start-Service "GoWebhook"   $webhookCmd      $webhookDir  $envMap
 $ingestDir  = Join-Path $ROOT "services\ingest"
 $ingestExe  = Join-Path $ingestDir "ingest.exe"
-$ingestCmd  = if (Test-Path $ingestExe) { "cmd.exe /c ingest.exe" } else { "go run ." }
+$ingestCmd  = if (Test-Path $ingestExe) { ".\ingest.exe" } else { "go run ." }
 $ingestJob  = Start-Service "GoIngest"    $ingestCmd       $ingestDir   $envMap
 $patchDir   = Join-Path $ROOT "ssh-patch-orchestrator"
 $patchExe   = Join-Path $patchDir "orchestrator.exe"
-$patchCmd   = if (Test-Path $patchExe) { "cmd.exe /c orchestrator.exe server --port 8006" } else { "go run ./cmd/orchestrator server --port 8006" }
+$patchCmd   = if (Test-Path $patchExe) { ".\orchestrator.exe server --port 8006" } else { "go run ./cmd/orchestrator server --port 8006" }
 $patchJob   = Start-Service "GoPatch"     $patchCmd        $patchDir    $envMap
 $agentDir   = Join-Path $ROOT "agent"
 $agentExe   = Join-Path $ROOT "bin\shielddesk-agent.exe"
-$agentCmd   = if (Test-Path $agentExe) { "cmd.exe /c `"$agentExe`" -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" } else { "go run ./cmd -agent-id ea111111-1111-1111-1111-111111111111 -control-url http://localhost:3000" }
-$agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
+$startLocalAgent = ($envMap["START_LOCAL_AGENT"] -eq "true") -or ($env:START_LOCAL_AGENT -eq "true")
+$agentJob = $null
+if ($startLocalAgent) {
+    $configuredAgentId = if ($envMap["SHIELDDESK_AGENT_ID"]) { $envMap["SHIELDDESK_AGENT_ID"] } else { $env:SHIELDDESK_AGENT_ID }
+    $configuredToken   = if ($envMap["SHIELDDESK_ENROLL_TOKEN"]) { $envMap["SHIELDDESK_ENROLL_TOKEN"] } else { $env:SHIELDDESK_ENROLL_TOKEN }
+    $agentArgs = if ($configuredToken) { "-token `"$configuredToken`" -control-url http://localhost:3000" } elseif ($configuredAgentId) { "-agent-id `"$configuredAgentId`" -control-url http://localhost:3000" } else { "" }
+    if ($agentArgs) {
+        $agentCmd   = if (Test-Path $agentExe) { "& `"$agentExe`" $agentArgs" } else { "go run ./cmd $agentArgs" }
+        $agentJob   = Start-Service "GoAgent"     $agentCmd        $agentDir    $envMap
+    } else {
+        Write-Host "  [INFO] Local agent daemon requires SHIELDDESK_ENROLL_TOKEN or SHIELDDESK_AGENT_ID in .env.local to enroll." -ForegroundColor DarkYellow
+    }
+} else {
+    Write-Host "  [INFO] Local agent daemon disabled (remote endpoints stream genuine telemetry via Connect Endpoint)." -ForegroundColor DarkYellow
+}
 
-$allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob, $agentJob)
+$allJobs = @($pythonJob, $nextJob, $threatJob, $webhookJob, $ingestJob, $patchJob)
+if ($agentJob) { $allJobs += $agentJob }
 if ($ollamaJob) { $allJobs += $ollamaJob }
 if ($natsJob) { $allJobs += $natsJob }
 
@@ -255,7 +269,9 @@ Write-Host "  |  Go Threat Engine-->  http://localhost:8003     |" -ForegroundCo
 Write-Host "  |  Go Ingest & PII -->  http://localhost:8004     |" -ForegroundColor Blue
 Write-Host "  |  SSH Patch Orch  -->  http://localhost:8006     |" -ForegroundColor Green
 Write-Host "  |  Go Webhook Svc  -->  http://localhost:8080     |" -ForegroundColor DarkYellow
-Write-Host "  |  Go Agent (EDR)  -->  Streaming FIN-WS-042      |" -ForegroundColor Green
+if ($agentJob) {
+Write-Host "  |  Go Agent (EDR)  -->  Active Local Endpoint      |" -ForegroundColor Green
+}
 if ($hasNats) {
 Write-Host "  |  NATS JetStream  -->  http://localhost:8222     |" -ForegroundColor Cyan
 }
@@ -270,7 +286,7 @@ Write-Host "  ---- Live Logs Below ----" -ForegroundColor DarkGray
 Write-Host ""
 
 try {
-    Stream-Jobs $allJobs
+    Watch-Jobs $allJobs
 } finally {
     Stop-AllServices $allJobs
 }

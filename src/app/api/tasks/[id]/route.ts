@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest, getSessionUser } from "@/lib/auth/session";
-import { canAccess } from "@/lib/permissions";
+import { canAccess, getRoleTier } from "@/lib/permissions";
+import { getUserRole } from "@/lib/constants/devUsers";
 import { query } from "@/lib/db";
 import { trackError } from "@/lib/observability/errorTracker";
-import { isDemoModeActive } from "@/lib/config/environment";
 import type { MitigationTaskRecord } from "@/app/api/tasks/route";
 
 export async function GET(
@@ -137,6 +137,9 @@ export async function PATCH(
     const newStatus = body.status && allowedStatuses.includes(body.status)
       ? body.status
       : currentTask.status;
+    if (newStatus === "completed" && currentTask.status !== "completed" && currentTask.execution_command_id) {
+      return NextResponse.json({ error: "This task must be completed by its endpoint execution report." }, { status: 409 });
+    }
 
     const newTitle = typeof body.title === "string" && body.title.trim()
       ? body.title.trim()
@@ -167,6 +170,37 @@ export async function PATCH(
       : body.assigned_to !== undefined
         ? (body.assigned_to ? String(body.assigned_to).trim() : null)
         : currentTask.assigned_to;
+
+    // Role Hierarchy Constraint: Lower tier employee cannot assign a task to a higher tier employee
+    if (newAssignedTo && newAssignedTo !== currentTask.assigned_to) {
+      let assigneeRole: string | null = getUserRole(newAssignedTo);
+      if (!assigneeRole) {
+        try {
+          const userRes = await query<{ role: string }>(
+            "SELECT role FROM users WHERE id = $1 OR email = $1 LIMIT 1",
+            [newAssignedTo]
+          );
+          if (userRes.rows.length > 0) {
+            assigneeRole = userRes.rows[0].role;
+          }
+        } catch {
+          // DB error fallback
+        }
+      }
+
+      if (assigneeRole) {
+        const assignerTier = getRoleTier(session.role);
+        const assigneeTier = getRoleTier(assigneeRole);
+        if (assignerTier < assigneeTier) {
+          return NextResponse.json(
+            {
+              error: `HIERARCHY_VIOLATION: Lower tier employee (${session.role}) cannot assign a task to higher tier employee (${assigneeRole}).`,
+            },
+            { status: 403 }
+          );
+        }
+      }
+    }
 
     const updateSql = `
       UPDATE mitigation_tasks

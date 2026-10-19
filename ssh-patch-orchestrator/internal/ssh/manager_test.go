@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -12,6 +13,41 @@ import (
 	"github.com/shielddesk/ssh-patch-orchestrator/internal/models"
 	"golang.org/x/crypto/ssh"
 )
+
+// A dropped transport models the cached connection left behind by a host reboot.
+type droppedTransport struct{ ssh.Conn }
+
+func (*droppedTransport) OpenChannel(string, []byte) (ssh.Channel, <-chan *ssh.Request, error) {
+	return nil, nil, io.EOF
+}
+func (*droppedTransport) Close() error { return nil }
+func (*droppedTransport) Wait() error  { return io.EOF }
+
+func TestDroppedTransportIsDiscardedBeforeNextProbe(t *testing.T) {
+	channels := make(chan ssh.NewChannel)
+	requests := make(chan *ssh.Request)
+	close(channels)
+	close(requests)
+	manager := &Manager{
+		client: ssh.NewClient(&droppedTransport{}, channels, requests),
+		config: Config{PrivateKeyPEM: []byte("invalid-test-key")},
+	}
+	op := models.Operation{Ref: "op:reboot.ping", ArgV: []string{"echo", "reboot_ok"}}
+	_, err := manager.Run(context.Background(), op)
+	var sshErr *SSHError
+	if !errors.As(err, &sshErr) || sshErr.Class != ErrClassDisconnected {
+		t.Fatalf("expected dropped transport, got %v", err)
+	}
+	if manager.client != nil {
+		t.Fatal("dead transport remained cached")
+	}
+	// Key validation precedes dialing, so this proves the next probe enters a
+	// fresh, pinned Connect attempt without opening any network connection.
+	_, err = manager.Run(context.Background(), op)
+	if !errors.As(err, &sshErr) || sshErr.Class != ErrClassInvalidKeyFormat {
+		t.Fatalf("next probe did not reconnect: %v", err)
+	}
+}
 
 func TestEscapeArgV(t *testing.T) {
 	tests := []struct {
@@ -275,4 +311,3 @@ func TestConnectionRefusedAndTimeoutClassification(t *testing.T) {
 		t.Fatalf("expected ErrClassDNS, got %v", errDNS)
 	}
 }
-

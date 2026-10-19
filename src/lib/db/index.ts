@@ -22,13 +22,28 @@ function createPool(): Pool {
         "(.env.local) — see .env.example."
     );
   }
-     return new Pool({
-       connectionString,
-       connectionTimeoutMillis: 2000,
-       ssl: connectionString.includes("localhost")
-         ? false
-         : { rejectUnauthorized: false },
-     });
+
+  const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+  const isLocal = connectionString.includes("localhost") || connectionString.includes("127.0.0.1");
+
+  // In production, certificate identity verification is enforced by default
+  const rejectUnauthorized =
+    process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === "false"
+      ? false
+      : isProd || process.env.DATABASE_SSL_REJECT_UNAUTHORIZED === "true";
+
+  const sslConfig = isLocal
+    ? false
+    : {
+        rejectUnauthorized,
+        ca: process.env.DATABASE_SSL_CA || undefined,
+      };
+
+  return new Pool({
+    connectionString,
+    connectionTimeoutMillis: 2000,
+    ssl: sslConfig,
+  });
 }
 
 // Reuse the pool across hot reloads in dev. Created lazily (on first real

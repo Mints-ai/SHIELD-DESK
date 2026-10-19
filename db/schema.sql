@@ -134,13 +134,15 @@ CREATE TABLE IF NOT EXISTS mitigation_tasks (
   title         text NOT NULL,
   description   text,
   tier          text NOT NULL DEFAULT 'Tier 2',
-  status        text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'in_progress', 'completed')),
+  status        text NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'in_progress', 'completed', 'failed')),
+  execution_command_id uuid,
   blast_radius  text,
   cve_id        text,
   assigned_to   text REFERENCES users(id),
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_mitigation_tasks_plan ON mitigation_tasks (plan_id);
+CREATE INDEX IF NOT EXISTS idx_mitigation_tasks_execution_command ON mitigation_tasks (execution_command_id) WHERE execution_command_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Priority 2: Layer 4 Governance — Approval Tokens & Separation of Duties
@@ -231,7 +233,7 @@ CREATE TABLE IF NOT EXISTS agent_commands (
   signature     text NOT NULL,
   nonce         text,
   status        text NOT NULL DEFAULT 'queued'
-                CHECK (status IN ('queued', 'delivered', 'executed', 'failed', 'rolled_back')),
+                CHECK (status IN ('requested', 'authorised', 'signed', 'queued', 'delivered', 'acknowledged', 'executing', 'executed', 'verified', 'failed', 'rolled_back', 'cancelled', 'expired', 'delivery_failed', 'execution_failed', 'verification_failed')),
   result        jsonb,
   snapshot_id   text,
   created_at    timestamptz NOT NULL DEFAULT now(),

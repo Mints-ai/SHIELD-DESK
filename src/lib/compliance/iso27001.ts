@@ -19,7 +19,7 @@ export type IsoControl = FrameworkControl;
  * Live ISO 27001 controls with default dynamic telemetry baseline.
  */
 export const ISO_27001_CONTROLS: IsoControl[] = getIso27001Controls({
-  tenantId: "acme-tenant",
+  tenantId: "mints-global",
   totalAgents: 4,
   connectedAgents: 4,
   isolatedAgents: 0,

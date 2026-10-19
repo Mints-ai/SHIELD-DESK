@@ -4,6 +4,7 @@ import { query } from "@/lib/db";
 import { recordHashChainEvent } from "@/lib/fleet/fleet";
 import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
 import { trackError } from "@/lib/observability/errorTracker";
+import { authenticateIngestKey } from "@/lib/auth/ingestAuth";
 
 interface SiemAlertPayload {
   source: "defender" | "crowdstrike" | "splunk" | "sentinel" | "generic";
@@ -27,13 +28,18 @@ export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
     const signature = req.headers.get("x-shielddesk-signature") || req.headers.get("x-hub-signature-256");
-    const tenantApiKey = req.headers.get("x-api-key");
-    const tenantId = req.headers.get("x-shielddesk-tenant-id") || "acme-tenant";
+    const apiKeyHeader =
+      req.headers.get("x-shielddesk-api-key") ||
+      req.headers.get("x-api-key") ||
+      req.headers.get("authorization");
 
-    // 1. Authenticate via HMAC or API Key
+    let tenantId: string;
+
+    // 1. Authenticate via HMAC or API Key (Fail-closed & constant-time)
     const secret =
       process.env.SHIELDDESK_WEBHOOK_SECRET ||
       (process.env.NODE_ENV !== "production" ? "sd_webhook_dev_secret" : "");
+
     if (signature) {
       if (!secret) {
         return NextResponse.json(
@@ -47,9 +53,34 @@ export async function POST(req: NextRequest) {
       if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
         return NextResponse.json({ error: "Invalid HMAC signature" }, { status: 401 });
       }
-    } else if (!tenantApiKey) {
-      return NextResponse.json({ error: "Missing x-shielddesk-signature or x-api-key" }, { status: 401 });
+      tenantId = req.headers.get("x-shielddesk-tenant-id") || process.env.SHIELDDESK_INGEST_TENANT || "mints-global";
+    } else if (apiKeyHeader) {
+      const authResult = authenticateIngestKey(apiKeyHeader);
+      if (!authResult.authenticated || !authResult.tenantId) {
+        return NextResponse.json(
+          { error: authResult.error || "Unauthorized: Invalid API Key" },
+          { status: authResult.errorStatus || 401 }
+        );
+      }
+
+      // S6: Block cross-tenant spoofing when API key is bound to a specific tenant
+      const requestedTenant =
+        req.headers.get("x-shielddesk-tenant-id") || req.headers.get("x-shielddesk-tenant");
+      if (requestedTenant && requestedTenant !== authResult.tenantId) {
+        return NextResponse.json(
+          { error: "Forbidden: Ingest key is not authorized for requested tenant" },
+          { status: 403 }
+        );
+      }
+
+      tenantId = authResult.tenantId;
+    } else {
+      return NextResponse.json(
+        { error: "Unauthorized: Missing valid x-shielddesk-signature or API key" },
+        { status: 401 }
+      );
     }
+
 
     const payload: SiemAlertPayload = JSON.parse(rawBody);
     if (!payload.title) {
@@ -127,8 +158,14 @@ export async function POST(req: NextRequest) {
           );
         }
       }
-    } catch {
-      // In-memory fallback mode
+    } catch (dbErr: unknown) {
+      const isProd = process.env.NODE_ENV === "production" || process.env.APP_ENV === "production";
+      if (isProd) {
+        throw new Error(
+          `CRITICAL_DATABASE_UNAVAILABLE: Failed to persist SIEM incident into database: ${dbErr instanceof Error ? dbErr.message : "DB error"}`
+        );
+      }
+      // Non-production test fallback
     }
 
     // 3. Write immutable audit ledger event

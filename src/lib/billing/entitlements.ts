@@ -75,6 +75,37 @@ export class EntitlementViolationError extends Error {
 export class EntitlementService {
   private static inMemoryLicenses: Map<string, TenantLicenseRecord> = new Map([
     [
+      "mints-global",
+      {
+        id: "lic-mints-global-default",
+        tenantId: "mints-global",
+        licenseKey: "lic_default_mints_global_key",
+        tier: "enterprise",
+        status: "active",
+        maxEndpoints: 500,
+        maxUsers: 100,
+        features: [
+          "telemetryIngest",
+          "realTimeDetection",
+          "aiInvestigation",
+          "automatedRemediationTier1",
+          "governedRemediationTier2",
+          "dualApprovalTier3",
+          "siemConnectors",
+          "customRules",
+          "discordSlackAlerts",
+          "endpointFleet",
+          "complianceVault",
+        ],
+        activatedAt: new Date(Date.now() - 86400000 * 30).toISOString(),
+        expiresAt: new Date(Date.now() + 86400000 * 365).toISOString(),
+        gracePeriodDays: 14,
+        signature: "sig_mints_global_enterprise_license",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    [
       "acme-tenant",
       {
         id: "lic-acme-default",

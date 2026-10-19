@@ -107,39 +107,114 @@ const sudoTimestamps = global.__shieldDeskSudoTimestamps!;
 const egressBursts = global.__shieldDeskEgressBursts!;
 const piiMetricsStore = global.__shieldDeskPIIMetrics!;
 
-// Clear any stale local loopback containment from prior test iterations
-if (blockedIpsStore.has("127.0.0.1")) {
-  blockedIpsStore.delete("127.0.0.1");
+import fs from "fs";
+import path from "path";
+
+function getPersistentBlockedIpsFile(): string {
+  try {
+    const dir = path.join(process.cwd(), "scratch");
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    return path.join(dir, "active_blocked_ips.json");
+  } catch {
+    return "";
+  }
 }
-if (ipFailureTracker.has("127.0.0.1")) {
-  ipFailureTracker.delete("127.0.0.1");
+
+function syncBlockedIpsToFile(): void {
+  try {
+    const filePath = getPersistentBlockedIpsFile();
+    if (!filePath) return;
+    const records: Record<string, BlockedIpRecord> = {};
+    for (const [k, v] of blockedIpsStore.entries()) {
+      records[k] = v;
+    }
+    fs.writeFileSync(filePath, JSON.stringify(records, null, 2), "utf-8");
+  } catch {
+    // Non-blocking file sync
+  }
 }
+
+function loadBlockedIpsFromFile(): void {
+  try {
+    const filePath = getPersistentBlockedIpsFile();
+    if (!filePath || !fs.existsSync(filePath)) return;
+    const content = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === "object") {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (!blockedIpsStore.has(k)) {
+          blockedIpsStore.set(k, v as BlockedIpRecord);
+        }
+      }
+    }
+  } catch {
+    // Non-blocking file read
+  }
+}
+
+// Initial load
+loadBlockedIpsFromFile();
 
 /**
  * Maximum allowed login failures before automatic IP containment kicks in
  */
 export const MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK = 5;
 
+function sanitizeIp(ip?: string | null): string {
+  if (!ip) return "";
+  let clean = ip.trim();
+  if (clean === "::1" || clean === "localhost") return "127.0.0.1";
+  if (clean.startsWith("::ffff:")) clean = clean.replace("::ffff:", "");
+  if (clean.includes(":") && clean.includes(".")) clean = clean.split(":")[0];
+  return clean;
+}
+
 /**
  * Check if a given client IP is currently blocked
  */
 export function isIpBlocked(ip?: string | null): boolean {
   if (!ip) return false;
-  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
-  return blockedIpsStore.has(cleanIp);
+  const cleanIp = sanitizeIp(ip);
+  if (!cleanIp) return false;
+  if (blockedIpsStore.has(cleanIp)) return true;
+  if (
+    (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") &&
+    (blockedIpsStore.has("127.0.0.1") || blockedIpsStore.has("::1") || blockedIpsStore.has("localhost"))
+  ) {
+    return true;
+  }
+  loadBlockedIpsFromFile();
+  if (blockedIpsStore.has(cleanIp)) return true;
+  if (
+    (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") &&
+    (blockedIpsStore.has("127.0.0.1") || blockedIpsStore.has("::1") || blockedIpsStore.has("localhost"))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**
  * Block a specific IP address and sync with Go Threat Engine
  */
-export function blockIp(ip: string, reason: string = "Exceeded 5 failed login attempts", attempts: number = 6, tenantId: string = "acme-tenant"): void {
-  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+export function blockIp(ip: string, reason: string = "Exceeded 5 failed login attempts", attempts: number = 6, tenantId: string = "mints-global"): void {
+  const cleanIp = sanitizeIp(ip);
+  if (!cleanIp) return;
   blockedIpsStore.set(cleanIp, {
     ip: cleanIp,
     blockedAt: new Date().toISOString(),
     reason,
     attempts,
   });
+
+  if (cleanIp === "127.0.0.1") {
+    blockedIpsStore.set("::1", { ip: "::1", blockedAt: new Date().toISOString(), reason, attempts });
+    blockedIpsStore.set("localhost", { ip: "localhost", blockedAt: new Date().toISOString(), reason, attempts });
+  }
+
+  syncBlockedIpsToFile();
 
   // Sync to Go Threat Microservice asynchronously
   const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
@@ -159,9 +234,19 @@ export function blockIp(ip: string, reason: string = "Exceeded 5 failed login at
 /**
  * Unblock a specific IP address and clear its failure records
  */
-export function unblockIp(ip: string, tenantId: string = "acme-tenant"): boolean {
-  const cleanIp = ip === "::1" || !ip ? "127.0.0.1" : ip;
+export function unblockIp(ip: string, tenantId: string = "mints-global"): boolean {
+  const cleanIp = sanitizeIp(ip);
+  if (!cleanIp) return false;
   const deleted = blockedIpsStore.delete(cleanIp);
+  if (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") {
+    blockedIpsStore.delete("127.0.0.1");
+    blockedIpsStore.delete("::1");
+    blockedIpsStore.delete("localhost");
+    ipFailureTracker.delete("127.0.0.1");
+    ipFailureTracker.delete("::1");
+    ipFailureTracker.delete("localhost");
+  }
+  syncBlockedIpsToFile();
   ipFailureTracker.delete(cleanIp);
   resetRateLimit(`login:${cleanIp}`);
   for (const key of failureTracker.keys()) {
@@ -171,7 +256,7 @@ export function unblockIp(ip: string, tenantId: string = "acme-tenant"): boolean
   }
   // Update any existing active alert for this IP
   for (const alert of alertsStore) {
-    if (alert.clientIp === cleanIp) {
+    if (alert.clientIp === cleanIp || (cleanIp === "127.0.0.1" && alert.clientIp === "::1")) {
       alert.isBlocked = false;
     }
   }
@@ -231,7 +316,7 @@ export function recordFailureTimestamp(timestamp: number = Date.now(), count: nu
   fetch(`${threatServiceUrl}/api/threats/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "auth_failure", count, tenant_id: "acme-tenant" }),
+    body: JSON.stringify({ type: "auth_failure", count, tenant_id: "mints-global" }),
     signal: AbortSignal.timeout(500),
   }).catch(() => {});
 }
@@ -265,7 +350,7 @@ export function recordSudoExecution(count: number = 1): void {
   fetch(`${threatServiceUrl}/api/threats/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "sudo_burst", count, tenant_id: "acme-tenant" }),
+    body: JSON.stringify({ type: "sudo_burst", count, tenant_id: "mints-global" }),
     signal: AbortSignal.timeout(500),
   }).catch(() => {});
 }
@@ -296,7 +381,7 @@ export function recordNetworkEgress(mb: number, timestamp: number = Date.now()):
   fetch(`${threatServiceUrl}/api/threats/simulate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "egress_spike", mb, tenant_id: "acme-tenant" }),
+    body: JSON.stringify({ type: "egress_spike", mb, tenant_id: "mints-global" }),
     signal: AbortSignal.timeout(500),
   }).catch(() => {});
 }
@@ -337,7 +422,7 @@ export function isUserAuthorizedForAlerts(userId?: string | null, role?: string 
   }
   const devUser = DEV_USERS[userId as DevUserId];
   if (devUser) {
-    return devUser.role === "system_admin" || devUser.role === "super_admin" || devUser.role === "analyst";
+    return devUser.role === "system_admin" || devUser.role === "super_admin" || devUser.role === "analyst" || devUser.role === "responder";
   }
   // Allow real authenticated non-dev users if authenticated
   return typeof userId === "string" && userId.length > 0;
@@ -361,7 +446,7 @@ export function recordThreatAlert(params: {
 
   const cleanIp = params.clientIp === "::1" || !params.clientIp ? "127.0.0.1" : params.clientIp;
   const cleanEmail = (params.targetUser || "unknown").toLowerCase().trim();
-  const alertTenantId = params.tenantId || "acme-tenant";
+  const alertTenantId = params.tenantId || "mints-global";
   const key = `${alertTenantId}:${cleanIp}:${cleanEmail}`;
   const currentCount = (failureTracker.get(key) || 0) + 1;
   failureTracker.set(key, currentCount);
@@ -370,8 +455,8 @@ export function recordThreatAlert(params: {
   const ipFailures = (ipFailureTracker.get(cleanIp) || 0) + 1;
   ipFailureTracker.set(cleanIp, ipFailures);
 
-  // Autonomous IP Containment: Block IP if failures exceed 5
-  const isBlocked = ipFailures > MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK;
+  // Autonomous IP Containment: Block IP if failures exceed 5 or already blocked
+  const isBlocked = ipFailures > MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK || blockedIpsStore.has(cleanIp);
   if (isBlocked && !blockedIpsStore.has(cleanIp)) {
     blockedIpsStore.set(cleanIp, {
       ip: cleanIp,
@@ -423,7 +508,7 @@ export function recordThreatAlert(params: {
       attemptsCount: ipFailures,
       isBlocked,
       tenantId: alertTenantId,
-      allowedRecipients: ["dev-admin"],
+      allowedRecipients: ["dev-admin", "dev-super", "dev-responder", "dev-analyst"],
       createdAt: new Date().toISOString(),
     };
   } else {
@@ -442,7 +527,7 @@ export function recordThreatAlert(params: {
       attemptsCount: ipFailures,
       isBlocked,
       tenantId: alertTenantId,
-      allowedRecipients: ["dev-admin"],
+      allowedRecipients: ["dev-admin", "dev-super", "dev-responder", "dev-analyst"],
       status: "active",
       createdAt: new Date().toISOString(),
     };
@@ -466,10 +551,11 @@ export function getThreatAlertsForUser(
   tenantId?: string | null,
   role?: string | null
 ): ThreatAlert[] {
-  if (!isUserAuthorizedForAlerts(userId, role)) {
+  const effectiveRole = role || (userId && DEV_USERS[userId as DevUserId]?.role) || null;
+  if (!isUserAuthorizedForAlerts(userId, effectiveRole)) {
     return [];
   }
-  const isCrossTenant = role === "system_admin" || role === "super_admin";
+  const isCrossTenant = effectiveRole === "system_admin" || effectiveRole === "super_admin";
   return alertsStore.filter((a) => {
     if (a.status !== "active") return false;
     if (isCrossTenant || !tenantId) return true;
@@ -486,11 +572,12 @@ export function acknowledgeThreatAlert(
   tenantId?: string | null,
   role?: string | null
 ): boolean {
-  if (!isUserAuthorizedForAlerts(userId, role)) {
+  const effectiveRole = role || (userId && DEV_USERS[userId as DevUserId]?.role) || null;
+  if (!isUserAuthorizedForAlerts(userId, effectiveRole)) {
     return false;
   }
 
-  const isCrossTenant = role === "system_admin" || role === "super_admin";
+  const isCrossTenant = effectiveRole === "system_admin" || effectiveRole === "super_admin";
   const alert = alertsStore.find((a) => {
     if (a.id !== alertId) return false;
     if (isCrossTenant || !tenantId) return true;
@@ -507,7 +594,7 @@ export function acknowledgeThreatAlert(
  * Reset all live sliding-window anomaly telemetry buffers back to nominal baseline.
  * Also removes synthetic simulated burst alerts and notifies Go Threat service.
  */
-export function resetAnomalyBaselines(tenantId: string = "acme-tenant"): void {
+export function resetAnomalyBaselines(tenantId: string = "mints-global"): void {
   failureTimestamps.length = 0;
   sudoTimestamps.length = 0;
   egressBursts.length = 0;
@@ -534,11 +621,12 @@ export function resetAnomalyBaselines(tenantId: string = "acme-tenant"): void {
 /**
  * Clear or reset all threat alerts, failures, and unblock IPs (for testing/demo)
  */
-export function resetThreatAlerts(tenantId: string = "acme-tenant"): void {
+export function resetThreatAlerts(tenantId: string = "mints-global"): void {
   alertsStore.length = 0;
   failureTracker.clear();
   ipFailureTracker.clear();
   blockedIpsStore.clear();
+  syncBlockedIpsToFile();
   failureTimestamps.length = 0;
   sudoTimestamps.length = 0;
   egressBursts.length = 0;
