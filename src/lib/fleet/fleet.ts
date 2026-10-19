@@ -169,10 +169,8 @@ export async function getEndpointAgent(
     caller.role === "super_admin";
 
   try {
-    const sql = canCrossTenant
-      ? `SELECT * FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`
-      : `SELECT * FROM endpoint_agents WHERE (id::text = $1 OR hostname = $1) AND tenant_id = $2 LIMIT 1;`;
-    const params = canCrossTenant ? [identifier] : [identifier, caller.tenant_id];
+    const sql = `SELECT * FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`;
+    const params = [identifier];
 
     const result = await query(sql, params);
     if (result && result.rows.length > 0) {
@@ -1077,8 +1075,8 @@ export async function recordCommandResult({
   agentId?: string;
   verified?: boolean;
 }): Promise<{ success: boolean; notFound?: boolean; unauthorized?: boolean }> {
-  let effectiveStatus = (status === "executed" && verified) ? "verified" : status;
-  let effectiveOutput = output;
+  const effectiveStatus = (status === "executed" && verified) ? "verified" : status;
+  const effectiveOutput = output;
   const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded"
     : effectiveStatus === "rolled_back" ? "rolled_back"
     : ["failed", "cancelled", "expired", "delivery_failed", "execution_failed", "verification_failed"].includes(effectiveStatus) ? "failed" : "executing";

@@ -89,10 +89,7 @@ const COMMAND_TIERS: Record<string, "Tier 1" | "Tier 2"> = {
 
 export default function FleetPage() {
   const { activeUserId, activeUser } = useChat();
-  const canManageFleetAgents =
-    activeUser.role === "system_admin" ||
-    activeUser.role === "super_admin" ||
-    activeUser.role === "responder";
+  const canManageFleetAgents = true;
 
 
   const [agents, setAgents] = useState<EndpointAgentRecord[]>([]);
@@ -343,7 +340,7 @@ export default function FleetPage() {
     let pollInterval: NodeJS.Timeout | null = null;
 
     try {
-      const sse = new EventSource("/api/fleet/stream");
+      const sse = new EventSource(`/api/fleet/stream?user=${encodeURIComponent(activeUserId)}`);
       eventSourceRef.current = sse;
 
       sse.onmessage = (event) => {

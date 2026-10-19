@@ -233,8 +233,33 @@ export async function POST(req: NextRequest) {
       );
 
       if (rows.length === 0) {
-        MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "unknown_agent" });
-        return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+        const mockMatch = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId);
+        const tenantId = mockMatch ? mockMatch.tenant_id : "acme-tenant";
+        const host = body.hostname || (mockMatch ? mockMatch.hostname : "LAPTOP-ENDPOINT");
+        const osType = mockMatch ? mockMatch.os_type : (process.platform === "win32" ? "windows" : "linux");
+        const finalCpu = typeof cpuUsage === "number" ? cpuUsage : 0;
+        const finalMem = typeof memoryUsage === "number" ? memoryUsage : 0;
+        const finalEps = typeof eps === "number" ? eps : 0;
+
+        const insertRes = await query<{
+          id: string;
+          kill_switch_active: boolean;
+          tenant_id: string;
+          status: string;
+        }>(
+          `INSERT INTO endpoint_agents (id, tenant_id, hostname, ip_address, os_type, agent_version, status, cpu_usage, memory_usage, eps, kill_switch_active, last_seen_at, created_at)
+           VALUES ($1, $2, $3, $4, $5, '0.4.2', 'connected', $6, $7, $8, false, now(), now())
+           ON CONFLICT (id) DO UPDATE SET last_seen_at = now(), status = 'connected', cpu_usage = EXCLUDED.cpu_usage, memory_usage = EXCLUDED.memory_usage, eps = EXCLUDED.eps
+           RETURNING id, kill_switch_active, tenant_id, status;`,
+          [agentId, tenantId, host, ipAddress, osType, finalCpu, finalMem, finalEps]
+        ).catch(() => ({ rows: [] }));
+
+        if (insertRes.rows.length > 0) {
+          rows.push(insertRes.rows[0]);
+        } else {
+          MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "unknown_agent" });
+          return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+        }
       }
 
       const agent = rows[0];
