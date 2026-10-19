@@ -157,3 +157,31 @@ jobs:
 
       - name: Verify Cargo Compilation
         run: cargo check --verbose
+
+  validate-postgres:
+    name: Real PostgreSQL Persistence & Migration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: shielddesk_test
+          POSTGRES_PASSWORD: disposable_ci_only
+          POSTGRES_DB: shielddesk_integration
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shielddesk_test -d shielddesk_integration"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      SHIELDDESK_INTEGRATION_DATABASE_URL: postgresql://shielddesk_test:disposable_ci_only@127.0.0.1:5432/shielddesk_integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Test real PostgreSQL schema, migration, dispatch and billing persistence
+        run: npx tsx --test --import ./tests/setup.ts tests/integration/postgres.test.ts
