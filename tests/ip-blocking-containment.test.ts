@@ -12,6 +12,7 @@ import {
   resetThreatAlerts,
   recordThreatAlert,
   getIpFailureCount,
+  getThreatAlertsForUser,
 } from "../src/lib/alerts/threatAlertStore";
 import { createSessionToken } from "../src/lib/auth/token";
 
@@ -30,11 +31,11 @@ test("ShieldDesk IP Blocking & Autonomous Containment Suite", async (t) => {
     assert.equal(getIpFailureCount(testIp), 0);
   });
 
-  await t.test("Unit: Escalation occurs and blocks IP after exceeding 5 failed attempts", () => {
+  await t.test("Unit: Escalation occurs and blocks IP after reaching 5 failed attempts", () => {
     const testIp = "192.168.10.55";
 
-    // 1 to 5 failed attempts
-    for (let i = 1; i <= 5; i++) {
+    // 1 to 4 failed attempts
+    for (let i = 1; i <= 4; i++) {
       const alert = recordThreatAlert({
         targetUser: "victim@corp.internal",
         clientIp: testIp,
@@ -44,27 +45,27 @@ test("ShieldDesk IP Blocking & Autonomous Containment Suite", async (t) => {
       assert.equal(isIpBlocked(testIp), false, `Attempt ${i} should not block yet`);
     }
 
-    // 6th failed attempt (>5)
-    const sixthAlert = recordThreatAlert({
+    // 5th failed attempt (reaches 5)
+    const fifthAlert = recordThreatAlert({
       targetUser: "victim@corp.internal",
       clientIp: testIp,
       failureReason: "Invalid password",
     });
 
-    assert.equal(sixthAlert.attemptsCount, 6);
-    assert.equal(sixthAlert.severity, "critical");
-    assert.equal(sixthAlert.isBlocked, true);
-    assert.equal(isIpBlocked(testIp), true, "6th failure must trigger IP containment");
+    assert.equal(fifthAlert.attemptsCount, 5);
+    assert.equal(fifthAlert.severity, "critical");
+    assert.equal(fifthAlert.isBlocked, true);
+    assert.equal(isIpBlocked(testIp), true, "5th failure must trigger IP containment");
 
     const blockedList = getBlockedIps();
     assert.ok(blockedList.some((b) => b.ip === testIp));
   });
 
-  await t.test("Integration: /api/auth/login rejects with 403 when IP is blocked (>5 failures)", async () => {
+  await t.test("Integration: /api/auth/login rejects with 403 when IP is blocked (at 5 failures)", async () => {
     const attackerIp = "10.0.0.99";
 
-    // Generate 5 failed login attempts via API
-    for (let i = 1; i <= 5; i++) {
+    // Generate 4 failed login attempts via API
+    for (let i = 1; i <= 4; i++) {
       const req = new NextRequest("http://localhost:3000/api/auth/login", {
         method: "POST",
         headers: {
@@ -83,8 +84,8 @@ test("ShieldDesk IP Blocking & Autonomous Containment Suite", async (t) => {
       assert.equal(data.blocked, undefined);
     }
 
-    // 6th attempt: triggers block
-    const req6 = new NextRequest("http://localhost:3000/api/auth/login", {
+    // 5th attempt: triggers block
+    const req5 = new NextRequest("http://localhost:3000/api/auth/login", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -92,16 +93,16 @@ test("ShieldDesk IP Blocking & Autonomous Containment Suite", async (t) => {
       },
       body: JSON.stringify({
         email: "target.user@example.com",
-        password: "wrong-password-6",
+        password: "wrong-password-5",
       }),
     });
-    const res6 = await loginPOST(req6);
-    // 6th attempt fails with 401/503 and records the 6th failure which sets isIpBlocked = true
-    assert.ok([401, 503].includes(res6.status));
+    const res5 = await loginPOST(req5);
+    // 5th attempt fails with 401/503 and records the 5th failure which sets isIpBlocked = true
+    assert.ok([401, 503].includes(res5.status));
     assert.equal(isIpBlocked(attackerIp), true);
 
-    // 7th attempt: blocked at gateway with 403 Forbidden!
-    const req7 = new NextRequest("http://localhost:3000/api/auth/login", {
+    // 6th attempt: blocked at gateway with 403 Forbidden!
+    const req6 = new NextRequest("http://localhost:3000/api/auth/login", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -112,12 +113,19 @@ test("ShieldDesk IP Blocking & Autonomous Containment Suite", async (t) => {
         password: "any-password",
       }),
     });
-    const res7 = await loginPOST(req7);
-    assert.equal(res7.status, 403, "Blocked IP must receive 403 Forbidden");
-    const data7 = await res7.json();
-    assert.equal(data7.blocked, true);
-    assert.match(data7.error, /blocked/i);
-    assert.equal(data7.clientIp, attackerIp);
+    const res6 = await loginPOST(req6);
+    assert.equal(res6.status, 403, "Blocked IP must receive 403 Forbidden");
+    const data6 = await res6.json();
+    assert.equal(data6.blocked, true);
+    assert.match(data6.error, /blocked/i);
+    assert.equal(data6.clientIp, attackerIp);
+
+    // Verify alert for blocked attempt is recorded in threat engine
+    const alerts = getThreatAlertsForUser("dev-admin", null, "system_admin");
+    assert.ok(
+      alerts.some((a) => a.clientIp === attackerIp && a.isBlocked === true),
+      "Attempt from blocked IP must generate an active security alert"
+    );
   });
 
   await t.test("Integration: SOC admin can unblock IP via /api/threats unblock_ip action", async () => {

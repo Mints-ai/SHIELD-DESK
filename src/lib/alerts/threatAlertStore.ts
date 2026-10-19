@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { DEV_USERS, type DevUserId } from "@/lib/constants/devUsers";
 import { resetRateLimit } from "@/lib/security/rateLimit";
+import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
 
 export interface ThreatAlert {
   id: string;
@@ -441,6 +442,7 @@ export function recordThreatAlert(params: {
   severity?: "medium" | "high" | "critical";
   type?: "auth_failure" | "brute_force_spike";
   tenantId?: string;
+  skipDispatch?: boolean;
 }): ThreatAlert {
   recordFailureTimestamp();
 
@@ -455,15 +457,15 @@ export function recordThreatAlert(params: {
   const ipFailures = (ipFailureTracker.get(cleanIp) || 0) + 1;
   ipFailureTracker.set(cleanIp, ipFailures);
 
-  // Autonomous IP Containment: Block IP if failures exceed 5 or already blocked
-  const isBlocked = ipFailures > MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK || blockedIpsStore.has(cleanIp);
+  // Autonomous IP Containment: Block IP if failures reach 5 attempts or already blocked
+  const isBlocked = ipFailures >= MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK || blockedIpsStore.has(cleanIp);
   if (isBlocked && !blockedIpsStore.has(cleanIp)) {
-    blockedIpsStore.set(cleanIp, {
-      ip: cleanIp,
-      blockedAt: new Date().toISOString(),
-      reason: `Autonomous IP Containment: Exceeded ${MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK} failed login attempts`,
-      attempts: ipFailures,
-    });
+    blockIp(
+      cleanIp,
+      `Autonomous IP Containment: Reached ${MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK} failed login attempts`,
+      ipFailures,
+      alertTenantId
+    );
   }
 
   // Escalate severity based on repetition and blocking status
@@ -475,7 +477,7 @@ export function recordThreatAlert(params: {
   }
 
   const alertTitle = isBlocked
-    ? `CRITICAL SECURITY ALERT: Source IP ${cleanIp} Blocked (>5 Failed Logins)`
+    ? `CRITICAL SECURITY ALERT: Source IP ${cleanIp} Blocked (${ipFailures} Failed Logins)`
     : currentCount >= 3 || ipFailures >= 3
     ? "CRITICAL SECURITY ALERT: Multiple Invalid Login Attempts Detected"
     : currentCount === 2 || ipFailures === 2
@@ -503,7 +505,7 @@ export function recordThreatAlert(params: {
       title: alertTitle,
       description: alertDescription,
       failureReason: isBlocked
-        ? `IP Blocked (>5 attempts): ${params.failureReason}`
+        ? `IP Blocked (${MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK} attempts reached): ${params.failureReason}`
         : params.failureReason,
       attemptsCount: ipFailures,
       isBlocked,
@@ -522,7 +524,7 @@ export function recordThreatAlert(params: {
       targetUser: cleanEmail,
       clientIp: cleanIp,
       failureReason: isBlocked
-        ? `IP Blocked (>5 attempts): ${params.failureReason}`
+        ? `IP Blocked (${MAX_LOGIN_ATTEMPTS_BEFORE_BLOCK} attempts reached): ${params.failureReason}`
         : params.failureReason,
       attemptsCount: ipFailures,
       isBlocked,
@@ -537,6 +539,32 @@ export function recordThreatAlert(params: {
   alertsStore.unshift(alert);
   if (alertsStore.length > 50) {
     alertsStore.pop();
+  }
+
+  // Real-time notification dispatch to Discord, Slack, Teams, and Webhooks
+  // User Requirement: Alerts need in Discord after 3 login attempts (attemptsCount >= 3 or when IP is blocked)
+  const shouldDispatchToDiscord = isBlocked || ipFailures >= 3 || currentCount >= 3 || alert.severity === "critical";
+
+  if (!params.skipDispatch && process.env.NODE_ENV !== "test" && shouldDispatchToDiscord) {
+    dispatchSecurityNotification({
+      type: isBlocked || ipFailures >= 3 ? "brute_force_spike" : (params.type || "auth_failure"),
+      tenantId: alertTenantId,
+      title: alert.title,
+      description: alert.description,
+      severity: alert.severity,
+      actionUrl: "http://localhost:3000/dashboard/threats",
+      metadata: {
+        "Target Account": alert.targetUser,
+        "Source IP": alert.clientIp,
+        "Failure Reason": alert.failureReason,
+        "Attempts Recorded": String(alert.attemptsCount),
+        "Containment State": alert.isBlocked ? "🚨 BLOCKED (Autonomous IP Containment)" : "Active Monitoring",
+        "Detection Engine": "ShieldDesk Threat Engine & Anomaly Detector",
+        "Alert ID": alert.id,
+      },
+    }).catch((dispatchErr) => {
+      console.warn("[ThreatAlertStore] Failed to dispatch security alert to webhooks:", dispatchErr);
+    });
   }
 
   return alert;
