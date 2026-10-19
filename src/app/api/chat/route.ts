@@ -36,7 +36,7 @@ import { runTrivyScan } from "@/lib/trivy";
 const MAX_MESSAGE_LENGTH = 4000;
 
 const CVE_RE = /\bCVE-\d{4}-\d{4,7}\b/i;
-const INCIDENT_ID_RE = /\bINC-\d+\b/i;
+const INCIDENT_ID_RE = /\bINC-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/i;
 const MITIGATION_RE = /\bmitigation\b/i;
 const INVESTIGATE_RE = /\b(investigat(e|ing)?|summary|summariz(e|ing)?|details?|what happened|status)\b/i;
 const ANALYZE_RE = /\b(analy[sz]e?|analayze|lookup|check|cve|vulnerabilit(y|ies))\b/i;
@@ -51,7 +51,7 @@ const ASSETS_RE = /\b(asset|assets|affected\s*asset|impacted\s*asset|compromised
 // ...existing code...
 
 // Strict whitelist regex for context parameters to prevent indirect injection
-const VALID_INCIDENT_ID_RE = /^INC-\d+$/i;
+const VALID_INCIDENT_ID_RE = /^(?:INC-[A-Z0-9]+(?:-[A-Z0-9]+)*|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const VALID_CVE_ID_RE = /^CVE-\d{4}-\d{4,7}$/i;
 
 // Prompt injection heuristic patterns (Role override, jailbreaks, instruction bypass)
@@ -341,15 +341,18 @@ export async function POST(req: NextRequest) {
   // Sanitize and validate active context to prevent indirect prompt injection
   const sanitizedContext: ChatContext = {};
   if (body.context?.currentIncidentId && typeof body.context.currentIncidentId === "string") {
-    const candidate = body.context.currentIncidentId.trim().toUpperCase();
-    if (VALID_INCIDENT_ID_RE.test(candidate)) {
-      sanitizedContext.currentIncidentId = candidate;
-    } else {
-      // TC-CTX-17: Malformed context identifier rejected before hitting database
-      return streamFixedMessage(
-        "Invalid incident identifier format.",
-        { session, question: message, toolName: null, outcome: "invalid_context_identifier" }
-      );
+    const raw = body.context.currentIncidentId.trim();
+    if (raw && raw !== "undefined" && raw !== "null" && raw !== "(none)") {
+      const candidate = raw.toUpperCase();
+      if (VALID_INCIDENT_ID_RE.test(candidate)) {
+        sanitizedContext.currentIncidentId = candidate;
+      } else {
+        // TC-CTX-17: Malformed context identifier rejected before hitting database
+        return streamFixedMessage(
+          "Invalid incident identifier format.",
+          { session, question: message, toolName: null, outcome: "invalid_context_identifier" }
+        );
+      }
     }
   }
   if (body.context?.currentCveId && typeof body.context.currentCveId === "string") {
