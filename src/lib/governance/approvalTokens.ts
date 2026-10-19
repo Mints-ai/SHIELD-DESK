@@ -30,6 +30,7 @@ export interface ApprovalTokenRecord {
   // Bound cryptographic & contextual attributes (Audit Section 45)
   incident_id?: string | null;
   plan_id?: string | null;
+  command?: string | null;
   command_id?: string | null;
   command_hash?: string | null;
   target_endpoint_ids?: string[] | null;
@@ -184,6 +185,7 @@ export async function requestApprovalToken(
       task_title: `Security Action: ${action}`,
       incident_id: args.incidentId || null,
       plan_id: args.planId || null,
+      command: args.command || null,
       command_id: args.commandId || null,
       command_hash: resolvedCommandHash,
       target_endpoint_ids: args.targetEndpointIds || null,
