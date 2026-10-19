@@ -9,6 +9,7 @@ import { validateCapabilitySupport, getCapability } from "./capabilities";
 import { validateIpAddress } from "@/lib/utils/ipValidation";
 import crypto from "crypto";
 import os from "os";
+import { settleCommandTask } from "./taskCompletion";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
 export type OsType = "linux" | "windows" | "darwin";
@@ -363,6 +364,7 @@ export interface CommandExecutionParams {
   signature: string;
   nonce: string;
   snapshotId?: string;
+  taskId?: string;
 }
 
 export interface CommandExecutionResult {
@@ -382,7 +384,7 @@ export interface CommandExecutionResult {
  */
 export class RealAgentExecutor {
   async execute(params: CommandExecutionParams): Promise<CommandExecutionResult> {
-    const { agent, command, tier, tokenId, caller, commandLogId, signature, nonce, snapshotId } = params;
+    const { agent, command, tier, tokenId, caller, commandLogId, signature, nonce, snapshotId, taskId } = params;
 
     let effectiveLogId = commandLogId;
     if (tokenId) {
@@ -412,12 +414,27 @@ export class RealAgentExecutor {
     };
 
     try {
-      await query(
+      if (taskId) {
+        const queued = await query(
+          `WITH bound_task AS (
+             UPDATE mitigation_tasks SET execution_command_id = $1, status = 'in_progress'
+             WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
+             RETURNING id
+           )
+           INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+           SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
+           RETURNING id`,
+          [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
+        );
+        if (queued.rows.length === 0) throw new Error("TASK_DISPATCH_CONFLICT: Task is already running or no longer dispatchable.");
+      } else await query(
         `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now());`,
         [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id]
       );
-    } catch {
+    } catch (error) {
+      // Never discard the durable task/command binding or acknowledge a lost live dispatch.
+      if (taskId || isProduction()) throw error;
       try {
         await query(
           `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, status, snapshot_id, created_at)
@@ -447,24 +464,7 @@ export class RealAgentExecutor {
       },
     });
 
-    const isImmediateSuccess =
-      tier === "Tier 1" ||
-      command.startsWith("block_ip") ||
-      command.startsWith("unblock_ip") ||
-      command.startsWith("take_safety_snapshot");
-
-    let initialOutput = `Dispatching ${tier} instruction to ${agent.hostname}...`;
-    if (command.startsWith("block_ip") || command.startsWith("block ip")) {
-      const target = (command.replace(/^block(_|\s+)ip\s*/i, "")).trim();
-      initialOutput = `[CONTAINMENT ACTIVE] Local firewall rule inserted: DROP all traffic with ${target || agent.hostname}. Safety snapshot ${snapshotId || "registered"} saved on host ${agent.hostname}.`;
-    } else if (command.startsWith("unblock_ip") || command.startsWith("unblock ip")) {
-      const target = (command.replace(/^unblock(_|\s+)ip\s*/i, "")).trim();
-      initialOutput = `[CONTAINMENT LIFTED] Firewall drop rule removed for ${target || agent.hostname}. Host connectivity restored.`;
-    } else if (command.startsWith("isolate_host")) {
-      initialOutput = `[ISOLATION ACTIVE] Host ${agent.hostname} network interface quarantined. Baseline safety snapshot ${snapshotId || "registered"} saved.`;
-    } else if (command.startsWith("restore_host")) {
-      initialOutput = `[ISOLATION LIFTED] Host ${agent.hostname} network routing restored to operational baseline.`;
-    }
+    const initialOutput = `Queued ${tier} instruction for ${agent.hostname}. Awaiting endpoint execution report.`;
 
     const logRecord: AgentCommandLogRecord = {
       id: effectiveLogId,
@@ -473,7 +473,7 @@ export class RealAgentExecutor {
       command,
       tier,
       token_id: tokenId || null,
-      status: isImmediateSuccess ? "succeeded" : "executing",
+      status: "executing",
       output: initialOutput,
       executed_by: caller.id,
       executed_at: new Date().toISOString(),
@@ -496,7 +496,7 @@ export class RealAgentExecutor {
       output: initialOutput,
       snapshotId,
       tier,
-      state: isImmediateSuccess ? "executed" : "queued",
+      state: "queued",
       isSimulated: false,
     };
   }
@@ -814,12 +814,14 @@ export async function executeAgentCommand({
   tier,
   tokenId,
   caller,
+  taskId,
 }: {
   agentId: string;
   command: string;
   tier: "Tier 1" | "Tier 2" | "Tier 3";
   tokenId?: string;
   caller: SessionUser;
+  taskId?: string;
 }): Promise<{
   success: boolean;
   commandId: string;
@@ -1003,6 +1005,7 @@ export async function executeAgentCommand({
     signature,
     nonce,
     snapshotId,
+    taskId,
   });
 
   // Mark approval token consumed immediately after successful command enqueuing (Audit Section 45)
@@ -1076,26 +1079,9 @@ export async function recordCommandResult({
 }): Promise<{ success: boolean; notFound?: boolean; unauthorized?: boolean }> {
   let effectiveStatus = (status === "executed" && verified) ? "verified" : status;
   let effectiveOutput = output;
-  let logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded" : effectiveStatus;
-
-  // Resilience: if unblock_ip was executed, do not let legacy agent binaries report failed
-  if (effectiveOutput && (effectiveOutput.includes("unrecognized command action: unblock_ip") || effectiveOutput.includes("unrecognized command action: unblock ip"))) {
-    effectiveStatus = "executed";
-    logStatus = "succeeded";
-    effectiveOutput = "Firewall block rule removed. Host connectivity restored.";
-  }
-
-  // Gracefully handle local platform notices (e.g. non-elevated user consoles or loopback verification)
-  if (effectiveOutput && (
-    effectiveOutput.includes("refusing to block loopback interface") ||
-    effectiveOutput.includes("requires elevation") ||
-    effectiveOutput.includes("elevation required") ||
-    effectiveOutput.includes("loopback interface")
-  )) {
-    effectiveStatus = "executed";
-    logStatus = "succeeded";
-    effectiveOutput = "Endpoint containment verified and active on host.";
-  }
+  const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded"
+    : effectiveStatus === "rolled_back" ? "rolled_back"
+    : ["failed", "cancelled", "expired", "delivery_failed", "execution_failed", "verification_failed"].includes(effectiveStatus) ? "failed" : "executing";
 
   try {
     // If agentId specified, verify ownership
@@ -1116,28 +1102,6 @@ export async function recordCommandResult({
         [commandId]
       );
 
-      // If this was a containment or unblock command, control plane enforcement takes precedence
-      const targetCommand = existing.rows[0]?.command || "";
-      if (
-        targetCommand.startsWith("block_ip") ||
-        targetCommand.startsWith("isolate_host")
-      ) {
-        if (effectiveStatus === "failed") {
-          effectiveStatus = "executed";
-          logStatus = "succeeded";
-          effectiveOutput = `[CONTAINMENT ACTIVE] Endpoint containment active. (${effectiveOutput})`;
-        }
-      } else if (
-        targetCommand.startsWith("unblock_ip") ||
-        targetCommand.startsWith("restore_host")
-      ) {
-        if (effectiveStatus === "failed") {
-          effectiveStatus = "executed";
-          logStatus = "succeeded";
-          effectiveOutput = `[CONTAINMENT LIFTED] Host connectivity restored. (${effectiveOutput})`;
-        }
-      }
-
       if (
         agentId &&
         existing.rows.length > 0 &&
@@ -1150,7 +1114,7 @@ export async function recordCommandResult({
 
     const { rows } = await query<AgentCommandQueueRecord>(
       `UPDATE agent_commands
-       SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = now()
+       SET status = $1, result = $2, snapshot_id = COALESCE($3, snapshot_id), completed_at = CASE WHEN $1 IN ('executed', 'verified', 'failed', 'rolled_back', 'cancelled', 'expired', 'delivery_failed', 'execution_failed', 'verification_failed') THEN now() ELSE completed_at END
        WHERE id::text = $4
        RETURNING *;`,
       [effectiveStatus, JSON.stringify({ output: effectiveOutput }), snapshotId || null, commandId]
@@ -1188,6 +1152,8 @@ export async function recordCommandResult({
 
     const cmd = rows[0];
 
+    await settleCommandTask(cmd);
+
     // Update command log to reflect true execution status and output
     await query(
       `UPDATE agent_command_logs
@@ -1223,7 +1189,8 @@ export async function recordCommandResult({
     }
 
     return { success: true };
-  } catch {
+  } catch (error) {
+    if (isProduction()) throw error;
     const cmd = MOCK_AGENT_COMMANDS.find((c) => c.id === commandId);
     if (!cmd) {
       return { success: false, notFound: true };

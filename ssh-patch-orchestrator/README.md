@@ -35,6 +35,14 @@ ssh-patch-orchestrator/
 4. **Never hide rollback failures**: Rollback or restore verification failure triggers immediate transition to `ESCALATED_URGENT`.
 5. **Never report a vulnerability as fixed unless validation confirms it**: If a patch fails or is rolled back, the reported vulnerability status remains `PRESENT` and the outcome is recorded as `RESTORED_VULNERABILITY_REMAINS`.
 
+## Manual rollback deployment
+
+- Rebuild and deploy this Go service together with the updated Next.js app.
+- Configure the same private `PATCH_ORCHESTRATOR_API_TOKEN` on both services. Live rollback fails closed without it. Do not expose the token to browser code.
+- API-managed successful patch jobs retain their recovery snapshots for manual rollback. CLI jobs keep their existing automatic cleanup behavior. Retained snapshots consume LVM space; administrators must manage their lifetime and remove unused snapshots when recovery is no longer required.
+- Manual rollback requires a platform administrator while patch jobs lack tenant ownership metadata. It uses a specific job ID, rechecks its retained snapshots, reconnects through pinned SSH verification, and reports the verified baseline or an urgent recovery failure.
+- Apply `db/migrations/phase_o_command_completion.sql` before deploying task dispatch changes. It adds the current command binding and lifecycle statuses; no existing task is automatically marked complete.
+
 ## Running Tests
 
 All unit tests and mocked integration flows can be executed via:

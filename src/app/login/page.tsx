@@ -101,6 +101,7 @@ function LoginForm() {
           const postSignupTarget = planParam
             ? `/pricing?plan=${encodeURIComponent(planParam)}&interval=${encodeURIComponent(intervalParam || "month")}`
             : redirectTarget;
+          window.dispatchEvent(new Event("shielddesk:session-changed"));
           setTimeout(() => router.push(postSignupTarget), 800);
         } else {
           setErrorMessage(data.error || "Registration failed");
@@ -148,6 +149,7 @@ function LoginForm() {
         });
         const data = await res.json();
         if (res.ok) {
+          window.dispatchEvent(new Event("shielddesk:session-changed"));
           router.push(redirectTarget);
         } else {
           if (data.blocked) {
@@ -168,6 +170,8 @@ function LoginForm() {
         });
         const data = await res.json();
         if (res.ok) {
+          try { sessionStorage.setItem("shielddesk_active_user_id", selectedUser); } catch { /* unavailable storage */ }
+          window.dispatchEvent(new Event("shielddesk:session-changed"));
           router.push(redirectTarget);
         } else {
           if (data.blocked) {

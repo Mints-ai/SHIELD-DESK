@@ -11,6 +11,7 @@ import {
   type EndpointAgentRecord,
 } from "@/lib/fleet/fleet";
 import type { MitigationTaskRecord } from "@/app/api/tasks/route";
+import { settleCommandTask } from "@/lib/fleet/taskCompletion";
 import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 function mapTaskToAgentCommand(task: MitigationTaskRecord, token?: ApprovalTokenRecord): string {
@@ -111,6 +112,10 @@ export async function POST(
         message: "Task is already executed and completed.",
         task,
       });
+    }
+
+    if (task.status === "in_progress") {
+      return NextResponse.json({ error: "Task is awaiting its endpoint execution report." }, { status: 409 });
     }
 
     // 2. Resolve Governance Approval Token (if Tier 2 or Tier 3)
@@ -224,9 +229,6 @@ export async function POST(
       );
     }
 
-    // 4. Mark Task 'in_progress' immediately
-    await query("UPDATE mitigation_tasks SET status = 'in_progress' WHERE id = $1", [id]);
-
     // 5. Map & Execute Command
     const command = mapTaskToAgentCommand(task, token);
     const executionTier = task.tier === "Tier 0" ? "Tier 1" : (task.tier as "Tier 1" | "Tier 2" | "Tier 3");
@@ -277,6 +279,7 @@ export async function POST(
       tier: executionTier,
       tokenId,
       caller,
+      taskId: id,
     });
 
     // Update real-time fleet state based on executed command
@@ -407,37 +410,28 @@ export async function POST(
       }
     }
 
-    // 6. Mark Task 'completed'
-    const updatedTaskRes = await query<MitigationTaskRecord>(
-      "UPDATE mitigation_tasks SET status = 'completed' WHERE id = $1 RETURNING *",
-      [id]
-    );
-
-    // 7. Check if parent mitigation plan is fully completed
-    if (task.plan_id) {
-      try {
-        const remaining = await query<{ count: string }>(
-          "SELECT COUNT(*) as count FROM mitigation_tasks WHERE plan_id = $1 AND status != 'completed'",
-          [task.plan_id]
-        );
-        if (remaining.rows[0]?.count === "0") {
-          await query(
-            "UPDATE mitigation_plans SET status = 'completed', updated_at = NOW() WHERE id = $1",
-            [task.plan_id]
-          );
-        }
-      } catch {
-        // Non-blocking
-      }
+    // Live commands complete asynchronously through the endpoint result route.
+    if (execResult.isSimulated) {
+      await query(
+        "UPDATE mitigation_tasks SET execution_command_id = $2, status = 'in_progress' WHERE id = $1 AND tenant_id = $3",
+        [id, execResult.commandId, task.tenant_id]
+      );
+      await settleCommandTask({ id: execResult.commandId, tenant_id: task.tenant_id, status: execResult.state || "queued" });
     }
+    const updatedTaskRes = await query<MitigationTaskRecord>(
+      "SELECT * FROM mitigation_tasks WHERE id = $1 AND tenant_id = $2",
+      [id, task.tenant_id]
+    );
+    const taskStatus = updatedTaskRes.rows[0]?.status || "in_progress";
 
     // 8. Record audit log
     await recordHashChainEvent({
       tenantId: task.tenant_id,
-      eventType: "TASK_REMEDIATION_EXECUTED",
+      eventType: taskStatus === "completed" ? "TASK_REMEDIATION_EXECUTED" : "TASK_REMEDIATION_QUEUED",
       actorId: caller.id,
       payload: {
         taskId: id,
+        commandId: execResult.commandId,
         taskTitle: task.title,
         command,
         agentId: targetAgent.id,
@@ -450,7 +444,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       taskId: id,
-      status: "completed",
+      status: taskStatus,
       output: execResult.output,
       commandId: execResult.commandId,
       snapshotId: execResult.snapshotId,
@@ -459,7 +453,7 @@ export async function POST(
         hostname: targetAgent.hostname,
         ipAddress: targetAgent.ip_address,
       },
-      task: updatedTaskRes.rows[0] || { ...task, status: "completed" },
+      task: updatedTaskRes.rows[0] || { ...task, status: taskStatus },
     });
   } catch (err: unknown) {
     trackError(err, {

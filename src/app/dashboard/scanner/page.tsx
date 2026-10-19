@@ -86,7 +86,7 @@ interface SecretFinding {
 import { useChat } from "@/lib/context/ChatContext";
 
 export default function ScannerDashboardPage() {
-  const { activeUserId } = useChat();
+  const { activeUserId, activeUser } = useChat();
   const [activeTab, setActiveTab] = useState<"cve" | "secrets" | "patch" | "intel">("cve");
   const [loading, setLoading] = useState(false);
   const [secretScanLoading, setSecretScanLoading] = useState(false);
@@ -179,6 +179,7 @@ export default function ScannerDashboardPage() {
   const [patchTargetVersion, setPatchTargetVersion] = useState<string>("1:8.9p1-3ubuntu0.10");
   const [patchRestartServices, setPatchRestartServices] = useState<string>("ssh");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [activeJobState, setActiveJobState] = useState<string | null>(null);
   const [showAdvancedSSH, setShowAdvancedSSH] = useState<boolean>(false);
   const [testingSSH, setTestingSSH] = useState<boolean>(false);
@@ -566,6 +567,7 @@ export default function ScannerDashboardPage() {
       const data = await res.json();
       if (res.ok && data.job_id) {
         setActiveJobId(data.job_id);
+        setLastJobId(data.job_id);
         setActiveJobState(data.state || "DETECTED");
         setPatchLogs((prev) => [
           ...prev,
@@ -589,19 +591,17 @@ export default function ScannerDashboardPage() {
   };
 
   const rollbackSnapshot = async () => {
-    if (!activeJobId && !activeJobState) {
+    if (!lastJobId) {
       setPatchLogs((prev) => [
         ...prev,
-        `[ROLLBACK] No active job found to rollback. Triggering simulated LVM restore baseline.`,
-        `[LVM] Merging snapshot snap_prepatch -> Reboot sequence verified.`,
-        `[RESTORE COMPLETE] Host restored to baseline state with 0 data loss.`,
+        `[ROLLBACK UNAVAILABLE] Select a completed patch job with a retained snapshot first.`,
       ]);
       return;
     }
 
     try {
       setLoading(true);
-      const targetId = activeJobId || "latest";
+      const targetId = lastJobId;
       setPatchLogs((prev) => [
         ...prev,
         `[ROLLBACK REQUEST] Requesting rollback for job ${targetId}...`,
@@ -616,6 +616,8 @@ export default function ScannerDashboardPage() {
       });
       const data = await res.json();
       if (res.ok) {
+        setActiveJobState(data.state || "ROLLBACK_REQUIRED");
+        setActiveJobId(targetId);
         setPatchLogs((prev) => [
           ...prev,
           `[ROLLBACK ACCEPTED] ${data.message || "Rollback initiated"}`,
@@ -1550,9 +1552,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     <button
                       type="button"
                       onClick={rollbackSnapshot}
-                      disabled={loading}
+                      disabled={loading || !lastJobId || activeJobState !== "REMEDIATED" || activeUser.role !== "system_admin"}
                       className="sd-button h-9 px-3 rounded-full border border-[var(--sd-warning-border)] bg-[var(--sd-warning-dim)] hover:bg-[var(--sd-warning-dim)]/80 text-[var(--sd-warning)] text-[12px] font-medium transition cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-50"
-                      title="Rollback target host to pre-patch snapshot"
+                      title="Platform administrators can roll back a completed patch using its retained snapshot"
                     >
                       <RotateCcw className="h-3.5 w-3.5 shrink-0" />
                       <span>Rollback</span>

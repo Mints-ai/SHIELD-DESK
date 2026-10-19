@@ -32,12 +32,12 @@ func (m *Manager) Rollback(ctx context.Context, jobID string, snapshots []*model
 
 	start := time.Now()
 	rbExec := &models.RollbackExecution{
-		RollbackID:      fmt.Sprintf("rb_%s_%d", jobID, start.Unix()),
-		JobID:           jobID,
-		Reason:          reason,
-		StartedAt:       start,
-		Verification:    make([]models.RollbackVerificationCheck, 0),
-		Outcome:         models.OutcomeEscalatedUrgent, // default to urgent until proven restored
+		RollbackID:   fmt.Sprintf("rb_%s_%d", jobID, start.Unix()),
+		JobID:        jobID,
+		Reason:       reason,
+		StartedAt:    start,
+		Verification: make([]models.RollbackVerificationCheck, 0),
+		Outcome:      models.OutcomeEscalatedUrgent, // default to urgent until proven restored
 	}
 
 	if len(snapshots) > 0 {
@@ -64,8 +64,12 @@ func (m *Manager) Rollback(ctx context.Context, jobID string, snapshots []*model
 			Timeout: 5 * time.Minute,
 		})
 
-		if err != nil || res.ExitCode == nil || *res.ExitCode != 0 {
-			return rbExec, fmt.Errorf("lvconvert --merge failed for %s: %v (stderr: %s)", devPath, err, res.Stderr)
+		if err != nil || res == nil || res.ExitCode == nil || *res.ExitCode != 0 {
+			stderr := ""
+			if res != nil {
+				stderr = res.Stderr
+			}
+			return rbExec, fmt.Errorf("lvconvert --merge failed for %s: %v (stderr: %s)", devPath, err, stderr)
 		}
 
 		output := res.Stdout + " " + res.Stderr
@@ -175,7 +179,7 @@ func (m *Manager) waitForHostReboot(ctx context.Context) error {
 				Ref:  "op:reboot.ping",
 				ArgV: []string{"echo", "reboot_ok"},
 			})
-			if err == nil && res.ExitCode != nil && *res.ExitCode == 0 {
+			if err == nil && res != nil && res.ExitCode != nil && *res.ExitCode == 0 {
 				return nil
 			}
 		}
