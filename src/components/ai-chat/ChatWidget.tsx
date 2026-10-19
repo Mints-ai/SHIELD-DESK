@@ -203,8 +203,20 @@ export function ChatWidget() {
           body: JSON.stringify({
             message: trimmed,
             context: {
-              currentIncidentId: activeIncidentId || undefined,
-              currentCveId: activeCveId || undefined,
+              currentIncidentId:
+                activeIncidentId &&
+                activeIncidentId !== "undefined" &&
+                activeIncidentId !== "null" &&
+                activeIncidentId.trim() !== ""
+                  ? activeIncidentId.trim()
+                  : undefined,
+              currentCveId:
+                activeCveId &&
+                activeCveId !== "undefined" &&
+                activeCveId !== "null" &&
+                activeCveId.trim() !== ""
+                  ? activeCveId.trim()
+                  : undefined,
               currentPage: "dashboard",
             },
           }),

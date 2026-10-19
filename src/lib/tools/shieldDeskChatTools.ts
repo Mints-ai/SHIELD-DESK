@@ -216,7 +216,7 @@ export async function investigateIncident(
 
   const incidentResult = await query(
     `SELECT id, incident_code, severity, status, title, description, created_at
-     FROM incidents WHERE incident_code = $1 ${tenantScope}
+     FROM incidents WHERE (incident_code = $1 OR id::text = $1) ${tenantScope}
      LIMIT 1`,
     params
   );
@@ -338,7 +338,7 @@ export async function generateMitigationPlan(
     .filter(Boolean);
 
   const cveResult = await query<{ cve_id: string }>(
-    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE incident_code = $1)",
+    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE (incident_code = $1 OR id::text = $1) LIMIT 1)",
     [args.incidentId]
   );
   const linkedCveRows = cveResult.rows;
@@ -445,7 +445,7 @@ export async function generateMitigationPlan(
           tenant_id: string;
         }>(
           `SELECT id, tenant_id FROM incidents
-           WHERE incident_code = $1 ${incidentTenantScope}
+           WHERE (incident_code = $1 OR id::text = $1) ${incidentTenantScope}
            LIMIT 1 FOR UPDATE`,
           incidentParams
         );
