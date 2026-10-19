@@ -1075,8 +1075,8 @@ export async function recordCommandResult({
   agentId?: string;
   verified?: boolean;
 }): Promise<{ success: boolean; notFound?: boolean; unauthorized?: boolean }> {
-  let effectiveStatus = (status === "executed" && verified) ? "verified" : status;
-  let effectiveOutput = output;
+  const effectiveStatus = (status === "executed" && verified) ? "verified" : status;
+  const effectiveOutput = output;
   const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded"
     : effectiveStatus === "rolled_back" ? "rolled_back"
     : ["failed", "cancelled", "expired", "delivery_failed", "execution_failed", "verification_failed"].includes(effectiveStatus) ? "failed" : "executing";

@@ -30,7 +30,7 @@ export class TelemetryNormalizer {
     let category: EventCategory = "system";
     let eventType = "telemetry_event";
     let severity: TelemetrySeverity = "low";
-    let timestamp = (raw.timestamp as string) || (raw.time as string) || (raw.UtcTime as string) || new Date().toISOString();
+    const timestamp = (raw.timestamp as string) || (raw.time as string) || (raw.UtcTime as string) || new Date().toISOString();
 
     let process: ProcessContext | undefined;
     let network: NetworkContext | undefined;
