@@ -264,6 +264,20 @@ export async function recordUnblockedIp({
     }
   }
 
+  try {
+    const { adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
+    const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+    for (const a of MOCK_ENDPOINT_AGENTS) {
+      if (
+        (a.tenant_id === tenantId || tenantId === "mints-global") &&
+        (a.ip_address === cleanIp || (cleanIp === "127.0.0.1" && ["127.0.0.1", "::1", "localhost"].includes(a.ip_address)))
+      ) {
+        adminDisconnectedAgents.delete(a.id);
+        if (a.hostname) adminDisconnectedAgents.delete(a.hostname);
+      }
+    }
+  } catch {}
+
   return dbUpdated || true;
 }
 

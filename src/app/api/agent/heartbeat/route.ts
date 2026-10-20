@@ -175,42 +175,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Check if operator explicitly disconnected this specific agent or it is marked disconnected in DB
-    const isExplicitlyDisconnected =
-      adminDisconnectedAgents.has(agentId) ||
-      (agentRecord !== null && (
-        adminDisconnectedAgents.has(agentRecord.id) ||
-        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname)) ||
-        agentRecord.status === "disconnected"
-      ));
-
-    if (isExplicitlyDisconnected) {
-      await query(
-        `UPDATE endpoint_agents
-         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
-         WHERE id::text = $1 OR hostname = $1;`,
-        [agentId]
-      ).catch(() => {});
-
-      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
-      if (currentMock) {
-        currentMock.status = "disconnected";
-        currentMock.cpu_usage = 0;
-        currentMock.memory_usage = 0;
-        currentMock.eps = 0;
-      }
-
-      return NextResponse.json({
-        success: true,
-        agentId,
-        status: "disconnected",
-        killSwitchActive: false,
-        message: "Endpoint is administratively disconnected or contained.",
-        timestamp: new Date().toISOString(),
-      });
+    // 3. Emergency Admin Kill Switch: if engaged, immediately lock agent out with 423
+    if (agentRecord?.kill_switch_active) {
+      MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "kill_switch" });
+      return NextResponse.json(
+        { error: "KILL_SWITCH_ACTIVE", killSwitchActive: true },
+        { status: 423 }
+      );
     }
 
-    // Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
+    // 4. Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
     if (ipAddress && requestedStatus !== "disconnected") {
       try {
         const { rows: conflictRows } = await query<{ id: string; hostname: string }>(
@@ -275,6 +249,40 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+    }
+
+    // 5. Check if operator explicitly disconnected this specific agent via admin lock
+    const isExplicitlyDisconnected =
+      adminDisconnectedAgents.has(agentId) ||
+      (agentRecord !== null && (
+        adminDisconnectedAgents.has(agentRecord.id) ||
+        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname))
+      ));
+
+    if (isExplicitlyDisconnected) {
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+         WHERE id::text = $1 OR hostname = $1;`,
+        [agentId]
+      ).catch(() => {});
+
+      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
+      if (currentMock) {
+        currentMock.status = "disconnected";
+        currentMock.cpu_usage = 0;
+        currentMock.memory_usage = 0;
+        currentMock.eps = 0;
+      }
+
+      return NextResponse.json({
+        success: true,
+        agentId,
+        status: "disconnected",
+        killSwitchActive: false,
+        message: "Endpoint is administratively disconnected or contained.",
+        timestamp: new Date().toISOString(),
+      });
     }
 
     try {

@@ -137,8 +137,7 @@ export async function PATCH(
     const newStatus = body.status && allowedStatuses.includes(body.status)
       ? body.status
       : currentTask.status;
-    const canManualOverride = session.role === "super_admin" || session.role === "system_admin" || session.role === "responder";
-    if (newStatus === "completed" && currentTask.status !== "completed" && currentTask.execution_command_id && !canManualOverride) {
+    if (newStatus === "completed" && currentTask.status !== "completed" && currentTask.execution_command_id) {
       return NextResponse.json({ error: "This task must be completed by its endpoint execution report." }, { status: 409 });
     }
 
