@@ -160,9 +160,23 @@ export async function POST(req: NextRequest) {
       const ip = agent?.ip_address || "";
 
       // 2. Optional Plan Association (Default to null / Standalone unless explicitly provided)
-      const planId: string | null = (body.planId && typeof body.planId === "string" && body.planId.trim())
+      let planId: string | null = (body.planId && typeof body.planId === "string" && body.planId.trim())
         ? body.planId.trim()
         : null;
+
+      if (!planId) {
+        try {
+          const activePlan = await query<{ id: string }>(
+            "SELECT id FROM mitigation_plans WHERE tenant_id = $1 AND status IN ('active', 'draft') ORDER BY created_at DESC LIMIT 1",
+            [caller.tenant_id]
+          );
+          if (activePlan.rows.length > 0) {
+            planId = activePlan.rows[0].id;
+          }
+        } catch {
+          // Non-blocking
+        }
+      }
 
       // 3. Ensure caller exists in users table to satisfy foreign keys
       try {
@@ -176,6 +190,9 @@ export async function POST(req: NextRequest) {
       } catch {
         // Non-blocking
       }
+
+      // Ensure plan_id is nullable in DB for standalone tasks
+      await query("ALTER TABLE mitigation_tasks ALTER COLUMN plan_id DROP NOT NULL;").catch(() => {});
 
       // 4. Create Mitigation Task
       const taskId = crypto.randomUUID();

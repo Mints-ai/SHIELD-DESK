@@ -128,7 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_mitigation_plans_incident ON mitigation_plans (in
 
 CREATE TABLE IF NOT EXISTS mitigation_tasks (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  plan_id       uuid NOT NULL REFERENCES mitigation_plans(id) ON DELETE CASCADE,
+  plan_id       uuid REFERENCES mitigation_plans(id) ON DELETE CASCADE,
   tenant_id     text NOT NULL,
   horizon       text NOT NULL CHECK (horizon IN ('immediate', 'short_term', 'long_term')),
   title         text NOT NULL,
