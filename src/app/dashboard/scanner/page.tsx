@@ -265,7 +265,9 @@ export default function ScannerDashboardPage() {
   const fetchThreatIntel = async (isPoll = false) => {
     try {
       if (!isPoll) setShodanLoading(true);
-      const res = await fetch("/api/intel/shodan");
+      const res = await fetch("/api/intel/shodan", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const data = await res.json();
       if (data.configured) {
         setShodanStatus({
@@ -290,7 +292,9 @@ export default function ScannerDashboardPage() {
         setShodanInspectError(null);
       }
 
-      const hibpRes = await fetch("/api/intel/hibp");
+      const hibpRes = await fetch("/api/intel/hibp", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const hibpData = await hibpRes.json();
       setHibpConfigured(Boolean(hibpData.configured));
     } catch (err: any) {
@@ -311,7 +315,9 @@ export default function ScannerDashboardPage() {
     try {
       setShodanLoading(true);
       setShodanInspectError(null);
-      const res = await fetch(`/api/intel/shodan?ip=${encodeURIComponent(target)}`);
+      const res = await fetch(`/api/intel/shodan?ip=${encodeURIComponent(target)}`, {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const data = await res.json();
       if (!data.configured) {
         setShodanStatus({

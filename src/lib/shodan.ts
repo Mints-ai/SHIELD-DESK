@@ -60,6 +60,10 @@ function setCached<T>(key: string, data: T): void {
   cache.set(key, { data, timestamp: Date.now() });
 }
 
+export function clearShodanCache(): void {
+  cache.clear();
+}
+
 /**
  * Retrieves the Shodan API key from disk (.env.local / .env) or process.env.
  * Prioritizes active disk state so edits in .env.local take effect immediately.
@@ -70,31 +74,29 @@ export function getShodanApiKey(): string | undefined {
     return envVal;
   }
 
-  // Only scan local .env files on disk in development mode
-  if (process.env.NODE_ENV === "development") {
-    try {
-      const root = process.cwd();
-      const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
-      for (const p of envPaths) {
-        if (fs.existsSync(p)) {
-          const content = fs.readFileSync(p, "utf-8");
-          for (const line of content.split("\n")) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-            const [key, ...vals] = trimmed.split("=");
-            if (key.trim() === "SHODAN_API_KEY") {
-              const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
-              if (val && val.length > 0) {
-                process.env.SHODAN_API_KEY = val;
-                return val;
-              }
+  // Scan local .env files on disk if not directly in process.env
+  try {
+    const root = process.cwd();
+    const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
+    for (const p of envPaths) {
+      if (fs.existsSync(p)) {
+        const content = fs.readFileSync(p, "utf-8");
+        for (const line of content.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+          const [key, ...vals] = trimmed.split("=");
+          if (key.trim() === "SHODAN_API_KEY") {
+            const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
+            if (val && val.length > 0) {
+              process.env.SHODAN_API_KEY = val;
+              return val;
             }
           }
         }
       }
-    } catch {
-      // Ignore FS errors in dev
     }
+  } catch {
+    // Ignore FS errors
   }
 
   // Key is absent

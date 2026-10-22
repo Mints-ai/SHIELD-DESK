@@ -12,31 +12,29 @@ export function getHibpApiKey(): string | undefined {
     return envVal;
   }
 
-  // Only scan local .env files on disk in development mode
-  if (process.env.NODE_ENV === "development") {
-    try {
-      const root = process.cwd();
-      const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
-      for (const p of envPaths) {
-        if (fs.existsSync(p)) {
-          const content = fs.readFileSync(p, "utf-8");
-          for (const line of content.split("\n")) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-            const [key, ...vals] = trimmed.split("=");
-            if (key.trim() === "HIBP_API_KEY") {
-              const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
-              if (val && val.length > 0) {
-                process.env.HIBP_API_KEY = val;
-                return val;
-              }
+  // Scan local .env files on disk if not directly in process.env
+  try {
+    const root = process.cwd();
+    const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
+    for (const p of envPaths) {
+      if (fs.existsSync(p)) {
+        const content = fs.readFileSync(p, "utf-8");
+        for (const line of content.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+          const [key, ...vals] = trimmed.split("=");
+          if (key.trim() === "HIBP_API_KEY") {
+            const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
+            if (val && val.length > 0) {
+              process.env.HIBP_API_KEY = val;
+              return val;
             }
           }
         }
       }
-    } catch {
-      // Ignore FS error in dev
     }
+  } catch {
+    // Ignore FS error
   }
 
   delete process.env.HIBP_API_KEY;
