@@ -164,7 +164,7 @@ export default function ScannerDashboardPage() {
   };
 
   // Patching state
-  const [patchHost, setPatchHost] = useState("10.0.4.12 (srv-prod-api-01)");
+  const [patchHost, setPatchHost] = useState("");
   const [isDryRun, setIsDryRun] = useState(false);
   const [patchLogs, setPatchLogs] = useState<string[]>([
     "[SYSTEM READY] SSH patch orchestrator client ready. Verify service status and configure target host.",
@@ -174,10 +174,11 @@ export default function ScannerDashboardPage() {
   const [patchPort, setPatchPort] = useState<number>(22);
   const [patchUser, setPatchUser] = useState<string>("ubuntu");
   const [patchPrivateKey, setPatchPrivateKey] = useState<string>("");
-  const [patchHostKeyFingerprint, setPatchHostKeyFingerprint] = useState<string>("SHA256:d8a2b3c4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2");
-  const [patchPackage, setPatchPackage] = useState<string>("openssh-server");
-  const [patchTargetVersion, setPatchTargetVersion] = useState<string>("1:8.9p1-3ubuntu0.10");
+  const [patchHostKeyFingerprint, setPatchHostKeyFingerprint] = useState<string>("");
+  const [patchPackage, setPatchPackage] = useState<string>("");
+  const [patchTargetVersion, setPatchTargetVersion] = useState<string>("");
   const [patchRestartServices, setPatchRestartServices] = useState<string>("ssh");
+  const [snapshotCount, setSnapshotCount] = useState<number>(0);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [activeJobState, setActiveJobState] = useState<string | null>(null);
@@ -242,6 +243,7 @@ export default function ScannerDashboardPage() {
       }
 
       if (data.secretFindings) setSecrets(data.secretFindings);
+      if (data.metrics?.patchedHosts !== undefined) setSnapshotCount(data.metrics.patchedHosts);
       setServiceConnected(Boolean(data.serviceConnected));
     } catch (err) {
       console.error("Failed to load scan data:", err);
@@ -431,7 +433,7 @@ export default function ScannerDashboardPage() {
           action: chosenAction,
           finding_id: finding.fingerprint || finding.secret_hash,
           rule_id: finding.rule_id || "",
-          key_id: "AKIA1234567890ABCDEF",
+          key_id: finding.fingerprint || finding.secret_hash || finding.rule_id || "",
         }),
       });
       const data = await res.json();
@@ -912,9 +914,10 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               <span className="text-[13px] font-medium">LVM Snapshots</span>
               <HardDrive className="h-4 w-4 text-[var(--sd-pine-bright)]" />
             </div>
-            <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">14</div>
-            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Pre-patch rollback restore points</p>
-            <span className="sd-sample-label mt-2 w-fit">Sample metric</span>
+            <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">{snapshotCount}</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">
+              {snapshotCount === 0 ? "0 pre-patch rollback restore points" : `${snapshotCount} rollback restore point${snapshotCount !== 1 ? "s" : ""}`}
+            </p>
           </div>
         </div>
 
@@ -1388,7 +1391,6 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     <option value="10.0.4.12 (srv-prod-api-01 - Ubuntu 22.04)" />
                     <option value="10.0.4.15 (srv-app-worker-02 - Debian 11)" />
                     <option value="10.0.5.21 (k8s-node-worker-03 - RHEL 9)" />
-                    <option value="192.168.1.50 (demo-host)" />
                   </datalist>
                 </div>
 
