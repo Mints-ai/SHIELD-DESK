@@ -55,6 +55,8 @@ interface GeneratedTokenResult {
 }
 
 interface IntegrationKeysStatus {
+  canManage?: boolean;
+  role?: string;
   shodan: {
     configured: boolean;
     maskedKey: string | null;
@@ -98,6 +100,14 @@ export default function IntegrationsAndTokensPage() {
 
   // Third-Party Keys State
   const [keysStatus, setKeysStatus] = useState<IntegrationKeysStatus | null>(null);
+
+  // RBAC: Only System Admin or Super Admin can add, update, or remove external threat intel keys
+  const isAdmin =
+    activeUser.role === "system_admin" ||
+    activeUser.role === "super_admin" ||
+    activeUserId === "dev-admin" ||
+    activeUserId === "dev-super" ||
+    keysStatus?.canManage === true;
   const [keysLoading, setKeysLoading] = useState(false);
   const [shodanInput, setShodanInput] = useState("");
   const [hibpInput, setHibpInput] = useState("");
@@ -210,6 +220,13 @@ export default function IntegrationsAndTokensPage() {
 
   // Test & Save Shodan Key
   const handleSaveShodan = async (testOnly = false) => {
+    if (!isAdmin) {
+      setShodanFeedback({
+        type: "error",
+        message: "Forbidden: Only administrators (System Admin or Super Admin) can configure external intel keys.",
+      });
+      return;
+    }
     if (!shodanInput.trim() && !keysStatus?.shodan.configured) return;
     setShodanTesting(true);
     setShodanFeedback(null);
@@ -256,6 +273,13 @@ export default function IntegrationsAndTokensPage() {
 
   // Remove Shodan Key
   const handleRemoveShodan = async () => {
+    if (!isAdmin) {
+      setShodanFeedback({
+        type: "error",
+        message: "Forbidden: Only administrators can remove external intel keys.",
+      });
+      return;
+    }
     try {
       const res = await fetch("/api/integrations/keys?provider=shodan", {
         method: "DELETE",
@@ -265,6 +289,12 @@ export default function IntegrationsAndTokensPage() {
         setShodanInput("");
         setShodanFeedback({ type: "success", message: "Shodan API key removed." });
         fetchKeys();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setShodanFeedback({
+          type: "error",
+          message: data.error || "Failed to remove Shodan key.",
+        });
       }
     } catch {
       // Ignore
@@ -273,6 +303,13 @@ export default function IntegrationsAndTokensPage() {
 
   // Test & Save HIBP Key
   const handleSaveHibp = async (testOnly = false) => {
+    if (!isAdmin) {
+      setHibpFeedback({
+        type: "error",
+        message: "Forbidden: Only administrators (System Admin or Super Admin) can configure external intel keys.",
+      });
+      return;
+    }
     if (!hibpInput.trim() && !keysStatus?.hibp.configured) return;
     setHibpTesting(true);
     setHibpFeedback(null);
@@ -317,6 +354,13 @@ export default function IntegrationsAndTokensPage() {
 
   // Remove HIBP Key
   const handleRemoveHibp = async () => {
+    if (!isAdmin) {
+      setHibpFeedback({
+        type: "error",
+        message: "Forbidden: Only administrators can remove external intel keys.",
+      });
+      return;
+    }
     try {
       const res = await fetch("/api/integrations/keys?provider=hibp", {
         method: "DELETE",
@@ -326,6 +370,12 @@ export default function IntegrationsAndTokensPage() {
         setHibpInput("");
         setHibpFeedback({ type: "success", message: "HaveIBeenPwned API key removed." });
         fetchKeys();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setHibpFeedback({
+          type: "error",
+          message: data.error || "Failed to remove HaveIBeenPwned key.",
+        });
       }
     } catch {
       // Ignore
@@ -710,6 +760,22 @@ export default function IntegrationsAndTokensPage() {
         {/* ─────────────────────────────────────────────────────────────────── */}
         {activeTab === "third-party-keys" && (
           <div className="space-y-8">
+            {/* RBAC Notice if caller is non-admin */}
+            {!isAdmin && (
+              <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-950/20 text-amber-300 text-xs flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <div className="font-semibold text-amber-200 flex items-center gap-2">
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>Administrator Privileges Required (RBAC Enforced)</span>
+                  </div>
+                  <p className="text-[var(--sd-text-muted)] leading-relaxed">
+                    External threat intelligence keys (Shodan &amp; HaveIBeenPwned) can only be added, updated, or removed by operators with <strong>System Admin</strong> or <strong>Super Admin</strong> authority. Your current role is <span className="font-mono text-amber-300 font-semibold">{activeUser.label || activeUser.role}</span> (Read-Only status view).
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Shodan Configuration Card */}
             <div className="p-6 sm:p-8 rounded-3xl border border-[var(--sd-border)] bg-[var(--sd-surface)] shadow-md space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[var(--sd-border-subtle)]">
@@ -768,12 +834,17 @@ export default function IntegrationsAndTokensPage() {
                       type={showShodanKey ? "text" : "password"}
                       value={shodanInput}
                       onChange={(e) => setShodanInput(e.target.value)}
+                      disabled={!isAdmin}
                       placeholder={
-                        keysStatus?.shodan.maskedKey
+                        !isAdmin
+                          ? keysStatus?.shodan.maskedKey
+                            ? `Configured: ${keysStatus.shodan.maskedKey} (Admin required to modify)`
+                            : "Administrator privileges required to add key"
+                          : keysStatus?.shodan.maskedKey
                           ? `Currently configured: ${keysStatus.shodan.maskedKey}`
                           : "Paste your Shodan API key..."
                       }
-                      className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] text-xs font-mono text-[var(--sd-text)] placeholder-[var(--sd-text-dim)] focus:outline-hidden focus:border-[var(--sd-border-strong)] transition"
+                      className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] text-xs font-mono text-[var(--sd-text)] placeholder-[var(--sd-text-dim)] focus:outline-hidden focus:border-[var(--sd-border-strong)] transition disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                     <button
                       type="button"
@@ -788,25 +859,28 @@ export default function IntegrationsAndTokensPage() {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleSaveShodan(true)}
-                      disabled={shodanTesting || (!shodanInput.trim() && !keysStatus?.shodan.configured)}
-                      className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-wheat)] transition cursor-pointer"
+                      disabled={!isAdmin || shodanTesting || (!shodanInput.trim() && !keysStatus?.shodan.configured)}
+                      className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-wheat)] transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                     >
-                      {shodanTesting ? "Testing..." : "Test Connection"}
+                      {!isAdmin && <Lock className="w-3 h-3 text-[var(--sd-text-dim)]" />}
+                      <span>{shodanTesting ? "Testing..." : "Test Connection"}</span>
                     </button>
 
                     <button
                       onClick={() => handleSaveShodan(false)}
-                      disabled={shodanTesting || !shodanInput.trim()}
-                      className="sd-button px-4 py-2.5 rounded-xl bg-[var(--sd-primary)] hover:bg-[var(--sd-primary-hover)] text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                      disabled={!isAdmin || shodanTesting || !shodanInput.trim()}
+                      className="sd-button px-4 py-2.5 rounded-xl bg-[var(--sd-primary)] hover:bg-[var(--sd-primary-hover)] text-white text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                     >
-                      Save Key
+                      {!isAdmin && <Lock className="w-3 h-3" />}
+                      <span>Save Key</span>
                     </button>
 
                     {keysStatus?.shodan.configured && (
                       <button
                         onClick={handleRemoveShodan}
-                        className="p-2.5 rounded-xl border border-red-500/30 hover:bg-red-950/30 text-red-400 transition cursor-pointer"
-                        title="Remove Key"
+                        disabled={!isAdmin}
+                        className="p-2.5 rounded-xl border border-red-500/30 hover:bg-red-950/30 text-red-400 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={isAdmin ? "Remove Key" : "Admin privileges required to remove key"}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -883,12 +957,17 @@ export default function IntegrationsAndTokensPage() {
                       type={showHibpKey ? "text" : "password"}
                       value={hibpInput}
                       onChange={(e) => setHibpInput(e.target.value)}
+                      disabled={!isAdmin}
                       placeholder={
-                        keysStatus?.hibp.maskedKey
+                        !isAdmin
+                          ? keysStatus?.hibp.maskedKey
+                            ? `Configured: ${keysStatus.hibp.maskedKey} (Admin required to modify)`
+                            : "Administrator privileges required to add key"
+                          : keysStatus?.hibp.maskedKey
                           ? `Currently configured: ${keysStatus.hibp.maskedKey}`
                           : "Paste your HaveIBeenPwned API key..."
                       }
-                      className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] text-xs font-mono text-[var(--sd-text)] placeholder-[var(--sd-text-dim)] focus:outline-hidden focus:border-[var(--sd-border-strong)] transition"
+                      className="w-full pl-3.5 pr-10 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-bg)] text-xs font-mono text-[var(--sd-text)] placeholder-[var(--sd-text-dim)] focus:outline-hidden focus:border-[var(--sd-border-strong)] transition disabled:opacity-60 disabled:cursor-not-allowed"
                     />
                     <button
                       type="button"
@@ -903,25 +982,28 @@ export default function IntegrationsAndTokensPage() {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleSaveHibp(true)}
-                      disabled={hibpTesting || (!hibpInput.trim() && !keysStatus?.hibp.configured)}
-                      className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-wheat)] transition cursor-pointer"
+                      disabled={!isAdmin || hibpTesting || (!hibpInput.trim() && !keysStatus?.hibp.configured)}
+                      className="sd-button px-3.5 py-2.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-panel-raised)] hover:bg-[var(--sd-panel-hover)] text-xs font-semibold text-[var(--sd-wheat)] transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                     >
-                      {hibpTesting ? "Testing..." : "Test Format"}
+                      {!isAdmin && <Lock className="w-3 h-3 text-[var(--sd-text-dim)]" />}
+                      <span>{hibpTesting ? "Testing..." : "Test Format"}</span>
                     </button>
 
                     <button
                       onClick={() => handleSaveHibp(false)}
-                      disabled={hibpTesting || !hibpInput.trim()}
-                      className="sd-button px-4 py-2.5 rounded-xl bg-[var(--sd-primary)] hover:bg-[var(--sd-primary-hover)] text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+                      disabled={!isAdmin || hibpTesting || !hibpInput.trim()}
+                      className="sd-button px-4 py-2.5 rounded-xl bg-[var(--sd-primary)] hover:bg-[var(--sd-primary-hover)] text-white text-xs font-semibold shadow-xs transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                     >
-                      Save Key
+                      {!isAdmin && <Lock className="w-3 h-3" />}
+                      <span>Save Key</span>
                     </button>
 
                     {keysStatus?.hibp.configured && (
                       <button
                         onClick={handleRemoveHibp}
-                        className="p-2.5 rounded-xl border border-red-500/30 hover:bg-red-950/30 text-red-400 transition cursor-pointer"
-                        title="Remove Key"
+                        disabled={!isAdmin}
+                        className="p-2.5 rounded-xl border border-red-500/30 hover:bg-red-950/30 text-red-400 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={isAdmin ? "Remove Key" : "Admin privileges required to remove key"}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>

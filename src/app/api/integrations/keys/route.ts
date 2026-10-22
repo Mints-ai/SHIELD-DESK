@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { isDevPersonaAllowed } from "@/lib/config/environment";
+import { canManageIntegrationKeys, type ShieldDeskRole } from "@/lib/permissions";
 import { getShodanApiKey, getShodanApiInfo, clearShodanCache } from "@/lib/shodan";
 import { getHibpApiKey, getHibpStatus } from "@/lib/hibp";
 import { trackError } from "@/lib/observability/errorTracker";
@@ -12,13 +13,26 @@ export const dynamic = "force-dynamic";
 async function resolveSession(req: NextRequest) {
   let session = await getSessionFromRequest(req);
   if (!session && isDevPersonaAllowed()) {
-    const userHdr = req.headers.get("x-shielddesk-user") || "dev-admin";
-    session = {
-      uid: userHdr,
-      role: userHdr.includes("admin") ? "system_admin" : "analyst",
-      tenantId: "mints-global",
-      email: `${userHdr}@mintsglobal.ae`,
-    };
+    const userHdr = req.headers.get("x-shielddesk-user");
+    if (userHdr) {
+      const isSuper = userHdr === "dev-super" || userHdr.includes("super");
+      const isAdmin = userHdr === "dev-admin" || userHdr.includes("admin");
+      const isResponder = userHdr === "dev-responder" || userHdr.includes("responder");
+      const role: ShieldDeskRole = isAdmin
+        ? "system_admin"
+        : isSuper
+        ? "super_admin"
+        : isResponder
+        ? "responder"
+        : "analyst";
+
+      session = {
+        uid: userHdr,
+        role,
+        tenantId: "mints-global",
+        email: `${userHdr}@mintsglobal.ae`,
+      };
+    }
   }
   return session;
 }
@@ -84,7 +98,11 @@ export async function GET(req: NextRequest) {
     // Tenant ingest key for log streaming / webhooks
     const tenantIngestKey = `sdi_${session.tenantId.slice(0, 8)}_${Buffer.from(session.tenantId).toString("hex").slice(0, 12)}`;
 
+    const canManage = canManageIntegrationKeys(session.role);
+
     return NextResponse.json({
+      canManage,
+      role: session.role,
       shodan: {
         configured: Boolean(shodanKey),
         maskedKey: maskKey(shodanKey),
@@ -115,6 +133,13 @@ export async function POST(req: NextRequest) {
   const session = await resolveSession(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!canManageIntegrationKeys(session.role)) {
+    return NextResponse.json(
+      { error: "Forbidden: Only administrators (system_admin or super_admin) can configure external intel keys." },
+      { status: 403 }
+    );
   }
 
   try {
@@ -220,6 +245,13 @@ export async function DELETE(req: NextRequest) {
   const session = await resolveSession(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (!canManageIntegrationKeys(session.role)) {
+    return NextResponse.json(
+      { error: "Forbidden: Only administrators (system_admin or super_admin) can remove external intel keys." },
+      { status: 403 }
+    );
   }
 
   const { searchParams } = req.nextUrl;
