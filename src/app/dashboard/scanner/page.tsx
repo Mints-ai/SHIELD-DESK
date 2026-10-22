@@ -265,7 +265,9 @@ export default function ScannerDashboardPage() {
   const fetchThreatIntel = async (isPoll = false) => {
     try {
       if (!isPoll) setShodanLoading(true);
-      const res = await fetch("/api/intel/shodan");
+      const res = await fetch("/api/intel/shodan", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const data = await res.json();
       if (data.configured) {
         setShodanStatus({
@@ -290,7 +292,9 @@ export default function ScannerDashboardPage() {
         setShodanInspectError(null);
       }
 
-      const hibpRes = await fetch("/api/intel/hibp");
+      const hibpRes = await fetch("/api/intel/hibp", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const hibpData = await hibpRes.json();
       setHibpConfigured(Boolean(hibpData.configured));
     } catch (err: any) {
@@ -311,7 +315,9 @@ export default function ScannerDashboardPage() {
     try {
       setShodanLoading(true);
       setShodanInspectError(null);
-      const res = await fetch(`/api/intel/shodan?ip=${encodeURIComponent(target)}`);
+      const res = await fetch(`/api/intel/shodan?ip=${encodeURIComponent(target)}`, {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const data = await res.json();
       if (!data.configured) {
         setShodanStatus({
@@ -430,8 +436,8 @@ export default function ScannerDashboardPage() {
         (finding.rule_id?.includes("github")
           ? "revoke_pat"
           : finding.rule_id?.includes("aws")
-          ? "rotate_key"
-          : "rotate_key");
+            ? "rotate_key"
+            : "rotate_key");
 
       const res = await fetch("/api/gitleaks/mitigate", {
         method: "POST",
@@ -873,9 +879,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
             <button
               onClick={triggerTrivyScan}
               disabled={loading}
-              className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer disabled:opacity-50"
+              className="sd-button sd-button-primary flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-white text-[13px] font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+              <RefreshCw className={cn("h-3.5 w-3.5 text-white", loading && "animate-spin")} />
               <span>Trigger Trivy Scan</span>
             </button>
           </div>
@@ -941,8 +947,8 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               {secrets.length === 0
                 ? "No secrets detected"
                 : secrets.some((s) => s.risk_level === "CRITICAL")
-                ? `${secrets.filter((s) => s.risk_level === "CRITICAL").length} critical credential${secrets.filter((s) => s.risk_level === "CRITICAL").length !== 1 ? "s" : ""} exposed`
-                : `${secrets.length} credential${secrets.length !== 1 ? "s" : ""} detected`}
+                  ? `${secrets.filter((s) => s.risk_level === "CRITICAL").length} critical credential${secrets.filter((s) => s.risk_level === "CRITICAL").length !== 1 ? "s" : ""} exposed`
+                  : `${secrets.length} credential${secrets.length !== 1 ? "s" : ""} detected`}
             </p>
           </div>
 
@@ -994,9 +1000,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 <button
                   onClick={triggerTrivyScan}
                   disabled={loading}
-                  className="sd-button sd-button-primary mt-2 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer disabled:opacity-50 transition shadow-xs"
+                  className="sd-button sd-button-primary mt-2 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-white text-[13px] font-semibold cursor-pointer disabled:opacity-50 transition shadow-xs"
                 >
-                  <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                  <RefreshCw className={cn("h-3.5 w-3.5 text-white", loading && "animate-spin")} />
                   <span>Trigger Trivy Scan</span>
                 </button>
               </div>
@@ -1021,7 +1027,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                           className={cn(
                             "sd-button px-2.5 py-1 rounded-full text-[13px] font-medium font-mono transition cursor-pointer flex items-center gap-1.5",
                             severityFilter === sev
-                              ? "sd-button-primary text-[var(--sd-on-accent)]"
+                              ? "sd-button-primary text-white font-semibold"
                               : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] border border-[var(--sd-border)]"
                           )}
                         >
@@ -1051,192 +1057,192 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     const isThisRunbookLoading = isThisFindingBusy && activeFindingAction.action === "runbook";
 
                     return (
-                    <div
-                      key={`${cve.cve_id}-${index}`}
-                      className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
-                    >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <span
-                          className={cn(
-                            "px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider font-mono",
-                            cve.severity === "CRITICAL"
-                              ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
-                              : cve.severity === "HIGH"
-                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
-                              : cve.severity === "MEDIUM"
-                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
-                              : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]"
-                          )}
-                        >
-                          {cve.severity}
-                        </span>
-                        <span className="font-mono text-sm font-medium text-[var(--sd-text)]">
-                          {cve.cve_id}
-                        </span>
-                        {(cve.target || cve.asset_id) && (
-                          <span className="text-[13px] text-[var(--sd-text-muted)]">
-                            Target: <code className="text-[var(--sd-text)] font-medium">{cve.target || cve.asset_id}</code>
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <p className="text-[13px] text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
-
-                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-[13px]">
-                      <div className="flex items-center gap-3 text-[var(--sd-text-muted)] flex-wrap">
-                        <span>Package: <code className="text-[var(--sd-text)] font-medium">{cve.package_name}</code></span>
-                        {cve.installed_version && (
-                          <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
-                        )}
-                        {cve.fixed_version && cve.fixed_version !== "N/A" && (
-                          <span>Fixed in: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)] text-[var(--sd-success)] font-medium">{cve.fixed_version}</code></span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => prefillPatchForFinding(cve)}
-                          className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-pine-bright)] border border-[var(--sd-pine-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
-                          title="Stage and remediate this package in SSH Patch Orchestrator"
-                        >
-                          <Terminal className="h-3 w-3 text-[var(--sd-pine)]" />
-                          <span>Patch Host</span>
-                        </button>
-                        <button
-                          onClick={() => runBlastRadius(cve)}
-                          disabled={isThisFindingBusy}
-                          className={cn(
-                            "sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-text)] border border-[var(--sd-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5",
-                            isThisFindingBusy && "opacity-50 cursor-not-allowed"
-                          )}
-                        >
-                          {isThisImpactLoading ? (
-                            <>
-                              <Loader2 className="h-3 w-3 text-[var(--sd-warning)] animate-spin" />
-                              <span>Analyzing…</span>
-                            </>
-                          ) : (
-                            <>
-                              <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
-                              <span>Impact Analysis</span>
-                            </>
-                          )}
-                        </button>
-                        <button
-                          onClick={() => generateRunbook(cve)}
-                          disabled={isThisFindingBusy}
-                          className={cn(
-                            "sd-button sd-button-primary px-2.5 py-1 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5",
-                            isThisFindingBusy && "opacity-50 cursor-not-allowed"
-                          )}
-                        >
-                          {isThisRunbookLoading ? (
-                            <>
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              <span>Generating…</span>
-                            </>
-                          ) : (
-                            <>
-                              <FileCode className="h-3 w-3" />
-                              <span>Recovery Runbook</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  );
-                })}
-              </div>
-
-              {/* Pagination Controls */}
-              {totalPages > 1 && (
-                <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface">
-                  <div className="text-[13px] text-[var(--sd-text-muted)] font-mono">
-                    Page <strong className="text-[var(--sd-text)]">{currentPage}</strong> of <strong className="text-[var(--sd-text)]">{totalPages}</strong>
-                    <span className="hidden sm:inline text-[var(--sd-text-muted)] ml-2">
-                      ({filteredCves.length} total findings · 3 per page)
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => handlePageChange(1)}
-                      disabled={currentPage === 1}
-                      className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
-                      title="First Page"
-                      aria-label="First page"
-                    >
-                      <ChevronsLeft className="h-3.5 w-3.5" />
-                      <span className="hidden md:inline">First</span>
-                    </button>
-
-                    <button
-                      onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
-                      disabled={currentPage === 1}
-                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
-                      title="Previous Page"
-                      aria-label="Previous page"
-                    >
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                      <span>Prev</span>
-                    </button>
-
-                    {/* Numeric Page Buttons */}
-                    <div className="flex items-center gap-1 px-1">
-                      {getPaginationRange(currentPage, totalPages).map((p, idx) =>
-                        p === "..." ? (
-                          <span key={`ellipsis-${idx}`} className="px-1 text-[12px] text-[var(--sd-text-muted)] font-mono">
-                            …
-                          </span>
-                        ) : (
-                          <button
-                            key={p}
-                            onClick={() => handlePageChange(Number(p))}
-                            className={cn(
-                              "min-w-8 h-8 px-2 rounded-lg text-[12px] font-mono font-medium transition cursor-pointer flex items-center justify-center",
-                              currentPage === p
-                                ? "sd-button-primary text-[var(--sd-on-accent)] shadow-xs"
-                                : "border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:sd-surface"
+                      <div
+                        key={`${cve.cve_id}-${index}`}
+                        className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            <span
+                              className={cn(
+                                "px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider font-mono",
+                                cve.severity === "CRITICAL"
+                                  ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
+                                  : cve.severity === "HIGH"
+                                    ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                                    : cve.severity === "MEDIUM"
+                                      ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                                      : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]"
+                              )}
+                            >
+                              {cve.severity}
+                            </span>
+                            <span className="font-mono text-sm font-medium text-[var(--sd-text)]">
+                              {cve.cve_id}
+                            </span>
+                            {(cve.target || cve.asset_id) && (
+                              <span className="text-[13px] text-[var(--sd-text-muted)]">
+                                Target: <code className="text-[var(--sd-text)] font-medium">{cve.target || cve.asset_id}</code>
+                              </span>
                             )}
-                            aria-label={`Go to page ${p}`}
-                            aria-current={currentPage === p ? "page" : undefined}
-                          >
-                            {p}
-                          </button>
-                        )
-                      )}
+                          </div>
+                        </div>
+
+                        <p className="text-[13px] text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
+
+                        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-[13px]">
+                          <div className="flex items-center gap-3 text-[var(--sd-text-muted)] flex-wrap">
+                            <span>Package: <code className="text-[var(--sd-text)] font-medium">{cve.package_name}</code></span>
+                            {cve.installed_version && (
+                              <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
+                            )}
+                            {cve.fixed_version && cve.fixed_version !== "N/A" && (
+                              <span>Fixed in: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)] text-[var(--sd-success)] font-medium">{cve.fixed_version}</code></span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => prefillPatchForFinding(cve)}
+                              className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-pine-bright)] border border-[var(--sd-pine-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
+                              title="Stage and remediate this package in SSH Patch Orchestrator"
+                            >
+                              <Terminal className="h-3 w-3 text-[var(--sd-pine)]" />
+                              <span>Patch Host</span>
+                            </button>
+                            <button
+                              onClick={() => runBlastRadius(cve)}
+                              disabled={isThisFindingBusy}
+                              className={cn(
+                                "sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-text)] border border-[var(--sd-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5",
+                                isThisFindingBusy && "opacity-50 cursor-not-allowed"
+                              )}
+                            >
+                              {isThisImpactLoading ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 text-[var(--sd-warning)] animate-spin" />
+                                  <span>Analyzing…</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
+                                  <span>Impact Analysis</span>
+                                </>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => generateRunbook(cve)}
+                              disabled={isThisFindingBusy}
+                              className={cn(
+                                "sd-button sd-button-primary px-2.5 py-1 rounded-full text-white text-[13px] font-semibold transition cursor-pointer flex items-center gap-1.5",
+                                isThisFindingBusy && "opacity-50 cursor-not-allowed"
+                              )}
+                            >
+                              {isThisRunbookLoading ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  <span>Generating…</span>
+                                </>
+                              ) : (
+                                <>
+                                  <FileCode className="h-3 w-3" />
+                                  <span>Recovery Runbook</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface">
+                    <div className="text-[13px] text-[var(--sd-text-muted)] font-mono">
+                      Page <strong className="text-[var(--sd-text)]">{currentPage}</strong> of <strong className="text-[var(--sd-text)]">{totalPages}</strong>
+                      <span className="hidden sm:inline text-[var(--sd-text-muted)] ml-2">
+                        ({filteredCves.length} total findings · 3 per page)
+                      </span>
                     </div>
 
-                    <button
-                      onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
-                      disabled={currentPage === totalPages}
-                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
-                      title="Next Page"
-                      aria-label="Next page"
-                    >
-                      <span>Next</span>
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        onClick={() => handlePageChange(1)}
+                        disabled={currentPage === 1}
+                        className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                        title="First Page"
+                        aria-label="First page"
+                      >
+                        <ChevronsLeft className="h-3.5 w-3.5" />
+                        <span className="hidden md:inline">First</span>
+                      </button>
 
-                    <button
-                      onClick={() => handlePageChange(totalPages)}
-                      disabled={currentPage === totalPages}
-                      className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
-                      title="Last Page"
-                      aria-label="Last page"
-                    >
-                      <span className="hidden md:inline">Last</span>
-                      <ChevronsRight className="h-3.5 w-3.5" />
-                    </button>
+                      <button
+                        onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                        disabled={currentPage === 1}
+                        className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                        title="Previous Page"
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                        <span>Prev</span>
+                      </button>
+
+                      {/* Numeric Page Buttons */}
+                      <div className="flex items-center gap-1 px-1">
+                        {getPaginationRange(currentPage, totalPages).map((p, idx) =>
+                          p === "..." ? (
+                            <span key={`ellipsis-${idx}`} className="px-1 text-[12px] text-[var(--sd-text-muted)] font-mono">
+                              …
+                            </span>
+                          ) : (
+                            <button
+                              key={p}
+                              onClick={() => handlePageChange(Number(p))}
+                              className={cn(
+                                "min-w-8 h-8 px-2 rounded-lg text-[12px] font-mono font-medium transition cursor-pointer flex items-center justify-center",
+                                currentPage === p
+                                  ? "sd-button-primary text-white font-semibold shadow-xs"
+                                  : "border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:sd-surface"
+                              )}
+                              aria-label={`Go to page ${p}`}
+                              aria-current={currentPage === p ? "page" : undefined}
+                            >
+                              {p}
+                            </button>
+                          )
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
+                        disabled={currentPage === totalPages}
+                        className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                        title="Next Page"
+                        aria-label="Next page"
+                      >
+                        <span>Next</span>
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+
+                      <button
+                        onClick={() => handlePageChange(totalPages)}
+                        disabled={currentPage === totalPages}
+                        className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                        title="Last Page"
+                        aria-label="Last page"
+                      >
+                        <span className="hidden md:inline">Last</span>
+                        <ChevronsRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {/* Tab 2: Gitleaks Secrets Detection */}
@@ -1263,10 +1269,10 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 id="gitleaks-scan-btn"
                 onClick={triggerSecretsScan}
                 disabled={secretScanLoading}
-                className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium hover:bg-[var(--sd-pine-hover)] transition cursor-pointer disabled:opacity-60 shadow-xs"
+                className="sd-button sd-button-primary flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-white text-[13px] font-semibold hover:bg-[var(--sd-pine-hover)] transition cursor-pointer disabled:opacity-60 shadow-xs"
               >
-                <RefreshCw className={cn("h-3.5 w-3.5", secretScanLoading && "animate-spin")} />
-                {secretScanLoading ? "Scanning…" : "Scan Repository Now"}
+                <RefreshCw className={cn("h-3.5 w-3.5 text-white", secretScanLoading && "animate-spin")} />
+                <span>{secretScanLoading ? "Scanning…" : "Scan Repository Now"}</span>
               </button>
             </div>
 
@@ -1359,8 +1365,8 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                             sec.risk_level === "CRITICAL"
                               ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
                               : sec.risk_level === "HIGH"
-                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
-                              : "bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
+                                ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                                : "bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
                           )}
                         >
                           {sec.risk_level}
@@ -1376,11 +1382,11 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                                 setReviewingSecret(sec);
                                 setRemediationFeedback(null);
                               }}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[12px] font-medium text-[var(--sd-pine-bright)] bg-[var(--sd-pine)]/15 border border-[var(--sd-pine)]/30 hover:bg-[var(--sd-pine)]/25 transition cursor-pointer shadow-xs ml-auto"
+                              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/40 transition cursor-pointer shadow-xs ml-auto"
                               title="Click to view remediation details"
                             >
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              <span>Remediated · Details</span>
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                              <span className="text-emerald-300">Remediated · Details</span>
                             </button>
                           ) : (
                             <button
@@ -1389,9 +1395,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                                 setReviewingSecret(sec);
                                 setRemediationFeedback(null);
                               }}
-                              className="sd-button px-2.5 py-1 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-[var(--sd-on-accent)] font-medium text-[12px] transition cursor-pointer shadow-xs flex items-center gap-1.5 ml-auto"
+                              className="sd-button sd-button-primary inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-white text-xs font-semibold hover:bg-[var(--sd-pine-hover)] transition cursor-pointer shadow-xs ml-auto"
                             >
-                              <Wrench className="h-3.5 w-3.5" />
+                              <Wrench className="h-3.5 w-3.5 text-white" />
                               <span>{sec.action_available || "Review & Remediate"}</span>
                             </button>
                           );
@@ -1600,7 +1606,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                   <button
                     onClick={() => executePatch(isDryRun)}
                     disabled={loading || testingSSH}
-                    className="sd-button sd-button-primary w-full h-10 px-4 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center justify-center gap-2 shadow-xs whitespace-nowrap disabled:opacity-50"
+                    className="sd-button sd-button-primary w-full h-10 px-4 rounded-full text-white text-[13px] font-semibold transition cursor-pointer flex items-center justify-center gap-2 shadow-xs whitespace-nowrap disabled:opacity-50"
                   >
                     <Play className="h-4 w-4 fill-current shrink-0" />
                     <span>{isDryRun ? "Execute Dry Run Simulation" : "Apply Security Patch"}</span>
@@ -1671,8 +1677,8 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     <span className={cn(
                       "h-2 w-2 rounded-full",
                       activeJobState === "REMEDIATED" ? "bg-emerald-400" :
-                      activeJobState?.includes("FAIL") || activeJobState?.includes("ESCALATED") ? "bg-rose-500" :
-                      activeJobState ? "bg-amber-400 animate-ping" : "bg-[var(--sd-success)]"
+                        activeJobState?.includes("FAIL") || activeJobState?.includes("ESCALATED") ? "bg-rose-500" :
+                          activeJobState ? "bg-amber-400 animate-ping" : "bg-[var(--sd-success)]"
                     )} />
                     <span className="text-[var(--sd-text)] font-semibold">SSH Patching Terminal</span>
                     {activeJobState && (
@@ -2069,7 +2075,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               <div className="flex justify-end pt-2">
                 <button
                   onClick={() => setAdvisorContent(null)}
-                  className="sd-button sd-button-primary px-4 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer"
+                  className="sd-button sd-button-primary px-4 py-2 rounded-full text-white text-[13px] font-semibold cursor-pointer"
                 >
                   Done
                 </button>
@@ -2163,8 +2169,8 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                         reviewingSecret.risk_level === "CRITICAL"
                           ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
                           : reviewingSecret.risk_level === "HIGH"
-                          ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
-                          : "bg-[var(--sd-panel-hover)] text-[var(--sd-text)] border-[var(--sd-border)]"
+                            ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                            : "bg-[var(--sd-panel-hover)] text-[var(--sd-text)] border-[var(--sd-border)]"
                       )}
                     >
                       {reviewingSecret.risk_level}
@@ -2264,16 +2270,16 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                       <button
                         onClick={() => executeRemediation(reviewingSecret, "rotate_key")}
                         disabled={isMitigating}
-                        className="sd-button sd-button-primary shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium text-[var(--sd-on-accent)] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="sd-button sd-button-primary shrink-0 px-3.5 py-1.5 rounded-full text-[12px] font-semibold text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50 hover:bg-[var(--sd-pine-hover)] transition shadow-xs"
                       >
                         {isMitigating ? (
                           <>
-                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            <RefreshCw className="h-3.5 w-3.5 text-white animate-spin" />
                             <span>Revoking…</span>
                           </>
                         ) : (
                           <>
-                            <RotateCcw className="h-3.5 w-3.5" />
+                            <RotateCcw className="h-3.5 w-3.5 text-white" />
                             <span>Revoke / Rotate Key</span>
                           </>
                         )}
@@ -2362,7 +2368,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                       setRemediationFeedback(null);
                       setCopiedGitCmd(false);
                     }}
-                    className="sd-button sd-button-primary px-4 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer"
+                    className="sd-button sd-button-primary px-4 py-1.5 rounded-full text-white text-[13px] font-semibold cursor-pointer"
                   >
                     Done
                   </button>

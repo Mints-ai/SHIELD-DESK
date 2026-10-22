@@ -17,6 +17,7 @@ export type ShieldDeskRole = "system_admin" | "super_admin" | "responder" | "ana
 export type Permission =
   | "VIEW_CROSS_TENANT"
   | "MANAGE_USERS"
+  | "integrations.keys.manage"
   | "incident.read"
   | "incident.investigate"
   | "cve.read"
@@ -31,6 +32,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
   system_admin: [
     "VIEW_CROSS_TENANT",
     "MANAGE_USERS",
+    "integrations.keys.manage",
     "incident.read",
     "incident.investigate",
     "cve.read",
@@ -42,6 +44,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
   ],
   super_admin: [
     "MANAGE_USERS",
+    "integrations.keys.manage",
     "incident.read",
     "incident.investigate",
     "cve.read",
@@ -101,6 +104,15 @@ export const hasPermission = canAccess;
  */
 export function canAssignTask(role: string, tenantId: string): boolean {
   return canAccess(role as ShieldDeskRole, "task.assign");
+}
+
+/**
+ * Returns true if the role is permitted to configure, test, or remove third-party integration keys (Shodan, HIBP).
+ * Permitted roles: system_admin, super_admin.
+ */
+export function canManageIntegrationKeys(role?: string | null): boolean {
+  if (!role) return false;
+  return canAccess(role, "integrations.keys.manage");
 }
 
 
