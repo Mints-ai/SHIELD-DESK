@@ -940,9 +940,14 @@ export default function FleetPage() {
 
   const handleCreateRuleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = fwRuleName.trim();
-    if (!cleanName) {
+    const rawName = fwRuleName.trim();
+    if (!rawName) {
       setFwFeedback({ type: "error", message: "Rule name is required." });
+      return;
+    }
+    const cleanName = rawName.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9_-]/g, "");
+    if (!cleanName) {
+      setFwFeedback({ type: "error", message: "Rule name must contain alphanumeric characters." });
       return;
     }
     await handleFirewallAction({
