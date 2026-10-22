@@ -34,6 +34,7 @@ import {
   Search,
   Server,
   Activity,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +61,7 @@ interface CveFinding {
   epss_score?: number;
   asset_id?: string;
   target?: string;
+  title?: string;
   description: string;
   remediation?: string;
 }
@@ -97,6 +99,13 @@ export default function ScannerDashboardPage() {
   const [serviceConnected, setServiceConnected] = useState(false);
   const [mitigatingId, setMitigatingId] = useState<string | null>(null);
   const [mitigatedIds, setMitigatedIds] = useState<Set<string>>(new Set());
+  const [activeFindingAction, setActiveFindingAction] = useState<{
+    findingKey: string;
+    action: "runbook" | "impact";
+  } | null>(null);
+
+  const getFindingKey = (cve: CveFinding) =>
+    `${cve.cve_id}::${cve.package_name || ""}::${cve.installed_version || ""}::${cve.target || ""}`;
 
   // Review & Remediation modal state
   const [reviewingSecret, setReviewingSecret] = useState<SecretFinding | null>(null);
@@ -215,6 +224,7 @@ export default function ScannerDashboardPage() {
   // Advisor Modal / Drawer state
   const [advisorContent, setAdvisorContent] = useState<string | null>(null);
   const [advisorTitle, setAdvisorTitle] = useState("");
+  const [copiedAdvisor, setCopiedAdvisor] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -739,7 +749,8 @@ export default function ScannerDashboardPage() {
   };
 
   const runBlastRadius = async (cve: CveFinding) => {
-    setLoading(true);
+    const findingKey = getFindingKey(cve);
+    setActiveFindingAction({ findingKey, action: "impact" });
     setAdvisorTitle(`Impact Analysis: ${cve.cve_id} (${cve.package_name})`);
     try {
       const res = await fetch("/api/ai/advisor", {
@@ -748,7 +759,20 @@ export default function ScannerDashboardPage() {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "blast_radius", cve_id: cve.cve_id, host_id: cve.asset_id }),
+        body: JSON.stringify({
+          action: "blast_radius",
+          cve_id: cve.cve_id,
+          host_id: cve.asset_id || cve.target || "Local Repository Workspace",
+          package_name: cve.package_name,
+          installed_version: cve.installed_version,
+          fixed_version: cve.fixed_version,
+          target: cve.target,
+          severity: cve.severity,
+          title: cve.title,
+          description: cve.description,
+          remediation: cve.remediation,
+          cvss_score: cve.cvss_score,
+        }),
       });
       const data = await res.json();
       const br = data.blast_radius;
@@ -760,7 +784,7 @@ export default function ScannerDashboardPage() {
 
         const formatted = `Impact Assessment for ${data.cve_id || cve.cve_id}:
 
-1. Target Asset & Scope: ${data.host_id || cve.asset_id}
+1. Target Asset & Scope: ${data.host_id || cve.target || cve.asset_id || "Application"}
 2. Direct Assets at Risk: ${br.direct_assets_at_risk ?? "N/A"}
 3. Downstream Dependencies:
 ${deps}
@@ -778,13 +802,14 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
     } catch {
       setAdvisorContent("Failed to perform impact analysis. Please ensure the application server is running and try again.");
     } finally {
-      setLoading(false);
+      setActiveFindingAction(null);
     }
   };
 
 
   const generateRunbook = async (cve: CveFinding) => {
-    setLoading(true);
+    const findingKey = getFindingKey(cve);
+    setActiveFindingAction({ findingKey, action: "runbook" });
     setAdvisorTitle(`Recovery Runbook: ${cve.cve_id}`);
     try {
       const res = await fetch("/api/ai/advisor", {
@@ -793,16 +818,28 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "generate_runbook", cve_id: cve.cve_id, host_id: cve.asset_id }),
+        body: JSON.stringify({
+          action: "generate_runbook",
+          cve_id: cve.cve_id,
+          host_id: cve.asset_id || cve.target || "Local Repository Workspace",
+          package_name: cve.package_name,
+          installed_version: cve.installed_version,
+          fixed_version: cve.fixed_version,
+          target: cve.target,
+          severity: cve.severity,
+          title: cve.title,
+          description: cve.description,
+          remediation: cve.remediation,
+          cvss_score: cve.cvss_score,
+        }),
       });
       const data = await res.json();
       const raw = data.runbook || "No runbook returned.";
-      const clean = raw.split("\n").map((l: string) => l.replace(/^[#*\s]+/, "").replace(/[`*]/g, "")).filter((l: string) => !l.startsWith("```")).join("\n");
-      setAdvisorContent(clean);
+      setAdvisorContent(raw);
     } catch {
       setAdvisorContent("Failed to generate runbook.");
     } finally {
-      setLoading(false);
+      setActiveFindingAction(null);
     }
   };
 
@@ -1007,7 +1044,13 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 </div>
 
                 <div className="grid grid-cols-1 gap-3.5">
-                  {paginatedCves.map((cve, index) => (
+                  {paginatedCves.map((cve, index) => {
+                    const findingKey = getFindingKey(cve);
+                    const isThisFindingBusy = activeFindingAction?.findingKey === findingKey;
+                    const isThisImpactLoading = isThisFindingBusy && activeFindingAction.action === "impact";
+                    const isThisRunbookLoading = isThisFindingBusy && activeFindingAction.action === "runbook";
+
+                    return (
                     <div
                       key={`${cve.cve_id}-${index}`}
                       className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
@@ -1063,24 +1106,49 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                         </button>
                         <button
                           onClick={() => runBlastRadius(cve)}
-                          disabled={loading}
-                          className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-text)] border border-[var(--sd-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
+                          disabled={isThisFindingBusy}
+                          className={cn(
+                            "sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-text)] border border-[var(--sd-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5",
+                            isThisFindingBusy && "opacity-50 cursor-not-allowed"
+                          )}
                         >
-                          <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
-                          <span>Impact Analysis</span>
+                          {isThisImpactLoading ? (
+                            <>
+                              <Loader2 className="h-3 w-3 text-[var(--sd-warning)] animate-spin" />
+                              <span>Analyzing…</span>
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
+                              <span>Impact Analysis</span>
+                            </>
+                          )}
                         </button>
                         <button
                           onClick={() => generateRunbook(cve)}
-                          disabled={loading}
-                          className="sd-button sd-button-primary px-2.5 py-1 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
+                          disabled={isThisFindingBusy}
+                          className={cn(
+                            "sd-button sd-button-primary px-2.5 py-1 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5",
+                            isThisFindingBusy && "opacity-50 cursor-not-allowed"
+                          )}
                         >
-                          <FileCode className="h-3 w-3" />
-                          <span>Recovery Runbook</span>
+                          {isThisRunbookLoading ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <span>Generating…</span>
+                            </>
+                          ) : (
+                            <>
+                              <FileCode className="h-3 w-3" />
+                              <span>Recovery Runbook</span>
+                            </>
+                          )}
                         </button>
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               {/* Pagination Controls */}
@@ -1961,12 +2029,37 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
             <div className="p-6 space-y-4">
               <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
                 <h3 id="scanner-advisor-title" className="text-lg font-normal text-[var(--sd-text)]">{advisorTitle}</h3>
-                <button
-                  onClick={() => setAdvisorContent(null)}
-                  className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer"
-                >
-                  ✕ Close
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (advisorContent) {
+                        navigator.clipboard.writeText(advisorContent);
+                        setCopiedAdvisor(true);
+                        setTimeout(() => setCopiedAdvisor(false), 2000);
+                      }
+                    }}
+                    className="sd-button px-2.5 py-1 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface text-[12px] text-[var(--sd-text)] flex items-center gap-1 cursor-pointer font-medium"
+                    title="Copy runbook to clipboard"
+                  >
+                    {copiedAdvisor ? (
+                      <>
+                        <Check className="h-3 w-3 text-[var(--sd-pine)]" />
+                        <span className="text-[var(--sd-pine)] font-sans">Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3 w-3" />
+                        <span className="font-sans">Copy</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setAdvisorContent(null)}
+                    className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
               </div>
 
               <pre className="p-4 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[13px] font-mono text-[var(--sd-text)] overflow-x-auto max-h-96 whitespace-pre-wrap leading-relaxed">
