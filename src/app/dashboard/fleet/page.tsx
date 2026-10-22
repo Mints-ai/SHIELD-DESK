@@ -1513,45 +1513,47 @@ export default function FleetPage() {
                             <Unplug className="h-3.5 w-3.5" />
                             <span>Disconnect</span>
                           </button>
-                        ) : isWithinGrace ? (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (reconnectingAgentId !== agent.id) {
-                                handleReconnectAgent(agent.id);
-                              }
-                            }}
-                            disabled={reconnectingAgentId === agent.id}
-                            className="w-full flex items-center justify-center gap-2 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 hover:border-emerald-500/80 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-xs shadow-emerald-500/10 animate-pulse"
-                            title={`Reconnect host — window expires in ${remainingSeconds}s`}
-                          >
-                            <RefreshCw className={cn("h-3.5 w-3.5", reconnectingAgentId === agent.id && "animate-spin")} />
-                            <span>
-                              {reconnectingAgentId === agent.id
-                                ? "Reconnecting..."
-                                : `Reconnect Host (${remainingSeconds}s)`}
-                            </span>
-                          </button>
                         ) : (
-                          canManageFleetAgents ? (
+                          <div className="w-full flex items-center gap-2">
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleRemoveAgent(agent.id, agent.hostname);
+                                if (reconnectingAgentId !== agent.id) {
+                                  handleReconnectAgent(agent.id);
+                                }
                               }}
-                              className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-red-500/40 text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:border-red-500/70 transition cursor-pointer"
-                              title="Remove endpoint from fleet"
+                              disabled={reconnectingAgentId === agent.id}
+                              className={cn(
+                                "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 transition cursor-pointer disabled:opacity-60",
+                                isWithinGrace && "animate-pulse border-emerald-500/70"
+                              )}
+                              title={isWithinGrace ? `Reconnect host (${remainingSeconds}s remaining)` : "Reconnect endpoint to fleet"}
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              <span>Delete Host</span>
+                              <RefreshCw className={cn("h-3.5 w-3.5", reconnectingAgentId === agent.id && "animate-spin")} />
+                              <span>
+                                {reconnectingAgentId === agent.id
+                                  ? "Reconnecting..."
+                                  : isWithinGrace
+                                  ? `Reconnect (${remainingSeconds}s)`
+                                  : "Reconnect Host"}
+                              </span>
                             </button>
-                          ) : (
-                            <div className="w-full py-1.5 text-center text-[10px] font-mono text-[var(--sd-text-dim)]">
-                              Endpoint Severed
-                            </div>
-                          )
+                            {canManageFleetAgents && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveAgent(agent.id, agent.hostname);
+                                }}
+                                className="flex items-center justify-center gap-1 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-red-500/40 text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:border-red-500/70 transition cursor-pointer"
+                                title="Remove endpoint from fleet"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}

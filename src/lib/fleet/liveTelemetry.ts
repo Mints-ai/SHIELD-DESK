@@ -195,6 +195,15 @@ export async function setLiveAgentStatus(
 ): Promise<boolean> {
   if (status === "connected") {
     adminDisconnectedAgents.delete(agentId);
+    try {
+      const { rows } = await query<{ hostname: string }>(
+        "SELECT hostname FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1",
+        [agentId]
+      );
+      if (rows.length > 0 && rows[0].hostname) {
+        adminDisconnectedAgents.delete(rows[0].hostname);
+      }
+    } catch {}
   } else if (status === "disconnected") {
     adminDisconnectedAgents.add(agentId);
   }
