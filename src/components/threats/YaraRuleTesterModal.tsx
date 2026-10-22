@@ -39,9 +39,7 @@ export function YaraRuleTesterModal({
       (initialRuleId && availableRules.find((r) => r.id === initialRuleId)?.raw_content) ||
       ""
   );
-  const [samplePayload, setSamplePayload] = useState<string>(
-    `<?php\n// Suspicious uploaded file\nif(isset($_POST['cmd'])) {\n    $cmd = base64_decode($_POST['cmd']);\n    c99shell();\n    passthru($_POST['cmd']);\n}`
-  );
+  const [samplePayload, setSamplePayload] = useState<string>("");
   const [isBase64, setIsBase64] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<YaraMatchResult | null>(null);

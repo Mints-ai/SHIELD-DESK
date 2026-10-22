@@ -41,7 +41,7 @@ export const SEED_SYSTEM_YARA_RULES: YaraRuleRecord[] = [
 }`,
     enabled: true,
     is_system: true,
-    matches_today: 3,
+    matches_today: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -100,7 +100,7 @@ export const SEED_SYSTEM_YARA_RULES: YaraRuleRecord[] = [
 }`,
     enabled: true,
     is_system: true,
-    matches_today: 1,
+    matches_today: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -211,7 +211,7 @@ export async function getYaraRules(tenantId?: string): Promise<YaraRuleRecord[]>
   const stats = await getYaraMatchStats(tenantId);
   return rules.map((r) => ({
     ...r,
-    matches_today: (stats[r.rule_id] ?? 0) + (r.matches_today || 0),
+    matches_today: stats[r.rule_id] ?? 0,
   }));
 }
 
