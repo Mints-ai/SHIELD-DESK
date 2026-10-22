@@ -58,6 +58,7 @@ export interface LiveTelemetrySample {
 
 let cachedSample: LiveTelemetrySample | null = null;
 let lastSampleTime = 0;
+const cachedPidNameMap = new Map<string, string>();
 const CACHE_TTL_MS = 2000; // 2-second cache to guarantee <0.05% CPU overhead
 
 let cachedDefenderStatus: DefenderStatusData | null = null;
@@ -421,22 +422,23 @@ export function sampleLiveCoreTelemetry(hostname?: string): LiveTelemetrySample 
     try {
       const taskOutput = execSync("tasklist /FO CSV /NH", {
         encoding: "utf8",
-        timeout: 2500,
+        timeout: 5000,
         stdio: ["ignore", "pipe", "ignore"],
       });
       for (const line of taskOutput.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         const parts = trimmed.split('","').map((p) => p.replace(/"/g, ""));
-        if (parts.length >= 5) {
+        if (parts.length >= 2) {
           const name = parts[0];
           const pid = parseInt(parts[1], 10);
-          const memRaw = parts[4].replace(/[^\d]/g, "");
+          const memRaw = parts.length >= 5 ? parts[4].replace(/[^\d]/g, "") : "0";
           const memMb = Number((parseInt(memRaw, 10) / 1024).toFixed(1));
           const isProtected =
             pid <= 4 ||
             /^(system|secure system|registry|smss|csrss|services|lsass)/i.test(name);
           pidNameMap.set(String(pid), name);
+          cachedPidNameMap.set(String(pid), name);
           processList.push({
             pid,
             name,
@@ -457,7 +459,7 @@ export function sampleLiveCoreTelemetry(hostname?: string): LiveTelemetrySample 
     try {
       const psOutput = execSync("ps -eo pid,rss,comm --sort=-rss", {
         encoding: "utf8",
-        timeout: 2500,
+        timeout: 5000,
         stdio: ["ignore", "pipe", "ignore"],
       });
       const lines = psOutput.trim().split("\n").slice(1);
@@ -474,6 +476,7 @@ export function sampleLiveCoreTelemetry(hostname?: string): LiveTelemetrySample 
             protected: pid <= 1 || name.startsWith("kworker") || name.startsWith("systemd"),
           });
           pidNameMap.set(String(pid), name);
+          cachedPidNameMap.set(String(pid), name);
         }
       }
     } catch {
@@ -492,7 +495,7 @@ export function sampleLiveCoreTelemetry(hostname?: string): LiveTelemetrySample 
     try {
       const netOutput = execSync("netstat -ano -p tcp", {
         encoding: "utf8",
-        timeout: 2500,
+        timeout: 5000,
         stdio: ["ignore", "pipe", "ignore"],
       });
       for (const line of netOutput.split("\n")) {
@@ -504,6 +507,7 @@ export function sampleLiveCoreTelemetry(hostname?: string): LiveTelemetrySample 
           const pid = parts[4];
           const procName =
             pidNameMap.get(pid) ||
+            cachedPidNameMap.get(pid) ||
             (pid === "0" ? "System Idle" : pid === "4" ? "System" : `PID ${pid}`);
 
           // Filter out ephemeral duplicates to keep sampling concise and relevant
