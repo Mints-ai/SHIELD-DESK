@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { query } from "@/lib/db";
+import { shouldFailClosed } from "@/lib/config/environment";
 import { parseYaraRule } from "./parser";
 import type {
   YaraRuleRecord,
@@ -41,7 +42,7 @@ export const SEED_SYSTEM_YARA_RULES: YaraRuleRecord[] = [
 }`,
     enabled: true,
     is_system: true,
-    matches_today: 3,
+    matches_today: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -100,7 +101,7 @@ export const SEED_SYSTEM_YARA_RULES: YaraRuleRecord[] = [
 }`,
     enabled: true,
     is_system: true,
-    matches_today: 1,
+    matches_today: 0,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   },
@@ -200,8 +201,10 @@ export async function getYaraRules(tenantId?: string): Promise<YaraRuleRecord[]>
         matches_today: stats[r.rule_id] ?? 0,
       }));
     }
-  } catch {
-    // DB offline fallback
+  } catch (err) {
+    if (shouldFailClosed()) {
+      throw err;
+    }
   }
 
   // Memory store fallback
@@ -211,7 +214,7 @@ export async function getYaraRules(tenantId?: string): Promise<YaraRuleRecord[]>
   const stats = await getYaraMatchStats(tenantId);
   return rules.map((r) => ({
     ...r,
-    matches_today: (stats[r.rule_id] ?? 0) + (r.matches_today || 0),
+    matches_today: stats[r.rule_id] ?? 0,
   }));
 }
 
@@ -231,8 +234,10 @@ export async function getYaraRuleById(
     if (rows && rows.length > 0) {
       return rows[0];
     }
-  } catch {
-    // DB offline fallback
+  } catch (err) {
+    if (shouldFailClosed()) {
+      throw err;
+    }
   }
 
   const found = IN_MEMORY_YARA_RULES.find(
@@ -321,8 +326,10 @@ export async function createYaraRule(
         now,
       ]
     );
-  } catch {
-    // DB offline fallback: store in memory
+  } catch (err) {
+    if (shouldFailClosed()) {
+      throw err;
+    }
   }
 
   // Always keep in memory store
@@ -388,8 +395,10 @@ export async function updateYaraRule(
         id,
       ]
     );
-  } catch {
-    // DB offline fallback
+  } catch (err) {
+    if (shouldFailClosed()) {
+      throw err;
+    }
   }
 
   const idx = IN_MEMORY_YARA_RULES.findIndex((r) => r.id === id || r.rule_id === id);
@@ -421,8 +430,10 @@ export async function deleteYaraRule(
 
   try {
     await query(`DELETE FROM yara_rules WHERE (id = $1 OR rule_id = $1)`, [id]);
-  } catch {
-    // DB offline fallback
+  } catch (err) {
+    if (shouldFailClosed()) {
+      throw err;
+    }
   }
 
   const idx = IN_MEMORY_YARA_RULES.findIndex((r) => r.id === id || r.rule_id === id);
@@ -475,8 +486,10 @@ export async function recordYaraMatch(input: RecordYaraMatchInput): Promise<Yara
         now,
       ]
     );
-  } catch {
-    // DB offline fallback
+  } catch (err) {
+    if (shouldFailClosed()) {
+      throw err;
+    }
   }
 
   IN_MEMORY_YARA_MATCHES.unshift(record);
@@ -503,8 +516,10 @@ export async function getYaraMatches(
     if (rows && rows.length > 0) {
       return rows;
     }
-  } catch {
-    // DB offline fallback
+  } catch (err) {
+    if (shouldFailClosed()) {
+      throw err;
+    }
   }
 
   const filtered = tenantId
@@ -531,8 +546,10 @@ export async function getYaraMatchStats(tenantId?: string): Promise<Record<strin
       }
       return stats;
     }
-  } catch {
-    // DB offline fallback
+  } catch (err) {
+    if (shouldFailClosed()) {
+      throw err;
+    }
   }
 
   for (const m of IN_MEMORY_YARA_MATCHES) {

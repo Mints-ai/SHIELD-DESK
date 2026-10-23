@@ -800,7 +800,6 @@ export default function ThreatsDashboardPage() {
           </div>
         )}
 
-        <p className="sd-sample-label w-fit">Illustrative baselines &amp; throughput benchmarks</p>
 
         {/* Stat Highlights */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

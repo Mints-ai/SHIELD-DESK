@@ -105,12 +105,10 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     status: "ok",
     serviceConnected,
-    scannerEngine: liveScanStatus ? "scan-service-remote" : localTrivyReady ? "trivy-local" : "mock-fallback",
-    dataMode: liveScanStatus || localTrivyReady ? "live" : "demo",
+    scannerEngine: liveScanStatus ? "scan-service-remote" : localTrivyReady ? "trivy-local" : "offline",
+    dataMode: liveScanStatus || localTrivyReady ? "live" : "offline",
     demoMode: isDemoMode(),
-    demoDataDisclaimer: liveScanStatus || localTrivyReady
-      ? null
-      : "⚠ DEMO DATA: Findings shown are illustrative examples for local evaluation, not real vulnerability data for this tenant.",
+    demoDataDisclaimer: null,
     tenantId: session.tenantId,
     metrics,
     findings: cveFindings,
@@ -315,9 +313,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "rotate_key") {
-      const keyId = body.key_id || "AKIA1234567890ABCDEF";
+      const keyId = body.key_id;
+      if (!keyId) {
+        return NextResponse.json({ error: "Missing required key_id parameter" }, { status: 400 });
+      }
       try {
-        const res = await fetch(`${scanServiceUrl}/internal/secrets/${keyId}/rotate`, {
+        const res = await fetch(`${scanServiceUrl}/internal/secrets/${encodeURIComponent(keyId)}/rotate`, {
           method: "POST",
           signal: AbortSignal.timeout(3000),
         });
@@ -326,7 +327,7 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ success: true, ...liveData });
         }
       } catch {
-        // Fallback or fail closed
+        // Service offline
       }
 
       if (shouldFailClosed() || isProduction()) {
@@ -339,41 +340,69 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      return NextResponse.json({
-        success: true,
-        status: "success",
-        _demo_mode: true,
-        status_code: "rotated",
-        old_key_id: keyId,
-        new_key_id: `KEY-${Math.random().toString(36).substring(2, 14).toUpperCase()}`,
-        invalidated_at: new Date().toISOString(),
-        message: `AWS IAM access key ${keyId} revoked and rotated (Demo Mode simulation).`,
-      });
+      return NextResponse.json(
+        {
+          error: "KMS / IAM key rotation service is unreachable or not configured.",
+          code: "KMS_SERVICE_OFFLINE",
+          success: false,
+        },
+        { status: 503 }
+      );
     }
 
     if (action === "apply_patch") {
-      if (shouldFailClosed() || isProduction()) {
+      const orchestratorUrl = process.env.PATCH_ORCHESTRATOR_URL || "http://localhost:8006";
+      let orchestratorConnected = false;
+      try {
+        const check = await fetch(`${orchestratorUrl}/health`, { signal: AbortSignal.timeout(1000) });
+        orchestratorConnected = check.ok;
+      } catch {
+        orchestratorConnected = false;
+      }
+
+      if (!orchestratorConnected) {
+        if (shouldFailClosed() || isProduction()) {
+          return NextResponse.json(
+            {
+              error: "Remote host patch daemon is not connected. Patching cannot be executed or claimed without a live agent connection.",
+              code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+            },
+            { status: 503 }
+          );
+        }
+
         return NextResponse.json(
           {
             error: "Remote host patch daemon is not connected. Patching cannot be executed or claimed without a live agent connection.",
-            code: "FAIL_CLOSED_DEPENDENCY_OFFLINE",
+            code: "PATCH_DAEMON_OFFLINE",
+            success: false,
           },
           { status: 503 }
         );
       }
 
-      const targetHost = body.asset_ip || "10.0.4.12";
-      return NextResponse.json({
-        success: true,
-        _demo_mode: true,
-        host: targetHost,
-        snapshot_created: `snap-lvm-${Date.now().toString(36)}`,
-        os_type: body.os_type || "linux",
-        dry_run: Boolean(body.dry_run),
-        status: body.dry_run ? "DRY_RUN_PASSED" : "VERIFIED",
-        packages_updated: body.packages || ["openssh-server", "libwebp7"],
-        verification_log: "Pre-patch LVM snapshot created. Package signature verified. Daemons restarted without degradation (Simulated Demo Mode).",
-      });
+      try {
+        const patchRes = await fetch(`${orchestratorUrl}/api/patch/execute`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (patchRes.ok) {
+          const liveData = await patchRes.json();
+          return NextResponse.json({ success: true, ...liveData });
+        }
+        const errData = await patchRes.json().catch(() => ({}));
+        return NextResponse.json(
+          { error: errData.error || "Patch execution failed on orchestrator", code: "PATCH_EXECUTION_FAILED" },
+          { status: patchRes.status || 500 }
+        );
+      } catch (patchErr: any) {
+        return NextResponse.json(
+          { error: `Patch execution failed: ${patchErr.message}`, code: "PATCH_EXECUTION_FAILED" },
+          { status: 502 }
+        );
+      }
     }
 
     return NextResponse.json({ error: "Unknown action specified" }, { status: 400 });

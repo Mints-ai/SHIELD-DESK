@@ -64,6 +64,13 @@ export async function checkThrottle(
       limit,
     };
   } catch {
+    if (shouldFailClosed() && process.env.NODE_ENV !== "test") {
+      return {
+        allowed: false,
+        count: limit,
+        limit,
+      };
+    }
     // Fall back to in-memory tracking if database is offline or in unit tests
     const cutoff = Date.now() - THROTTLE_WINDOW_MS;
     const count = IN_MEMORY_THROTTLE_ENTRIES.filter(

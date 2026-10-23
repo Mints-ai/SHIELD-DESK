@@ -78,12 +78,19 @@ export async function POST(
       if (!rule || !rule.name) {
         return NextResponse.json({ error: "Rule specification with 'name' is required" }, { status: 400 });
       }
+      const sanitizedName = String(rule.name).trim().replace(/\s+/g, "-").replace(/[^a-zA-Z0-9_-]/g, "");
+      if (!sanitizedName) {
+        return NextResponse.json({ error: "Rule name must contain alphanumeric characters" }, { status: 400 });
+      }
       const dir = rule.direction || "in";
       const actionType = rule.action || "block";
       const proto = rule.protocol || "TCP";
       const port = rule.port || rule.localPort || "";
       const remoteIp = rule.remoteIp || "";
-      command = `firewall_add_rule ${rule.name} ${dir} ${actionType} ${proto} ${port} ${remoteIp}`.trim();
+      const cmdParts = ["firewall_add_rule", sanitizedName, dir, actionType, proto];
+      if (port) cmdParts.push(String(port).trim());
+      if (remoteIp) cmdParts.push(String(remoteIp).trim());
+      command = cmdParts.join(" ");
     } else if (action === "delete_rule") {
       if (!ruleName) {
         return NextResponse.json({ error: "ruleName is required to delete" }, { status: 400 });
@@ -105,6 +112,15 @@ export async function POST(
 
     let effectiveTokenId = approvalTokenId;
     const isAuthorityRole = caller.role === "system_admin" || caller.role === "super_admin";
+
+    if (!effectiveTokenId && !isAuthorityRole) {
+      return NextResponse.json(
+        {
+          error: "Tier 2 Permission Denied: Firewall enforcement requires System Admin or Super Admin authority. Switch your operator persona in the top navigation bar to 'System Admin', or enter an approved Authority Token ID.",
+        },
+        { status: 403 }
+      );
+    }
 
     // Auto-provision approval token for SecOps admin if not provided
     if (!effectiveTokenId && isAuthorityRole) {

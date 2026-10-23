@@ -120,31 +120,28 @@ export async function POST(req: NextRequest) {
     }
 
     if (!isBlocked && agentRecord) {
-      try {
-        const { rows: fleetBlockedCheck } = await query(
-          `SELECT 1 FROM fleet_blocked_ips
-           WHERE status = 'blocked'
-             AND ($1::text IS NULL OR tenant_id = $1)
-             AND (
-               agent_id = $2
-               OR hostname = $3
-               OR (ip_address = $4 AND $4 != '')
-             )
-           LIMIT 1;`,
-          [effectiveTenantId, agentRecord.id, agentRecord.hostname, agentRecord.ip_address || ""]
-        );
-        if (fleetBlockedCheck.length > 0) {
-          isBlocked = true;
+      const agentIp = (agentRecord.ip_address || "").trim();
+      if (agentIp && agentIp !== "Unknown") {
+        try {
+          const { rows: fleetBlockedCheck } = await query(
+            `SELECT 1 FROM fleet_blocked_ips
+             WHERE status = 'blocked'
+               AND ($1::text IS NULL OR tenant_id = $1)
+               AND ip_address = $2
+             LIMIT 1;`,
+            [effectiveTenantId, agentIp]
+          );
+          if (fleetBlockedCheck.length > 0) {
+            isBlocked = true;
+          }
+        } catch {
+          const match = MOCK_FLEET_BLOCKED_IPS.find(
+            (b) =>
+              b.status === "blocked" &&
+              b.ip_address === agentIp
+          );
+          if (match) isBlocked = true;
         }
-      } catch {
-        const match = MOCK_FLEET_BLOCKED_IPS.find(
-          (b) =>
-            b.status === "blocked" &&
-            (b.agent_id === agentRecord?.id ||
-              b.hostname === agentRecord?.hostname ||
-              (agentRecord?.ip_address && b.ip_address === agentRecord.ip_address))
-        );
-        if (match) isBlocked = true;
       }
     }
 
@@ -184,41 +181,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Check if operator explicitly disconnected this specific agent (via adminDisconnectedAgents)
-    const isExplicitlyDisconnected =
-      adminDisconnectedAgents.has(agentId) ||
-      (agentRecord !== null && (
-        adminDisconnectedAgents.has(agentRecord.id) ||
-        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname))
-      ));
-
-    if (isExplicitlyDisconnected) {
-      await query(
-        `UPDATE endpoint_agents
-         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
-         WHERE id::text = $1 OR hostname = $1;`,
-        [agentId]
-      ).catch(() => {});
-
-      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
-      if (currentMock) {
-        currentMock.status = "disconnected";
-        currentMock.cpu_usage = 0;
-        currentMock.memory_usage = 0;
-        currentMock.eps = 0;
-      }
-
-      return NextResponse.json({
-        success: true,
-        agentId,
-        status: "disconnected",
-        killSwitchActive: false,
-        message: "Endpoint is administratively disconnected or contained.",
-        timestamp: new Date().toISOString(),
-      });
+    // 3. Emergency Admin Kill Switch: if engaged, immediately lock agent out with 423
+    if (agentRecord?.kill_switch_active) {
+      MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "kill_switch" });
+      return NextResponse.json(
+        { error: "KILL_SWITCH_ACTIVE", killSwitchActive: true },
+        { status: 423 }
+      );
     }
 
-    // Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
+    // 4. Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
     if (ipAddress && requestedStatus !== "disconnected") {
       try {
         const { rows: conflictRows } = await query<{ id: string; hostname: string }>(
@@ -285,6 +257,40 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 5. Check if operator explicitly disconnected this specific agent via admin lock
+    const isExplicitlyDisconnected =
+      adminDisconnectedAgents.has(agentId) ||
+      (agentRecord !== null && (
+        adminDisconnectedAgents.has(agentRecord.id) ||
+        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname))
+      ));
+
+    if (isExplicitlyDisconnected) {
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+         WHERE id::text = $1 OR hostname = $1;`,
+        [agentId]
+      ).catch(() => {});
+
+      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
+      if (currentMock) {
+        currentMock.status = "disconnected";
+        currentMock.cpu_usage = 0;
+        currentMock.memory_usage = 0;
+        currentMock.eps = 0;
+      }
+
+      return NextResponse.json({
+        success: true,
+        agentId,
+        status: "disconnected",
+        killSwitchActive: false,
+        message: "Endpoint is administratively disconnected or contained.",
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     try {
       const { rows } = await query<{
         id: string;
@@ -301,7 +307,6 @@ export async function POST(req: NextRequest) {
              core_telemetry = CASE WHEN $7::jsonb IS NOT NULL THEN $7::jsonb ELSE core_telemetry END,
              status = CASE
                WHEN status = 'isolated' THEN 'isolated'
-               WHEN status = 'disconnected' THEN 'disconnected'
                WHEN $6::text = 'disconnected' THEN 'disconnected'
                ELSE 'connected'
              END
@@ -327,7 +332,7 @@ export async function POST(req: NextRequest) {
         }>(
           `INSERT INTO endpoint_agents (id, tenant_id, hostname, ip_address, os_type, agent_version, status, cpu_usage, memory_usage, eps, kill_switch_active, last_seen_at, created_at)
            VALUES ($1, $2, $3, $4, $5, '0.4.2', 'connected', $6, $7, $8, false, now(), now())
-           ON CONFLICT (id) DO UPDATE SET last_seen_at = now(), status = CASE WHEN endpoint_agents.status IN ('disconnected', 'isolated') THEN endpoint_agents.status ELSE 'connected' END, cpu_usage = EXCLUDED.cpu_usage, memory_usage = EXCLUDED.memory_usage, eps = EXCLUDED.eps
+           ON CONFLICT (id) DO UPDATE SET last_seen_at = now(), status = CASE WHEN endpoint_agents.status = 'isolated' THEN 'isolated' ELSE 'connected' END, cpu_usage = EXCLUDED.cpu_usage, memory_usage = EXCLUDED.memory_usage, eps = EXCLUDED.eps
            RETURNING id, kill_switch_active, tenant_id, status;`,
           [agentId, tenantId, host, ipAddress, osType, finalCpu, finalMem, finalEps]
         ).catch(() => ({ rows: [] }));

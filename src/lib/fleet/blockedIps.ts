@@ -101,23 +101,17 @@ export async function recordBlockedIp({
   // 1. Sync with Threat Alert Containment Store
   syncThreatAlertBlock(cleanIp, effectiveReason, 1, tenantId);
 
-  // 2. Synchronize with adminDisconnectedAgents and disconnect target endpoints in database
+  // 2. Synchronize with adminDisconnectedAgents and disconnect target endpoints in database ONLY if their registered IP matches the blocked IP
   try {
     const { adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
-    if (agentId) adminDisconnectedAgents.add(agentId);
-    if (hostname) adminDisconnectedAgents.add(hostname);
 
     const { rows: matchedAgents } = await query<{ id: string; hostname: string }>(
       `UPDATE endpoint_agents
        SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
        WHERE (tenant_id = $1 OR $1 = 'mints-global')
-         AND (
-           ip_address = $2
-           OR ($3::text IS NOT NULL AND id::text = $3)
-           OR ($4::text IS NOT NULL AND hostname = $4)
-         )
+         AND ip_address = $2
        RETURNING id, hostname;`,
-      [tenantId, cleanIp, agentId || null, hostname || null]
+      [tenantId, cleanIp]
     );
 
     for (const a of matchedAgents) {
@@ -216,16 +210,28 @@ export async function recordUnblockedIp({
     const { rows: affectedAgents } = await query<{ id: string; hostname: string }>(
       `UPDATE endpoint_agents
        SET status = 'connected', last_seen_at = now()
-       WHERE (tenant_id = $1 OR $1 = 'mints-global')
+       WHERE (tenant_id = $1 OR $1 = 'mints-global' OR tenant_id IS NULL)
          AND (
            ip_address = $2
            OR id::text IN (SELECT agent_id FROM fleet_blocked_ips WHERE ip_address = $2 AND agent_id IS NOT NULL)
+           OR hostname IN (SELECT hostname FROM fleet_blocked_ips WHERE ip_address = $2 AND hostname IS NOT NULL)
          )
        RETURNING id, hostname;`,
       [tenantId, cleanIp]
     );
 
     for (const a of affectedAgents) {
+      adminDisconnectedAgents.delete(a.id);
+      if (a.hostname) adminDisconnectedAgents.delete(a.hostname);
+    }
+
+    // Direct sweep for any agent registered under cleanIp
+    const { rows: directAgents } = await query<{ id: string; hostname: string }>(
+      `SELECT id, hostname FROM endpoint_agents WHERE ip_address = $1;`,
+      [cleanIp]
+    ).catch(() => ({ rows: [] }));
+
+    for (const a of directAgents) {
       adminDisconnectedAgents.delete(a.id);
       if (a.hostname) adminDisconnectedAgents.delete(a.hostname);
     }
@@ -239,7 +245,7 @@ export async function recordUnblockedIp({
     const res = await query(
       `UPDATE fleet_blocked_ips
        SET status = 'unblocked', unblocked_at = now()
-       WHERE (tenant_id = $1 OR $1 = 'mints-global')
+       WHERE (tenant_id = $1 OR $1 = 'mints-global' OR tenant_id IS NULL)
          AND (
            ip_address = $2
            OR ($2 = '127.0.0.1' AND ip_address IN ('127.0.0.1', '::1', 'localhost'))
@@ -271,9 +277,13 @@ export async function recordUnblockedIp({
   }
 
   try {
-    const { MOCK_ENDPOINT_AGENTS } = await import("./fleet");
+    const { adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
+    const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
     for (const a of MOCK_ENDPOINT_AGENTS) {
-      if (a.ip_address === cleanIp && (a.tenant_id === tenantId || tenantId === "mints-global")) {
+      if (
+        (a.tenant_id === tenantId || tenantId === "mints-global") &&
+        (a.ip_address === cleanIp || (cleanIp === "127.0.0.1" && ["127.0.0.1", "::1", "localhost"].includes(a.ip_address)))
+      ) {
         adminDisconnectedAgents.delete(a.id);
         if (a.hostname) adminDisconnectedAgents.delete(a.hostname);
       }

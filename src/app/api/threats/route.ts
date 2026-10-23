@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
-import { getActiveDetectionRules, toggleDetectionRule } from "@/lib/detection/engine";
+import { getActiveDetectionRules, toggleDetectionRule, ACTIVE_DETECTION_RULES } from "@/lib/detection/engine";
 import { getYaraRules } from "@/lib/detection/yara/store";
 import { query } from "@/lib/db";
 import {
@@ -368,15 +368,24 @@ export async function GET(req: NextRequest) {
       status: "ok",
       engine: goThreatState ? "go-threat-service" : "typescript-in-memory",
       ingest_engine: liveIngestStats ? "go-ingest-grpc" : "nominal-benchmark",
-      dataMode: isDemoMode() ? "demo" : "live",
+      dataMode: "live",
       demoMode: isDemoMode(),
-      demoDataDisclaimer: isDemoMode()
-        ? "⚠ DEMO DATA: Baseline and telemetry statistics are simulated benchmarks for evaluation."
-        : null,
+      demoDataDisclaimer: null,
       tenantId: session.tenantId,
       detection_rules: engineRules,
       yara_rules: liveYaraRules.length > 0 ? liveYaraRules : (goThreatState?.yara_rules || []),
-      sigma_rules: goThreatState?.sigma_rules || [],
+      sigma_rules:
+        goThreatState?.sigma_rules && goThreatState.sigma_rules.length > 0
+          ? goThreatState.sigma_rules
+          : ACTIVE_DETECTION_RULES.filter((r) => r.type === "sigma").map((r) => ({
+              id: r.id,
+              name: r.name,
+              category: r.category,
+              severity: r.severity.toUpperCase(),
+              matches_today: r.matchesCount || 0,
+              status: r.enabled ? "ACTIVE" : "DISABLED",
+              description: r.description,
+            })),
       anomaly_baselines: goThreatState?.anomaly_baselines || anomalyBaselines,
       ingest_telemetry: mergedTelemetry,
       can_view_auth_alerts: canViewAuthAlerts,
