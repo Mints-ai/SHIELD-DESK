@@ -15,13 +15,22 @@ Covers Phase 1 Verification:
 
 import os
 import sys
+
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_ai_chat_desk_dir = os.path.abspath(os.path.join(_current_dir, ".."))
+if _ai_chat_desk_dir not in sys.path:
+    sys.path.insert(0, _ai_chat_desk_dir)
+
 import json
 import time
 import socket
+import sqlite3
 import unittest
 import threading
+import concurrent.futures
+from unittest import mock
 import requests
-from http.server import HTTPServer
+from http.server import HTTPServer, ThreadingHTTPServer
 
 import auth_util
 from auth_util import (
@@ -158,7 +167,7 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
         cls.test_port = sock.getsockname()[1]
         sock.close()
 
-        cls.server = HTTPServer(("127.0.0.1", cls.test_port), CVEAPIHandler)
+        cls.server = ThreadingHTTPServer(("127.0.0.1", cls.test_port), CVEAPIHandler)
         cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.server_thread.start()
         cls.base_url = f"http://127.0.0.1:{cls.test_port}"
@@ -193,6 +202,45 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
         headers = {"X-ShieldDesk-Internal-Key": "forged_malicious_key_123456789012"}
         resp = requests.post(f"{self.base_url}/api/model/promote", headers=headers, json={}, timeout=5)
         self.assertEqual(resp.status_code, 401)
+
+    # ---- 1b. Direct Access with Missing Admin Assertion (Negative) --------
+
+    def test_service_authenticated_promote_missing_assertion_rejected_403(self):
+        """Valid service credentials without admin assertion must be rejected with 403 on promote."""
+        resp = requests.post(f"{self.base_url}/api/model/promote", headers=self.service_headers, json={}, timeout=5)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Missing administrator cryptographic approval assertion token", resp.json().get("error", ""))
+
+    def test_service_authenticated_rollback_missing_assertion_rejected_403(self):
+        """Valid service credentials without admin assertion must be rejected with 403 on rollback."""
+        resp = requests.post(f"{self.base_url}/api/model/rollback", headers=self.service_headers, json={}, timeout=5)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Missing administrator cryptographic approval assertion token", resp.json().get("error", ""))
+
+    def test_service_authenticated_intel_sync_missing_assertion_rejected_403(self):
+        """Direct access with service key but missing admin assertion must be rejected with 403 on intel sync."""
+        resp = requests.post(f"{self.base_url}/api/intel/sync", headers=self.service_headers, json={}, timeout=5)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Missing administrator cryptographic approval assertion token", resp.json().get("error", ""))
+
+    def test_service_authenticated_trigger_scan_missing_assertion_rejected_403(self):
+        """Direct access with service key but missing admin assertion must be rejected with 403 on trigger scan."""
+        resp = requests.post(f"{self.base_url}/api/trigger_scan", headers=self.service_headers, json={}, timeout=5)
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("Missing administrator cryptographic approval assertion token", resp.json().get("error", ""))
+
+    def test_caller_supplied_identity_cannot_bypass_admin_assertion(self):
+        """Unverified caller-supplied headers claiming super_admin cannot bypass cryptographic assertion."""
+        for endpoint in ["/api/model/promote", "/api/model/rollback", "/api/intel/sync", "/api/trigger_scan"]:
+            headers = {
+                **self.service_headers,
+                "X-ShieldDesk-Operator-Id": "attacker",
+                "X-ShieldDesk-Operator-Role": "super_admin",
+                "X-ShieldDesk-User": "dev-super-admin",
+            }
+            resp = requests.post(f"{self.base_url}{endpoint}", headers=headers, json={"user_id": "root"}, timeout=5)
+            self.assertEqual(resp.status_code, 403, f"{endpoint} did not reject unverified caller identity")
+            self.assertIn("Missing administrator cryptographic approval assertion token", resp.json().get("error", ""))
 
     # ---- 2. HTTP Method Restrictions (Negative) ---------------------------
 
@@ -551,12 +599,18 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
 
     # ---- 10. Concurrent Replay and Durable Restart Protection ------------
 
-    def test_concurrent_token_replay(self):
+    @mock.patch("server.CVEFeedSynchronizer")
+    def test_concurrent_token_replay(self, mock_syncer_cls):
         """
         10 simultaneous threads attempting to consume the exact same token nonce.
         SQLite durable store with primary key constraint guarantees exactly 1 succeeds
         and 9 fail with 403 replay attack detected.
         """
+        mock_instance = mock.MagicMock()
+        mock_instance.sync_cisa_kev.return_value = [{"cve_id": "CVE-2024-9999"}]
+        mock_instance.initialize_or_update_lookup_store.return_value = 13249
+        mock_syncer_cls.return_value = mock_instance
+
         token = create_admin_assertion_token(
             operator_id="admin-1",
             role="super_admin",
@@ -589,6 +643,63 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
 
         self.assertEqual(len(successes), 1, f"Expected exactly 1 success, got {len(successes)}: {results}")
         self.assertEqual(len(replays), 9, f"Expected 9 replay rejections, got {len(replays)}: {results}")
+
+    def test_durable_nonce_store_concurrent_direct_consumption(self):
+        """20 concurrent threads trying to consume the exact same nonce directly in DurableNonceStore."""
+        test_nonce = f"direct-concurrent-nonce-{time.time()}"
+        exp = int(time.time()) + 300
+
+        def _consume():
+            return DurableNonceStore.record_and_verify_nonce(
+                nonce=test_nonce,
+                operation="model_promote",
+                operator_id="admin-1",
+                exp=exp
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            futures = [executor.submit(_consume) for _ in range(20)]
+            results = [f.result() for f in futures]
+
+        successes = [r for r in results if r[0] is True]
+        failures = [r for r in results if r[0] is False and "Replay attack detected" in r[1]]
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(len(failures), 19)
+
+    def test_durable_nonce_store_failure_recovery_fails_closed(self):
+        """If SQLite database encounters an unrecoverable disk/lock error, record_and_verify_nonce must fail closed."""
+        with mock.patch.object(DurableNonceStore, "_get_connection", side_effect=sqlite3.OperationalError("Disk I/O error")):
+            ok, msg = DurableNonceStore.record_and_verify_nonce("any-nonce", "op", "user", int(time.time()) + 300)
+            self.assertFalse(ok)
+            self.assertIn("Nonce store error", msg)
+
+    def test_authorized_trigger_scan_with_admin_assertion_succeeds(self):
+        """Valid service key + signed admin assertion triggers scan and forwards verified operator ID."""
+        real_post = requests.post
+        mock_post = mock.MagicMock()
+        mock_resp = mock.MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"findings": [], "message": "Scan completed"}
+        mock_post.return_value = mock_resp
+
+        import server
+        server.requests.post = mock_post
+        try:
+            token = create_admin_assertion_token(
+                operator_id="admin-sec-1",
+                role="super_admin",
+                operation="trigger_scan"
+            )
+            headers = {**self.service_headers, "X-ShieldDesk-Admin-Assertion": token}
+            resp = real_post(f"{self.base_url}/api/trigger_scan", headers=headers, json={"target_path": "."}, timeout=10)
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json().get("success"), f"Status: {resp.status_code}, resp.json was: {resp.json()}")
+            # Verify operator_id from signed assertion was forwarded to Next.js API, not arbitrary caller identity
+            call_headers = mock_post.call_args[1].get("headers", {})
+            self.assertEqual(call_headers.get("X-ShieldDesk-User"), "admin-sec-1")
+        finally:
+            server.requests.post = real_post
 
     def test_durable_replay_prevention_across_service_restart(self):
         """

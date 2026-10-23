@@ -12,7 +12,7 @@ import socket
 import requests
 import importlib
 from typing import Any, Tuple, Optional
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, SimpleHTTPRequestHandler
 from cve_ai_engine import CVEAIEngine
 
 from auth_util import (
@@ -394,18 +394,23 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             return
 
         elif url.path == "/api/trigger_scan":
-            if not self._is_authenticated_service():
-                self._audit_privileged_call(url.path, 401, {}, "Unauthorized service request")
-                self._send_json({"error": "Unauthorized: Invalid or missing internal service token."}, status=401)
+            auth_ok, err_msg, admin_info = self._verify_admin_authorization(
+                data=data,
+                expected_operation="trigger_scan"
+            )
+            if not auth_ok:
+                status_code = 401 if "Unauthorized" in err_msg else 403
+                self._audit_privileged_call(url.path, status_code, admin_info, err_msg)
+                self._send_json({"error": err_msg}, status=status_code)
                 return
 
             try:
-                # Call the Next.js API which runs Trivy locally with dev user identity
-                user_id = data.get("user_id") if isinstance(data, dict) else "dev-admin"
+                # Call the Next.js API with verified operator identity
+                operator_id = admin_info.get("operator_id", "system-admin")
                 scan_url = "http://localhost:3000/api/scans"
                 headers = {
                     "Content-Type": "application/json",
-                    "X-ShieldDesk-User": user_id or "dev-admin",
+                    "X-ShieldDesk-User": operator_id,
                 }
                 payload = {
                     "action": "cve_scan",
@@ -454,26 +459,21 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             return
 
         elif url.path == "/api/intel/sync":
-            if not self._is_authenticated_service():
-                self._audit_privileged_call(url.path, 401, {}, "Unauthorized service request")
-                self._send_json({"error": "Unauthorized: Invalid or missing internal service token."}, status=401)
+            auth_ok, err_msg, admin_info = self._verify_admin_authorization(
+                data=data,
+                expected_operation="intel_sync"
+            )
+            if not auth_ok:
+                status_code = 401 if "Unauthorized" in err_msg else 403
+                self._audit_privileged_call(url.path, status_code, admin_info, err_msg)
+                self._send_json({"error": err_msg}, status=status_code)
                 return
-
-            assertion = self.headers.get("X-ShieldDesk-Admin-Assertion", "").strip()
-            caller_info = {"operator_id": "service", "role": "service"}
-            if assertion:
-                valid, msg, admin_payload = verify_admin_assertion_token(assertion, expected_operation="intel_sync")
-                if not valid:
-                    self._audit_privileged_call(url.path, 403, {}, msg)
-                    self._send_json({"error": f"Forbidden: {msg}"}, status=403)
-                    return
-                caller_info = admin_payload
 
             try:
                 sync = CVEFeedSynchronizer()
                 cisa_items = sync.sync_cisa_kev()
                 total_records = sync.initialize_or_update_lookup_store(cisa_items=cisa_items)
-                self._audit_privileged_call(url.path, 200, caller_info, f"Synced {len(cisa_items)} KEV items")
+                self._audit_privileged_call(url.path, 200, admin_info, f"Synced {len(cisa_items)} KEV items")
                 self._send_json({
                     "success": True,
                     "synced_cisa_items": len(cisa_items),
@@ -481,7 +481,7 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 })
             except Exception as e:
-                self._audit_privileged_call(url.path, 500, caller_info, str(e))
+                self._audit_privileged_call(url.path, 500, admin_info, str(e))
                 self._send_json({"error": f"Intel sync failed: {str(e)}"}, status=500)
             return
 
@@ -659,7 +659,7 @@ def start_daily_scheduler(interval_hours: int = 24):
 def run_server(host=HOST, port=PORT):
     os.makedirs("static", exist_ok=True)
     server_address = (host, port)
-    httpd = HTTPServer(server_address, CVEAPIHandler)
+    httpd = ThreadingHTTPServer(server_address, CVEAPIHandler)
     print(f"\n=======================================================")
     print(f"[*] CVE AI Intelligence Server running on http://{host}:{port}")
     print(f"=======================================================\n")
