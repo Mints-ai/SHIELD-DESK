@@ -36,7 +36,7 @@ import { DEV_USERS, type DevUserId, getRoleTier, getUserRole, canAssignTaskToUse
 
 interface MitigationTaskItem {
   id: string;
-  plan_id: string;
+  plan_id?: string | null;
   horizon: "immediate" | "short_term" | "long_term";
   title: string;
   description: string;
@@ -341,17 +341,20 @@ export default function SOCTaskBoardPage() {
   // Plan Switcher Handler
   const handleUpdatePlan = async (taskId: string, newPlanId: string) => {
     try {
+      const targetPlanId = newPlanId ? newPlanId : null;
       const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ planId: newPlanId }),
+        body: JSON.stringify({ planId: targetPlanId }),
       });
       if (res.ok) {
         if (selectedTask && selectedTask.id === taskId) {
-          openTaskDetail({ ...selectedTask, plan_id: newPlanId });
+          const updatedTask = { ...selectedTask, plan_id: targetPlanId ?? undefined };
+          setSelectedTask(updatedTask);
+          openTaskDetail(updatedTask);
         }
         loadTasks();
       }
@@ -599,13 +602,15 @@ export default function SOCTaskBoardPage() {
               <p className="text-[13px] text-[var(--sd-text-muted)]">
                 Multi-Tenant Remediation Task Board with Closed-Loop Agent Dispatch
               </p>
-              <Link
-                href="/dashboard/fleet"
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono hover:bg-emerald-500/20 transition shadow-xs"
-              >
-                <Cpu className="h-3.5 w-3.5" />
-                <span>Open Endpoint Task Manager &amp; Telemetry &rarr;</span>
-              </Link>
+              {activeUser.role !== "analyst" && (
+                <Link
+                  href="/dashboard/fleet"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono hover:bg-emerald-500/20 transition shadow-xs"
+                >
+                  <Cpu className="h-3.5 w-3.5" />
+                  <span>Open Endpoint Task Manager &amp; Telemetry &rarr;</span>
+                </Link>
+              )}
             </div>
           </div>
 
@@ -942,11 +947,7 @@ export default function SOCTaskBoardPage() {
                 onChange={(e) => setNewTaskPlanId(e.target.value)}
                 className="sd-input w-full rounded-xl px-3 py-2.5 text-[13px] text-[var(--sd-text)] transition"
               >
-                <option value="">
-                  {availablePlans.length > 0
-                    ? `Default Incident Plan (${availablePlans[0]?.incident_code})`
-                    : "Default Remediation Plan"}
-                </option>
+                <option value="">None (Standalone Task)</option>
                 {availablePlans.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.incident_code}: {p.incident_title} (Plan v{p.version})
@@ -954,7 +955,7 @@ export default function SOCTaskBoardPage() {
                 ))}
               </select>
               <p className="text-[10.5px] text-[var(--sd-text-muted)]">
-                Select an incident mitigation plan to link this task to, or use the active incident sequence.
+                Optionally select an incident mitigation plan to link this task to, or leave unassigned for a standalone task.
               </p>
             </div>
 
@@ -1181,14 +1182,31 @@ export default function SOCTaskBoardPage() {
             <div className="p-3.5 rounded-xl border border-[var(--sd-border)] bg-[var(--sd-surface)] space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <ShieldAlert className="h-4 w-4 text-[var(--sd-wheat)] shrink-0" />
+                  <ShieldAlert
+                    className={`h-4 w-4 shrink-0 ${
+                      detailData?.task.plan_id ? "text-[var(--sd-wheat)]" : "text-[var(--sd-text-muted)]"
+                    }`}
+                  />
                   <div className="min-w-0">
-                    <span className="text-xs font-semibold text-[var(--sd-text)] truncate block">
-                      Incident {detailData?.task.incident_code || (availablePlans[0]?.incident_code ?? "—")}: {detailData?.task.incident_title || (availablePlans[0]?.incident_title ?? "General Remediation Sequence")}
-                    </span>
-                    <span className="text-[10.5px] text-[var(--sd-text-muted)] font-mono block">
-                      Plan Version {detailData?.task.plan_version || 1} · Severity: {detailData?.task.incident_severity || "Routine"}
-                    </span>
+                    {detailData?.task.plan_id ? (
+                      <>
+                        <span className="text-xs font-semibold text-[var(--sd-text)] truncate block">
+                          Incident {detailData.task.incident_code || "—"}: {detailData.task.incident_title || "Mitigation Sequence"}
+                        </span>
+                        <span className="text-[10.5px] text-[var(--sd-text-muted)] font-mono block">
+                          Plan Version {detailData.task.plan_version || 1} · Severity: {detailData.task.incident_severity || "Routine"}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs font-semibold text-[var(--sd-text-muted)] truncate block">
+                          No Mitigation Plan Assigned
+                        </span>
+                        <span className="text-[10.5px] text-[var(--sd-text-muted)] font-mono block">
+                          Standalone Task · Not linked to an active incident plan
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1207,18 +1225,18 @@ export default function SOCTaskBoardPage() {
               {canEditTask && (
                 <div className="pt-2 border-t border-[var(--sd-border-subtle)] flex items-center justify-between gap-2 text-xs">
                   <span className="text-[10.5px] font-mono text-[var(--sd-text-muted)] uppercase">
-                    Re-assign to Plan:
+                    Mitigation Plan:
                   </span>
                   <select
                     value={selectedTask.plan_id || ""}
                     onChange={async (e) => {
                       const newPlanId = e.target.value;
-                      if (!newPlanId || newPlanId === selectedTask.plan_id) return;
+                      if (newPlanId === (selectedTask.plan_id || "")) return;
                       await handleUpdatePlan(selectedTask.id, newPlanId);
                     }}
                     className="bg-[var(--sd-panel-raised)] text-[11px] text-[var(--sd-pine)] border border-[var(--sd-border)] rounded-lg px-2.5 py-1 outline-none font-mono cursor-pointer max-w-[280px] truncate"
                   >
-                    <option value="">Select Target Plan...</option>
+                    <option value="">None (Standalone Task)</option>
                     {availablePlans.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.incident_code} ({p.incident_title.slice(0, 24)}…)

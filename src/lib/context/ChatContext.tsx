@@ -47,7 +47,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (controller.signal.aborted) return;
       try {
         const savedIncident = sessionStorage.getItem(STORAGE_KEY_INCIDENT);
-        if (savedIncident) setActiveIncidentIdState(savedIncident);
+        if (savedIncident && savedIncident !== "undefined" && savedIncident !== "null" && savedIncident.trim() !== "") {
+          setActiveIncidentIdState(savedIncident.trim());
+        }
       } catch { /* unavailable storage */ }
       if (!response.ok && response.status !== 401) throw new Error("Session could not be verified");
       const allowPersonas = result.devPersonasAllowed === true;
@@ -89,10 +91,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setActiveIncidentId = (id: string | null) => {
-    setActiveIncidentIdState(id);
+    const cleanId = id && id !== "undefined" && id !== "null" && id.trim() !== "" ? id.trim() : null;
+    setActiveIncidentIdState(cleanId);
     try {
-      if (id) {
-        sessionStorage.setItem(STORAGE_KEY_INCIDENT, id);
+      if (cleanId) {
+        sessionStorage.setItem(STORAGE_KEY_INCIDENT, cleanId);
       } else {
         sessionStorage.removeItem(STORAGE_KEY_INCIDENT);
       }

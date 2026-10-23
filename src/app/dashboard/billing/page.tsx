@@ -682,6 +682,17 @@ export default function CustomerBillingPage() {
                 ))}
               </div>
 
+              <div className="pt-1 pb-1">
+                <Link
+                  href="/pricing"
+                  onClick={() => setShowChangePlanModal(false)}
+                  className="text-[var(--sd-pine)] hover:underline inline-flex items-center gap-1 font-mono text-[11px]"
+                >
+                  <span>Compare full plan features</span>
+                  <ArrowUpRight className="w-3 h-3" />
+                </Link>
+              </div>
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => setShowChangePlanModal(false)}

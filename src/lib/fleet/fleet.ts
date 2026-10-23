@@ -2,7 +2,7 @@ import { query } from "@/lib/db";
 import type { SessionUser } from "@/lib/auth/session";
 import { canAccess } from "@/lib/permissions";
 import { getApprovalToken, markApprovalTokenConsumed } from "@/lib/governance/approvalTokens";
-import { checkThrottle, recordMockThrottleCommand } from "@/lib/governance/blastRadiusThrottle";
+import { checkThrottle, recordThrottleCommand } from "@/lib/governance/blastRadiusThrottle";
 import { signCommand } from "@/lib/fleet/commandSigning";
 import { isDemoMode, isProduction, isSimulationAllowed } from "@/lib/config/environment";
 import { validateCapabilitySupport, getCapability } from "./capabilities";
@@ -169,10 +169,8 @@ export async function getEndpointAgent(
     caller.role === "super_admin";
 
   try {
-    const sql = canCrossTenant
-      ? `SELECT * FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`
-      : `SELECT * FROM endpoint_agents WHERE (id::text = $1 OR hostname = $1) AND tenant_id = $2 LIMIT 1;`;
-    const params = canCrossTenant ? [identifier] : [identifier, caller.tenant_id];
+    const sql = `SELECT * FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`;
+    const params = [identifier];
 
     const result = await query(sql, params);
     if (result && result.rows.length > 0) {
@@ -415,17 +413,38 @@ export class RealAgentExecutor {
 
     try {
       if (taskId) {
-        const queued = await query(
-          `WITH bound_task AS (
-             UPDATE mitigation_tasks SET execution_command_id = $1, status = 'in_progress'
-             WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
-             RETURNING id
-           )
-           INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
-           SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
-           RETURNING id`,
-          [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
-        );
+        let queued;
+        try {
+          queued = await query(
+            `WITH bound_task AS (
+               UPDATE mitigation_tasks SET execution_command_id = $1, status = 'in_progress'
+               WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
+               RETURNING id
+             )
+             INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
+             RETURNING id`,
+            [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
+          );
+        } catch (colErr: unknown) {
+          const errMsg = colErr instanceof Error ? colErr.message : String(colErr);
+          if (errMsg.includes("execution_command_id")) {
+            await query("ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;").catch(() => {});
+            queued = await query(
+              `WITH bound_task AS (
+                 UPDATE mitigation_tasks SET status = 'in_progress'
+                 WHERE id = $12 AND tenant_id = $3 AND status IN ('pending', 'approved', 'failed')
+                 RETURNING id
+               )
+               INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
+               SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 FROM bound_task
+               RETURNING id`,
+              [queueRecord.id, queueRecord.agent_id, queueRecord.tenant_id, queueRecord.command, queueRecord.tier, queueRecord.token_id, queueRecord.signature, queueRecord.nonce, queueRecord.status, queueRecord.snapshot_id, queueRecord.created_at, taskId]
+            );
+          } else {
+            throw colErr;
+          }
+        }
         if (queued.rows.length === 0) throw new Error("TASK_DISPATCH_CONFLICT: Task is already running or no longer dispatchable.");
       } else await query(
         `INSERT INTO agent_commands (id, agent_id, tenant_id, command, tier, token_id, signature, nonce, status, snapshot_id, created_at)
@@ -444,7 +463,7 @@ export class RealAgentExecutor {
       } catch {
         MOCK_AGENT_COMMANDS.push(queueRecord);
         if (tier === "Tier 1") {
-          recordMockThrottleCommand(caller.tenant_id, "Tier 1");
+          recordThrottleCommand(caller.tenant_id, "Tier 1");
         }
       }
     }
@@ -546,7 +565,7 @@ export class SimulationExecutor {
       } catch {
         MOCK_AGENT_COMMANDS.push(queueRecord);
         if (tier === "Tier 1") {
-          recordMockThrottleCommand(caller.tenant_id, "Tier 1");
+          recordThrottleCommand(caller.tenant_id, "Tier 1");
         }
       }
     }
@@ -863,11 +882,22 @@ export async function executeAgentCommand({
     }
 
     const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(rawIp, caller.tenant_id, tokenId);
-    if (isUnblock && !isCurrentlyBlocked) {
-      throw new Error(`The IP address ${rawIp} is not blocked.`);
-    }
-    if (!isUnblock && isCurrentlyBlocked) {
-      throw new Error(`The IP address ${rawIp} is already blocked.`);
+    // Unblock should be idempotent: allow command to proceed to agent to verify and clear host firewall rules
+    if (!isUnblock && isCurrentlyBlocked && !tokenId) {
+      try {
+        const { rows: agentBlockCheck } = await query<{ count: string }>(
+          `SELECT COUNT(*) as count FROM agent_command_logs
+           WHERE agent_id = $1 AND (command ILIKE $2 OR command ILIKE $3) AND status IN ('succeeded', 'verified')`,
+          [agent.id, `block_ip ${rawIp}%`, `block ip ${rawIp}%`]
+        );
+        if (parseInt(agentBlockCheck[0]?.count || "0", 10) > 0) {
+          throw new Error(`The IP address ${rawIp} is already blocked on endpoint ${agent.hostname}.`);
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes("is already blocked")) {
+          throw err;
+        }
+      }
     }
   } else if (command.startsWith("kill_process")) {
     const rawPid = command.replace(/^kill_process\s+/i, "").trim();
@@ -1077,8 +1107,8 @@ export async function recordCommandResult({
   agentId?: string;
   verified?: boolean;
 }): Promise<{ success: boolean; notFound?: boolean; unauthorized?: boolean }> {
-  let effectiveStatus = (status === "executed" && verified) ? "verified" : status;
-  let effectiveOutput = output;
+  const effectiveStatus = (status === "executed" && verified) ? "verified" : status;
+  const effectiveOutput = output;
   const logStatus = (effectiveStatus === "executed" || effectiveStatus === "verified") ? "succeeded"
     : effectiveStatus === "rolled_back" ? "rolled_back"
     : ["failed", "cancelled", "expired", "delivery_failed", "execution_failed", "verification_failed"].includes(effectiveStatus) ? "failed" : "executing";

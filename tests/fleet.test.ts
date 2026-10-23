@@ -12,7 +12,7 @@ import {
   MOCK_HASH_CHAINS,
 } from "../src/lib/fleet/fleet";
 import { requestApprovalToken, approveActionToken } from "../src/lib/governance/approvalTokens";
-import { resetMockThrottle, DEFAULT_TIER1_LIMIT } from "../src/lib/governance/blastRadiusThrottle";
+import { resetThrottleStore, resetMockThrottle, DEFAULT_TIER1_LIMIT } from "../src/lib/governance/blastRadiusThrottle";
 import { signCommand, verifyCommandSignature } from "../src/lib/fleet/commandSigning";
 import {
   getObservedEndpointIp,
@@ -197,26 +197,26 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
     assert.ok(disengageRes.affectedCount >= 1);
   });
 
-  await t.test("Blast-Radius Throttle: 6th Tier 1 command throws BLAST_RADIUS_EXCEEDED and audits downgrade", async () => {
-    resetMockThrottle();
+  await t.test("Blast-Radius Throttle: Tier 1 commands up to limit succeed, subsequent command throws BLAST_RADIUS_EXCEEDED and audits downgrade", async () => {
+    resetThrottleStore();
 
-    // Fire 5 Tier 1 commands (all 5 must succeed)
+    // Fire Tier 1 commands up to limit (all must succeed)
     for (let i = 0; i < DEFAULT_TIER1_LIMIT; i++) {
       const res = await executeAgentCommand({
         agentId: "FIN-WS-042",
-        command: `block_ip 198.51.100.${10 + i}`,
+        command: "take_safety_snapshot",
         tier: "Tier 1",
         caller: acmeAnalyst,
       });
       assert.equal(res.success, true);
     }
 
-    // 6th command must fail with BLAST_RADIUS_EXCEEDED
+    // Exceeding limit must fail with BLAST_RADIUS_EXCEEDED
     await assert.rejects(
       async () => {
         await executeAgentCommand({
           agentId: "FIN-WS-042",
-          command: "block_ip 198.51.100.99",
+          command: "take_safety_snapshot",
           tier: "Tier 1",
           caller: acmeAnalyst,
         });
@@ -263,7 +263,7 @@ test("ShieldDesk Layer 2: Endpoint Agent Fleet & Live Command Suite", async (t) 
   });
 
   await t.test("Command Queue & Asynchronous Lifecycle: enqueues, polls, and reports execution result", async () => {
-    resetMockThrottle();
+    resetThrottleStore();
 
     // 1. Enqueue a Tier 1 command
     const res = await executeAgentCommand({

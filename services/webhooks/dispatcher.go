@@ -188,6 +188,17 @@ func formatDiscordPayload(payload *WebhookPayload) []byte {
 	if threat != "" {
 		fields = append(fields, map[string]interface{}{"name": "Threat", "value": threat, "inline": true})
 	}
+	if payload.Data != nil {
+		if meta, ok := payload.Data["metadata"].(map[string]interface{}); ok {
+			for k, v := range meta {
+				fields = append(fields, map[string]interface{}{
+					"name":   k,
+					"value":  fmt.Sprintf("%v", v),
+					"inline": true,
+				})
+			}
+		}
+	}
 	if payload.ID != "" {
 		fields = append(fields, map[string]interface{}{"name": "Delivery ID", "value": payload.ID, "inline": false})
 	}
@@ -252,6 +263,17 @@ func formatSlackPayload(payload *WebhookPayload) []byte {
 	}
 	if host != "" {
 		fields = append(fields, map[string]interface{}{"title": "Host", "value": host, "short": true})
+	}
+	if payload.Data != nil {
+		if meta, ok := payload.Data["metadata"].(map[string]interface{}); ok {
+			for k, v := range meta {
+				fields = append(fields, map[string]interface{}{
+					"title": k,
+					"value": fmt.Sprintf("%v", v),
+					"short": true,
+				})
+			}
+		}
 	}
 
 	slackMsg := map[string]interface{}{

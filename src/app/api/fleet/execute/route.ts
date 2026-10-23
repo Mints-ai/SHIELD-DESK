@@ -84,8 +84,55 @@ export async function POST(req: NextRequest) {
         }
 
         if (!isCurrentlyBlocked) {
+          // IP is already unblocked, but ensure the endpoint is reconnected and admin locks are cleared
+          const { setLiveAgentStatus, adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
+          const { getEndpointAgent } = await import("@/lib/fleet/fleet");
+          const agent = await getEndpointAgent(agentId, caller);
+
+          await query(
+            `UPDATE endpoint_agents
+             SET status = 'connected', last_seen_at = now()
+             WHERE (id::text = $1 OR ip_address = $2 OR hostname = $3)
+               AND (tenant_id = $4 OR $4 = 'mints-global');`,
+            [agent?.id || agentId, targetIp, agent?.hostname || agentId, caller.tenant_id]
+          ).catch(() => {});
+
+          await setLiveAgentStatus(agentId, "connected");
+          if (agent?.id) adminDisconnectedAgents.delete(agent.id);
+          if (agent?.hostname) adminDisconnectedAgents.delete(agent.hostname);
+          adminDisconnectedAgents.delete(agentId);
+
           const rejId = crypto.randomUUID();
-          const rejMsg = `The IP address ${targetIp} is not blocked.`;
+          const rejMsg = `The IP address ${targetIp} is not currently blocked. Endpoint status has been refreshed to connected.`;
+          await query(
+            `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at)
+             VALUES ($1, $2, $3, $4, $5, 'succeeded', $6, $7, now())`,
+            [rejId, resolvedAgentUuid, caller.tenant_id, command, tier, rejMsg, caller.id]
+          ).catch(() => {});
+
+          return NextResponse.json({
+            success: true,
+            output: rejMsg,
+            commandId: rejId,
+            status: "connected",
+          });
+        }
+      }
+
+      if (!isUnblock && isCurrentlyBlocked && !approvalTokenId) {
+        let hasAgentBlocked = false;
+        try {
+          const { rows: agentBlockCheck } = await query<{ count: string }>(
+            `SELECT COUNT(*) as count FROM agent_command_logs
+             WHERE agent_id = $1 AND (command ILIKE $2 OR command ILIKE $3) AND status IN ('succeeded', 'verified')`,
+            [resolvedAgentUuid, `block_ip ${targetIp}%`, `block ip ${targetIp}%`]
+          );
+          hasAgentBlocked = parseInt(agentBlockCheck[0]?.count || "0", 10) > 0;
+        } catch {}
+
+        if (hasAgentBlocked) {
+          const rejId = crypto.randomUUID();
+          const rejMsg = `The IP address ${targetIp} is already blocked on this endpoint.`;
           await query(
             `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at)
              VALUES ($1, $2, $3, $4, $5, 'failed', $6, $7, now())`,
@@ -97,21 +144,6 @@ export async function POST(req: NextRequest) {
             { status: 400 }
           );
         }
-      }
-
-      if (!isUnblock && isCurrentlyBlocked && !approvalTokenId) {
-        const rejId = crypto.randomUUID();
-        const rejMsg = `The IP address ${targetIp} is already blocked.`;
-        await query(
-          `INSERT INTO agent_command_logs (id, agent_id, tenant_id, command, tier, status, output, executed_by, executed_at)
-           VALUES ($1, $2, $3, $4, $5, 'failed', $6, $7, now())`,
-          [rejId, resolvedAgentUuid, caller.tenant_id, command, tier, rejMsg, caller.id]
-        ).catch(() => {});
-
-        return NextResponse.json(
-          { success: false, error: rejMsg, commandId: rejId },
-          { status: 400 }
-        );
       }
     }
 
@@ -159,51 +191,23 @@ export async function POST(req: NextRequest) {
       const hostname = agent?.hostname || agentId;
       const ip = agent?.ip_address || "";
 
-      // 2. Ensure an active mitigation plan exists for this tenant
-      let planId: string | null = null;
-      try {
-        const planRes = await query<{ id: string }>(
-          "SELECT id FROM mitigation_plans WHERE tenant_id = $1 AND status != 'archived' ORDER BY created_at DESC LIMIT 1",
-          [caller.tenant_id]
-        );
-        if (planRes.rows.length > 0) {
-          planId = planRes.rows[0].id;
-        } else {
-          // Check for existing incident
-          let incidentId: string | null = null;
-          const incRes = await query<{ id: string }>(
-            "SELECT id FROM incidents WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1",
-            [caller.tenant_id]
-          );
-          if (incRes.rows.length > 0) {
-            incidentId = incRes.rows[0].id;
-          } else {
-            const newInc = await query<{ id: string }>(
-              `INSERT INTO incidents (tenant_id, incident_code, severity, status, title, description, created_at, updated_at)
-               VALUES ($1, $2, 'high', 'investigating', 'Fleet Containment & Host Governance Incident', 'Endpoint containment actions dispatched via Fleet Console', now(), now())
-               RETURNING id`,
-              [caller.tenant_id, `INC-FLEET-${Date.now().toString(36).toUpperCase()}`]
-            );
-            incidentId = newInc.rows[0].id;
-          }
-
-          const newPlan = await query<{ id: string }>(
-            `INSERT INTO mitigation_plans (incident_id, tenant_id, version, status, summary, created_at, updated_at)
-             VALUES ($1, $2, 1, 'active', 'Fleet Threat Containment & Host Governance Plan', now(), now())
-             RETURNING id`,
-            [incidentId, caller.tenant_id]
-          );
-          planId = newPlan.rows[0].id;
-        }
-      } catch (dbErr) {
-        console.error("[Execute] Failed to ensure mitigation plan:", dbErr);
-      }
+      // 2. Optional Plan Association (Default to null / Standalone unless explicitly provided)
+      let planId: string | null = (body.planId && typeof body.planId === "string" && body.planId.trim())
+        ? body.planId.trim()
+        : null;
 
       if (!planId) {
-        return NextResponse.json(
-          { error: "Failed to allocate or retrieve mitigation plan for fleet governance." },
-          { status: 500 }
-        );
+        try {
+          const activePlan = await query<{ id: string }>(
+            "SELECT id FROM mitigation_plans WHERE tenant_id = $1 AND status IN ('active', 'draft') ORDER BY created_at DESC LIMIT 1",
+            [caller.tenant_id]
+          );
+          if (activePlan.rows.length > 0) {
+            planId = activePlan.rows[0].id;
+          }
+        } catch {
+          // Non-blocking
+        }
       }
 
       // 3. Ensure caller exists in users table to satisfy foreign keys
@@ -218,6 +222,9 @@ export async function POST(req: NextRequest) {
       } catch {
         // Non-blocking
       }
+
+      // Ensure plan_id is nullable in DB for standalone tasks
+      await query("ALTER TABLE mitigation_tasks ALTER COLUMN plan_id DROP NOT NULL;").catch(() => {});
 
       // 4. Create Mitigation Task
       const taskId = crypto.randomUUID();
@@ -405,12 +412,10 @@ export async function POST(req: NextRequest) {
           blockedBy: caller.email || caller.id,
         });
 
-        // 2. Disconnect the endpoint if target IP matches agent's IP, or is loopback, or target is this agent
+        // 2. Disconnect the endpoint ONLY if target IP matches this agent's own registered IP, or is loopback
         const isTargetHostItself =
-          agent?.ip_address === targetIp ||
-          targetIp === "127.0.0.1" ||
-          !agent?.ip_address ||
-          agent?.ip_address === "Unknown";
+          Boolean(agent?.ip_address && agent.ip_address !== "Unknown" && agent.ip_address === targetIp) ||
+          targetIp === "127.0.0.1";
 
         if (isTargetHostItself) {
           await query(
@@ -431,19 +436,6 @@ export async function POST(req: NextRequest) {
               a.eps = 0;
             }
           }
-        }
-
-        // Also ensure the agent's own registered IP is recorded in edge containment
-        if (agent?.ip_address && agent.ip_address !== "Unknown" && agent.ip_address !== targetIp) {
-          await recordBlockedIp({
-            tenantId: caller.tenant_id,
-            ip: agent.ip_address,
-            agentId,
-            hostname: agent.hostname || agentId,
-            reason: `Fleet containment executed on host ${agent.hostname || agentId}`,
-            tier,
-            blockedBy: caller.email || caller.id,
-          });
         }
 
         // 3. Clear, actionable operator instructions in output
@@ -476,29 +468,40 @@ export async function POST(req: NextRequest) {
           unblockedBy: caller.email || caller.id,
         });
 
-        if (agent?.ip_address && agent.ip_address !== "Unknown" && agent.ip_address !== targetIp) {
-          await recordUnblockedIp({
-            tenantId: caller.tenant_id,
-            ip: agent.ip_address,
-            unblockedBy: caller.email || caller.id,
-          });
-        }
-
-        // 2. Restore connected status in PostgreSQL for target agent
+        // 2. Restore connected status in PostgreSQL for target agent & any endpoint with targetIp
         await query(
           `UPDATE endpoint_agents
            SET status = 'connected', last_seen_at = now()
-           WHERE id::text = $1 AND tenant_id = $2;`,
-          [agent?.id || agentId, agent?.tenant_id || caller.tenant_id]
+           WHERE (id::text = $1 OR ip_address = $2 OR hostname = $3)
+             AND (tenant_id = $4 OR $4 = 'mints-global');`,
+          [agent?.id || agentId, targetIp, agent?.hostname || agentId, caller.tenant_id]
         ).catch(() => {});
 
-        // 3. Mark live agent status as connected
+        // 3. Mark live agent status as connected & clear admin disconnected locks
+        const { setLiveAgentStatus, adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
         await setLiveAgentStatus(agentId, "connected");
+        if (agent?.id) adminDisconnectedAgents.delete(agent.id);
+        if (agent?.hostname) adminDisconnectedAgents.delete(agent.hostname);
+        adminDisconnectedAgents.delete(agentId);
+
+        try {
+          const { rows: reconnectedAgents } = await query<{ id: string; hostname: string }>(
+            `SELECT id, hostname FROM endpoint_agents WHERE ip_address = $1`,
+            [targetIp]
+          );
+          for (const a of reconnectedAgents) {
+            adminDisconnectedAgents.delete(a.id);
+            if (a.hostname) adminDisconnectedAgents.delete(a.hostname);
+          }
+        } catch {}
 
         // 4. Update in-memory fallback store
         const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
         for (const a of MOCK_ENDPOINT_AGENTS) {
-          if (a.id === (agent?.id || agentId) && a.tenant_id === (agent?.tenant_id || caller.tenant_id)) {
+          if (
+            a.id === (agent?.id || agentId) ||
+            a.hostname === (agent?.hostname || agentId)
+          ) {
             a.status = "connected";
           }
         }

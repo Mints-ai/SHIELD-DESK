@@ -25,11 +25,27 @@ function Write-Status {
     Write-Host " -- $Msg" -ForegroundColor DarkGray
 }
 
+# ---- Python command detection -------------------------------
+function Get-PythonCommand {
+    foreach ($cmd in @("py", "python", "python3")) {
+        if (Get-Command $cmd -ErrorAction SilentlyContinue) {
+            try {
+                $ver = & $cmd --version 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    return $cmd
+                }
+            } catch {}
+        }
+    }
+    return $null
+}
+$PYTHON_CMD = Get-PythonCommand
+
 # ---- Prerequisite checks -----------------------------------
 function Test-Prerequisites {
     Write-Host "  Checking prerequisites..." -ForegroundColor DarkGray
     $missing = @()
-    if (-not (Get-Command "python"  -ErrorAction SilentlyContinue)) { $missing += "python  (Python 3.10+)" }
+    if (-not $PYTHON_CMD) { $missing += "python  (Python 3.10+ or py launcher)" }
     if (-not (Get-Command "node"    -ErrorAction SilentlyContinue)) { $missing += "node    (Node.js 20+)" }
     if ($missing.Count -gt 0) {
         Write-Host ""
@@ -41,7 +57,7 @@ function Test-Prerequisites {
     if (-not (Get-Command "ollama" -ErrorAction SilentlyContinue)) {
         Write-Host "  [INFO] ollama CLI not detected (optional for cloud/deterministic AI fallback)." -ForegroundColor DarkYellow
     }
-    Write-Host "  [OK] Required tools verified." -ForegroundColor Green
+    Write-Host "  [OK] Required tools verified (Python launcher: $PYTHON_CMD)." -ForegroundColor Green
 }
 
 # ---- Load Environment Variables (.env.local / .env) ---------
@@ -201,7 +217,7 @@ if ($hasOllama) {
 } else {
     Write-Host "  [INFO] Skipping local Ollama process; cloud/API models active." -ForegroundColor DarkYellow
 }
-$pythonJob  = Start-Service "PythonBrain" "python server.py" $PYTHON    $envMap
+$pythonJob  = Start-Service "PythonBrain" "$PYTHON_CMD server.py" $PYTHON    $envMap
 $nextJob    = Start-Service "NextJS"      "npm run dev"    $ROOT        $envMap
 $threatDir  = Join-Path $ROOT "services\threat"
 $threatExe  = Join-Path $threatDir "threat.exe"

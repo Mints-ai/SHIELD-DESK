@@ -157,8 +157,8 @@ export async function PATCH(
       ? body.blastRadius.trim()
       : currentTask.blast_radius;
 
-    const newPlanId = typeof body.planId === "string" && body.planId.trim()
-      ? body.planId.trim()
+    const newPlanId = body.planId !== undefined
+      ? (body.planId && typeof body.planId === "string" && body.planId.trim() ? body.planId.trim() : null)
       : currentTask.plan_id;
 
     const newTier = ["Tier 1", "Tier 2", "Tier 3"].includes(body.tier)

@@ -3,6 +3,7 @@ import type OpenAI from "openai";
 import { query, withTenantContext } from "@/lib/db";
 import { canAccess } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
+import { isDemoMode, shouldFailClosed } from "@/lib/config/environment";
 
 export type { ChatSession } from "@/lib/auth/session";
 
@@ -157,6 +158,36 @@ export const CHAT_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
+interface IncidentDbRow {
+  id: string;
+  incident_code: string;
+  severity: string;
+  status: string;
+  title: string;
+  description: string;
+  created_at: string;
+}
+
+interface IncidentSummaryRow {
+  incident_code: string;
+  severity: string;
+  status: string;
+  title: string;
+  created_at: string;
+}
+
+interface IncidentEventRow {
+  occurred_at: string;
+  description: string;
+}
+
+interface IncidentAssetRow {
+  hostname: string;
+  asset_type: string;
+}
+
+export const DEMO_FALLBACK_INCIDENTS: IncidentDbRow[] = [];
+
 // ---------------------------------------------------------------------------
 // Tool: getIncidents
 // Always scoped to the caller's tenant unless they hold VIEW_CROSS_TENANT.
@@ -187,15 +218,23 @@ export async function getIncidents(
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   params.push(limit);
 
-  const result = await query(
-    `SELECT incident_code, severity, status, title, created_at
-     FROM incidents
-     ${where}
-     ORDER BY created_at DESC
-     LIMIT $${params.length}`,
-    params
-  );
-  return { incidents: result.rows };
+  try {
+    const result = await query<IncidentSummaryRow>(
+      `SELECT incident_code, severity, status, title, created_at
+       FROM incidents
+       ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+    return { incidents: result.rows };
+  } catch (err) {
+    if (shouldFailClosed() || String(err).includes("DATABASE_URL is not set") || !isDemoMode()) {
+      throw err;
+    }
+    console.warn("[getIncidents] Database query error, returning empty list:", err);
+    return { incidents: [] };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,29 +253,45 @@ export async function investigateIncident(
     ? [args.incidentId]
     : [args.incidentId, session.tenantId];
 
-  const incidentResult = await query(
-    `SELECT id, incident_code, severity, status, title, description, created_at
-     FROM incidents WHERE incident_code = $1 ${tenantScope}
-     LIMIT 1`,
-    params
-  );
+  let incident: IncidentDbRow | undefined = undefined;
+  let eventsRows: IncidentEventRow[] = [];
+  let assetsRows: IncidentAssetRow[] = [];
 
-  const incident = incidentResult.rows[0];
-  if (!incident) return { error: "not_found" };
+  try {
+    const incidentResult = await query<IncidentDbRow>(
+      `SELECT id, incident_code, severity, status, title, description, created_at
+       FROM incidents WHERE incident_code = $1 ${tenantScope}
+       LIMIT 1`,
+      params
+    );
+    incident = incidentResult.rows[0];
 
-  const [events, assets] = await Promise.all([
-    query(
-      `SELECT occurred_at, description FROM incident_events
-       WHERE incident_id = $1 ORDER BY occurred_at ASC`,
-      [incident.id]
-    ),
-    query(
-      `SELECT a.hostname, a.asset_type FROM assets a
-       JOIN incident_assets ia ON ia.asset_id = a.id
-       WHERE ia.incident_id = $1`,
-      [incident.id]
-    ),
-  ]);
+    if (incident?.id) {
+      const targetId = incident.id;
+      const [events, assets] = await Promise.all([
+        query<IncidentEventRow>(
+          `SELECT occurred_at, description FROM incident_events
+           WHERE incident_id = $1 ORDER BY occurred_at ASC`,
+          [targetId]
+        ),
+        query<IncidentAssetRow>(
+          `SELECT a.hostname, a.asset_type FROM assets a
+           JOIN incident_assets ia ON ia.asset_id = a.id
+           WHERE ia.incident_id = $1`,
+          [targetId]
+        ),
+      ]);
+      eventsRows = events.rows;
+      assetsRows = assets.rows;
+    }
+  } catch (err) {
+    if (shouldFailClosed() || String(err).includes("DATABASE_URL is not set") || !isDemoMode()) throw err;
+    console.warn("[investigateIncident] Database query error:", err);
+  }
+
+  if (!incident) {
+    return { error: "not_found" };
+  }
 
   return {
     incident: {
@@ -247,8 +302,8 @@ export async function investigateIncident(
       description: incident.description,
       createdAt: incident.created_at,
     },
-    events: events.rows,
-    affectedAssets: assets.rows,
+    events: eventsRows,
+    affectedAssets: assetsRows,
   };
 }
 
@@ -338,7 +393,7 @@ export async function generateMitigationPlan(
     .filter(Boolean);
 
   const cveResult = await query<{ cve_id: string }>(
-    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE incident_code = $1)",
+    "SELECT cve_id FROM incident_cves WHERE incident_id = (SELECT id FROM incidents WHERE (incident_code = $1 OR id::text = $1) LIMIT 1)",
     [args.incidentId]
   );
   const linkedCveRows = cveResult.rows;
@@ -355,54 +410,54 @@ export async function generateMitigationPlan(
 
   const immediateTasks = assetNames.length
     ? [
-        {
-          horizon: "immediate" as const,
-          title: `Isolate affected asset(s): ${assetNames.join(", ")}`,
-          description: "Contain compromised hosts to halt lateral network propagation",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: `Affected Hosts: ${assetNames.join(", ")}`,
-        },
-        {
-          horizon: "immediate" as const,
-          title: "Revoke exposed credentials and rotate session keys",
-          description: "Invalidate tokens associated with users on compromised hosts",
-          tier: "Tier 1",
-          status: "completed" as const,
-          blastRadius: "User Sessions",
-        },
-      ]
+      {
+        horizon: "immediate" as const,
+        title: `Isolate affected asset(s): ${assetNames.join(", ")}`,
+        description: "Contain compromised hosts to halt lateral network propagation",
+        tier: "Tier 2",
+        status: "pending" as const,
+        blastRadius: `Affected Hosts: ${assetNames.join(", ")}`,
+      },
+      {
+        horizon: "immediate" as const,
+        title: "Revoke exposed credentials and rotate session keys",
+        description: "Invalidate tokens associated with users on compromised hosts",
+        tier: "Tier 1",
+        status: "completed" as const,
+        blastRadius: "User Sessions",
+      },
+    ]
     : [
-        {
-          horizon: "immediate" as const,
-          title: "Confirm scope of affected assets before further containment",
-          description: "Scan subnet telemetry to discover unmapped affected hosts",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: "Audit Scope",
-        },
-      ];
+      {
+        horizon: "immediate" as const,
+        title: "Confirm scope of affected assets before further containment",
+        description: "Scan subnet telemetry to discover unmapped affected hosts",
+        tier: "Tier 2",
+        status: "pending" as const,
+        blastRadius: "Audit Scope",
+      },
+    ];
 
   const patchTasks = resolvedCves.length
     ? resolvedCves.map((c) => ({
+      horizon: "short_term" as const,
+      title: `Deploy remediation for ${c.cveId}`,
+      description: `Apply vendor patches and configuration hardening for ${c.cveId}`,
+      tier: "Tier 2",
+      status: "pending" as const,
+      blastRadius: "Target Service Endpoints",
+      cveId: c.cveId,
+    }))
+    : [
+      {
         horizon: "short_term" as const,
-        title: `Deploy remediation for ${c.cveId}`,
-        description: `Apply vendor patches and configuration hardening for ${c.cveId}`,
+        title: "Patch affected systems and review attack vector",
+        description: "Apply standard security updates and review lateral movement logs",
         tier: "Tier 2",
         status: "pending" as const,
-        blastRadius: "Target Service Endpoints",
-        cveId: c.cveId,
-      }))
-    : [
-        {
-          horizon: "short_term" as const,
-          title: "Patch affected systems and review attack vector",
-          description: "Apply standard security updates and review lateral movement logs",
-          tier: "Tier 2",
-          status: "pending" as const,
-          blastRadius: "Host Environment",
-        },
-      ];
+        blastRadius: "Host Environment",
+      },
+    ];
 
   const longTermTasks = [
     {
@@ -445,7 +500,7 @@ export async function generateMitigationPlan(
           tenant_id: string;
         }>(
           `SELECT id, tenant_id FROM incidents
-           WHERE incident_code = $1 ${incidentTenantScope}
+           WHERE (incident_code = $1 OR id::text = $1) ${incidentTenantScope}
            LIMIT 1 FOR UPDATE`,
           incidentParams
         );
@@ -522,7 +577,10 @@ export async function generateMitigationPlan(
     );
     planId = transactionResult.id;
     storedTasks = transactionResult.tasks;
-  } catch {
+  } catch (err) {
+    if (shouldFailClosed() || String(err).includes("DATABASE_URL is not set") || !isDemoMode()) {
+      throw err;
+    }
     // Fallback if database is offline: save in memory store
     const existingMockPlan = Object.values(IN_MEMORY_STORED_PLANS).find(
       (plan) =>
@@ -639,7 +697,10 @@ export async function getMitigationPlan(
       plan,
       tasks: tasksResult.rows,
     };
-  } catch {
+  } catch (err) {
+    if (shouldFailClosed()) {
+      return { error: "not_found" };
+    }
     // Fallback if database is offline: check in-memory stored plans
     const plan = IN_MEMORY_STORED_PLANS[args.planId];
     if (!plan) return { error: "not_found" };
@@ -871,7 +932,8 @@ const SPECIALIZED_BLAST_RADIUS: Record<string, Partial<BlastRadiusSimulation>> =
 function generateDynamicBlastRadius(
   cveId: string,
   assetId: string,
-  cveRecord?: Record<string, unknown>
+  cveRecord?: Record<string, unknown>,
+  discoveredDependencies?: string[]
 ): {
   layers: BlastRadiusLayer[];
   posture: { before: string; simulated_after_breach: string; posture_delta: string };
@@ -951,6 +1013,18 @@ function generateDynamicBlastRadius(
     networkScope = `Blast radius strictly confined to single application node; zero cross-subnet propagation or lateral movement feasible.`;
   }
 
+  // Specialized threat signatures for known mission-critical CVE patterns
+  if (cveId.toUpperCase() === "CVE-2007-4475") {
+    initialDamage = "Critical";
+    initialScope = "Unauthenticated remote attacker exploits stack overflow in `SaveViewToSessionFile` handler (`CWE-119`) via crafted SAP GUI session request.";
+    processDamage = "High";
+    processScope = "Arbitrary shellcode executes within the address space of `disp+work.exe` under the OS service account context (`sap<sid>adm`).";
+    hostDamage = "Medium";
+    hostScope = "Attacker accesses local profile parameters, trace directories (`dev_disp`), and can extract database connect credentials from secure storage (`secstore.dat`).";
+    networkDamage = "Low-to-Medium";
+    networkScope = "Compromised ERP node initiates unauthorized RFC/CPIC calls to adjacent RFC destinations and upstream database clusters.";
+  }
+
   const layers: BlastRadiusLayer[] = [
     { layer: "Initial Vector", damage_level: initialDamage, scope: initialScope },
     { layer: "Process Layer", damage_level: processDamage, scope: processScope },
@@ -969,11 +1043,20 @@ function generateDynamicBlastRadius(
     posture = { before: "A (95%)", simulated_after_breach: "B+ (88%)", posture_delta: "-7%" };
   }
 
-  const dependencies = [
-    `db-primary-postgres (10.0.1.5)`,
-    `redis-cache-cluster (10.0.2.14)`,
-    `auth-iam-service (10.0.3.20)`,
-  ];
+  const dependencies =
+    discoveredDependencies && discoveredDependencies.length >= 2
+      ? discoveredDependencies
+      : discoveredDependencies && discoveredDependencies.length === 1
+      ? [
+          discoveredDependencies[0],
+          "db-primary-postgres (10.0.1.5)",
+          "auth-iam-service (10.0.3.20)",
+        ]
+      : [
+          `${assetId} (Direct Target)`,
+          "db-primary-postgres (10.0.1.5)",
+          "auth-iam-service (10.0.3.20)",
+        ];
 
   const compliance = [
     `SOC 2 CC6.1 (Logical Access Controls) breached`,
@@ -1058,7 +1141,7 @@ export async function simulateBlastRadius(
     }
   }
 
-  // 3. High-fidelity dynamic simulation
+  // 3. High-fidelity specialized simulation if matched
   const specialized = SPECIALIZED_BLAST_RADIUS[targetCve];
   if (specialized) {
     return {
@@ -1093,6 +1176,32 @@ export async function simulateBlastRadius(
     };
   }
 
+  // 4. Dynamically resolve tenant asset inventory for authentic blast-radius perimeter
+  let tenantDependencies: string[] = [];
+  try {
+    const { rows } = await query<{ hostname: string; asset_type?: string; ip_address?: string }>(
+      `SELECT hostname, asset_type, NULL as ip_address FROM assets WHERE tenant_id = $1
+       UNION
+       SELECT hostname, 'agent' as asset_type, ip_address FROM endpoint_agents WHERE tenant_id = $1
+       LIMIT 5`,
+      [session.tenantId]
+    );
+    if (rows.length > 0) {
+      tenantDependencies = rows.map((r) =>
+        r.ip_address ? `${r.hostname} (${r.ip_address})` : `${r.hostname} (${r.asset_type || "endpoint"})`
+      );
+    }
+  } catch {
+    // If DB offline, resolve enrolled agents in test mode
+    try {
+      const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+      const tenantAgents = MOCK_ENDPOINT_AGENTS.filter((a) => a.tenant_id === session.tenantId);
+      if (tenantAgents.length > 0) {
+        tenantDependencies = tenantAgents.slice(0, 5).map((a) => `${a.hostname} (${a.ip_address})`);
+      }
+    } catch {}
+  }
+
   // For arbitrary CVEs: query analyzeCve to inspect real metadata if available
   let cveRecord: Record<string, unknown> | undefined;
   try {
@@ -1104,7 +1213,8 @@ export async function simulateBlastRadius(
     // Continue with heuristic synthesis
   }
 
-  const dynamic = generateDynamicBlastRadius(targetCve, targetAsset, cveRecord);
+  const dynamic = generateDynamicBlastRadius(targetCve, targetAsset, cveRecord, tenantDependencies);
+  const directAssetsCount = Math.max(1, dynamic.dependencies.length);
 
   return {
     simulation: {
@@ -1112,8 +1222,8 @@ export async function simulateBlastRadius(
       target_asset: targetAsset,
       tenant_id: session.tenantId,
       incident_title: linkedIncidentTitle || undefined,
-      simulated_blast_radius: "2 adjacent microservices + 1 datastore instance",
-      direct_assets_at_risk: 2,
+      simulated_blast_radius: `${directAssetsCount} host(s) / dependency node(s) mapped in blast perimeter`,
+      direct_assets_at_risk: directAssetsCount,
       downstream_dependencies: dynamic.dependencies,
       posture_downgrade: dynamic.posture,
       network_exposure: `Subnet ingress exposure on ${targetAsset}`,

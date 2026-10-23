@@ -7,8 +7,7 @@ import { shouldFailClosed } from "@/lib/config/environment";
 // ---------------------------------------------------------------------------
 // POST /api/gitleaks/mitigate
 // Handles automated key rotation / revocation actions for secret findings.
-// Currently delegates to AWS IAM or GitHub APIs if credentials are configured,
-// or returns a simulation response in demo mode.
+// Delegates to GitHub API or KMS/IAM service when configured.
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -46,22 +45,6 @@ export async function POST(req: NextRequest) {
       const awsAccessKeyId = process.env.AWS_ACCESS_KEY_ID;
       const awsSecretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 
-      if (awsAccessKeyId && awsSecretAccessKey && !keyId.includes("DEMO")) {
-        // Real AWS IAM key rotation would go here via AWS SDK
-        // Keeping as simulation with proper credential guard
-        return NextResponse.json({
-          success: true,
-          status: "rotated",
-          _demo_mode: false,
-          finding_id: findingId,
-          action,
-          old_key_id: keyId || awsAccessKeyId.substring(0, 8) + "...",
-          new_key_id: `AKIA${Math.random().toString(36).substring(2, 18).toUpperCase()}`,
-          invalidated_at: new Date().toISOString(),
-          message: "AWS IAM access key rotation initiated successfully.",
-        });
-      }
-
       if (shouldFailClosed()) {
         return NextResponse.json(
           {
@@ -73,18 +56,14 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Demo simulation
-      return NextResponse.json({
-        success: true,
-        status: "rotated",
-        _demo_mode: true,
-        finding_id: findingId,
-        action,
-        old_key_id: keyId || "AKIA[DEMO]",
-        new_key_id: `KEY-${Math.random().toString(36).substring(2, 14).toUpperCase()}`,
-        invalidated_at: new Date().toISOString(),
-        message: `Demo: AWS IAM access key revoked and a new key issued. Configure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env.local for live rotation.`,
-      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: "AWS IAM key rotation requires active AWS KMS / IAM broker connection. Configure live credentials in .env.local to enable automated key rotation.",
+          code: "AWS_IAM_UNCONFIGURED",
+        },
+        { status: 503 }
+      );
     }
 
     // -----------------------------------------------------------------------
@@ -131,15 +110,14 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      return NextResponse.json({
-        success: true,
-        status: "revoked",
-        _demo_mode: true,
-        finding_id: findingId,
-        action,
-        message: `Demo: GitHub Personal Access Token flagged for revocation. Configure GITHUB_TOKEN in .env.local for live revocation.`,
-        revoked_at: new Date().toISOString(),
-      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: "GitHub API is unreachable or GITHUB_TOKEN is not configured. Configure GITHUB_TOKEN to enable live token revocation.",
+          code: "GITHUB_UNCONFIGURED",
+        },
+        { status: 503 }
+      );
     }
 
     // -----------------------------------------------------------------------
@@ -171,25 +149,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const newKeyId = `KEY-${Math.random().toString(36).substring(2, 12).toUpperCase()}`;
-    const ruleMessages: Record<string, string> = {
-      "generic-api-key": "Simulated revocation completed: API key flagged as revoked in authentication cache. Token rotation request dispatched to microservices.",
-      "jwt": "Simulated JWT invalidation: Key signing secret updated, active session cache purged.",
-      "slack-bot-token": "Simulated Slack bot token revocation initiated.",
-      "stripe-api-key": "Simulated Stripe restricted API key rotated.",
-    };
-
-    return NextResponse.json({
-      success: true,
-      status: "remediated",
-      _demo_mode: true,
-      finding_id: findingId,
-      action,
-      rule_id: ruleId,
-      new_key_id: newKeyId,
-      message: ruleMessages[ruleId] || `Credential rotation successfully simulated for '${ruleId}'. Wire up live API credentials in .env.local for automated revocation.`,
-      remediated_at: new Date().toISOString(),
-    });
+    return NextResponse.json(
+      {
+        success: false,
+        error: `Remote credential rotation service is unreachable or not configured for rule '${ruleId || findingId}'. Configure service provider credentials to enable automated rotation.`,
+        code: "ROTATION_SERVICE_UNCONFIGURED",
+      },
+      { status: 503 }
+    );
   } catch (err: unknown) {
     trackError(err, {
       endpoint: "/api/gitleaks/mitigate",

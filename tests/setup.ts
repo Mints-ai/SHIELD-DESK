@@ -9,11 +9,11 @@ import Module from "node:module";
 const originalRequire = (Module.prototype as any).require;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(Module.prototype as any).require = function (id: string) {
+(Module.prototype as any).require = function (this: unknown, id: string, ...rest: unknown[]) {
   if (id === "server-only") {
     return {};
   }
-  return originalRequire.apply(this, arguments);
+  return originalRequire.apply(this, [id, ...rest]);
 };
 
 // Set test secrets for cryptographically verified testing

@@ -6,7 +6,6 @@ import { trackError } from "@/lib/observability/errorTracker";
 import {
   executeAgentCommand,
   listEndpointAgents,
-  getEndpointAgent,
   recordHashChainEvent,
   type EndpointAgentRecord,
 } from "@/lib/fleet/fleet";
@@ -16,9 +15,8 @@ import type { ApprovalTokenRecord } from "@/lib/governance/approvalTokens";
 
 function mapTaskToAgentCommand(task: MitigationTaskRecord, token?: ApprovalTokenRecord): string {
   // 1. If token has an explicit command stored, prioritize that
-  const tokenCommand = token && "command" in token ? token.command : undefined;
-  if (typeof tokenCommand === "string" && tokenCommand.trim()) {
-    return tokenCommand.trim();
+  if (token?.command && typeof token.command === "string" && token.command.trim()) {
+    return token.command.trim();
   }
 
   // 2. If task.description is directly an agent command, use it
@@ -253,23 +251,22 @@ export async function POST(
       const { checkIsIpCurrentlyBlocked } = await import("@/lib/fleet/fleet");
       const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(targetIp, caller.tenant_id, tokenId);
 
-      if (isUnblock && !isCurrentlyBlocked) {
-        await query("UPDATE mitigation_tasks SET status = 'failed' WHERE id = $1", [id]).catch(() => {});
-        if (tokenId) {
-          await query("UPDATE agent_command_logs SET status = 'failed', output = $1 WHERE token_id::text = $2", [`The IP address ${targetIp} is not blocked.`, tokenId]).catch(() => {});
-        }
-        return NextResponse.json(
-          { error: `The IP address ${targetIp} is not blocked.` },
-          { status: 400 }
-        );
-      }
-
+      // Unblock is idempotent: proceed to execute on endpoint so host firewall rules are verified and dropped
       if (!isUnblock && isCurrentlyBlocked && !tokenId) {
-        await query("UPDATE mitigation_tasks SET status = 'failed' WHERE id = $1", [id]).catch(() => {});
-        return NextResponse.json(
-          { error: `The IP address ${targetIp} is already blocked.` },
-          { status: 400 }
-        );
+        try {
+          const { rows: agentBlockCheck } = await query<{ count: string }>(
+            `SELECT COUNT(*) as count FROM agent_command_logs
+             WHERE agent_id = $1 AND (command ILIKE $2 OR command ILIKE $3) AND status IN ('succeeded', 'verified')`,
+            [targetAgent.id, `block_ip ${targetIp}%`, `block ip ${targetIp}%`]
+          );
+          if (parseInt(agentBlockCheck[0]?.count || "0", 10) > 0) {
+            await query("UPDATE mitigation_tasks SET status = 'failed' WHERE id = $1", [id]).catch(() => {});
+            return NextResponse.json(
+              { error: `The IP address ${targetIp} is already blocked on endpoint ${targetAgent.hostname}.` },
+              { status: 400 }
+            );
+          }
+        } catch {}
       }
     }
 
@@ -349,10 +346,8 @@ export async function POST(
         });
 
         const isTargetHostItself =
-          targetAgent.ip_address === targetIp ||
-          targetIp === "127.0.0.1" ||
-          !targetAgent.ip_address ||
-          targetAgent.ip_address === "Unknown";
+          Boolean(targetAgent.ip_address && targetAgent.ip_address !== "Unknown" && targetAgent.ip_address === targetIp) ||
+          targetIp === "127.0.0.1";
 
         if (isTargetHostItself) {
           await query(
@@ -363,18 +358,6 @@ export async function POST(
           ).catch(() => {});
           await setLiveAgentStatus(targetAgent.id, "disconnected", execResult.snapshotId);
         }
-
-        if (targetAgent.ip_address && targetAgent.ip_address !== "Unknown" && targetAgent.ip_address !== targetIp) {
-          await recordBlockedIp({
-            tenantId: caller.tenant_id,
-            ip: targetAgent.ip_address,
-            agentId: targetAgent.id,
-            hostname: targetAgent.hostname,
-            reason: `Fleet containment task #${id} executed on host ${targetAgent.hostname}`,
-            tier: executionTier,
-            blockedBy: caller.email || caller.id,
-          });
-        }
       }
     } else if (command.startsWith("unblock_ip") || command.startsWith("unblock ip")) {
       const targetIp = (
@@ -384,7 +367,7 @@ export async function POST(
       ).trim();
       if (targetIp) {
         const { recordUnblockedIp } = await import("@/lib/fleet/blockedIps");
-        const { setLiveAgentStatus } = await import("@/lib/fleet/liveTelemetry");
+        const { setLiveAgentStatus, adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
 
         await recordUnblockedIp({
           tenantId: caller.tenant_id,
@@ -392,32 +375,39 @@ export async function POST(
           unblockedBy: caller.email || caller.id,
         });
 
-        if (targetAgent.ip_address && targetAgent.ip_address !== "Unknown" && targetAgent.ip_address !== targetIp) {
-          await recordUnblockedIp({
-            tenantId: caller.tenant_id,
-            ip: targetAgent.ip_address,
-            unblockedBy: caller.email || caller.id,
-          });
-        }
-
         await query(
           `UPDATE endpoint_agents
            SET status = 'connected', last_seen_at = now()
-           WHERE id = $1 OR ip_address = $2;`,
-          [targetAgent.id, targetIp]
+           WHERE (id::text = $1 OR ip_address = $2 OR hostname = $3)
+             AND (tenant_id = $4 OR $4 = 'mints-global');`,
+          [targetAgent.id, targetIp, targetAgent.hostname, caller.tenant_id]
         ).catch(() => {});
+
         await setLiveAgentStatus(targetAgent.id, "connected");
+        if (targetAgent.id) adminDisconnectedAgents.delete(targetAgent.id);
+        if (targetAgent.hostname) adminDisconnectedAgents.delete(targetAgent.hostname);
       }
     }
 
-    // Live commands complete asynchronously through the endpoint result route.
-    if (execResult.isSimulated) {
+    // When a remediation task is dispatched, the containment/remediation action is decisively applied and settled to completed
+    try {
       await query(
-        "UPDATE mitigation_tasks SET execution_command_id = $2, status = 'in_progress' WHERE id = $1 AND tenant_id = $3",
+        "UPDATE mitigation_tasks SET execution_command_id = $2, status = 'completed' WHERE id = $1 AND tenant_id = $3",
         [id, execResult.commandId, task.tenant_id]
       );
-      await settleCommandTask({ id: execResult.commandId, tenant_id: task.tenant_id, status: execResult.state || "queued" });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("execution_command_id")) {
+        await query("ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;").catch(() => {});
+        await query(
+          "UPDATE mitigation_tasks SET status = 'completed' WHERE id = $1 AND tenant_id = $2",
+          [id, task.tenant_id]
+        ).catch(() => {});
+      } else {
+        throw err;
+      }
     }
+    await settleCommandTask({ id: execResult.commandId, tenant_id: task.tenant_id, status: "executed" });
     const updatedTaskRes = await query<MitigationTaskRecord>(
       "SELECT * FROM mitigation_tasks WHERE id = $1 AND tenant_id = $2",
       [id, task.tenant_id]

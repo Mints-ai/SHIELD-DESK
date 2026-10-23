@@ -70,7 +70,18 @@ export async function GET() {
     }
   }
 
-  const allHealthy = (databaseConnected || supabaseConnected) && (ollamaReachable || Boolean(process.env.GEMINI_API_KEY) || pythonAiReachable);
+  const threatServiceUrl = process.env.THREAT_SERVICE_URL || "http://localhost:8003";
+  let threatEngineReachable = false;
+  try {
+    const res = await fetch(`${threatServiceUrl}/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    threatEngineReachable = res.ok;
+  } catch {
+    threatEngineReachable = false;
+  }
+
+  const allHealthy = (databaseConnected || supabaseConnected) && (ollamaReachable || Boolean(process.env.GEMINI_API_KEY) || pythonAiReachable || threatEngineReachable);
 
   return NextResponse.json({
     status: allHealthy ? "ok" : "degraded",
@@ -79,5 +90,6 @@ export async function GET() {
     supabase: { configured: supabaseConfigured, connected: supabaseConnected },
     ollama: { baseUrl: ollamaBaseUrl, reachable: ollamaReachable },
     pythonAiEngine: { baseUrl: pythonAiServiceUrl, reachable: pythonAiReachable },
+    threatEngine: { baseUrl: threatServiceUrl, reachable: threatEngineReachable },
   });
 }

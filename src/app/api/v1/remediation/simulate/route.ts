@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import { canAccess } from "@/lib/permissions";
+import { shouldFailClosed } from "@/lib/config/environment";
 import { RootCauseGroupingEngine } from "@/lib/verification-engine/rootCauseGrouping";
 import { FindingInput } from "@/lib/verification-engine/types";
 
@@ -67,8 +68,10 @@ export async function POST(request: NextRequest) {
           kevListed: Boolean(r.kev_listed),
           severity: r.severity,
         }));
-      } catch {
-        // Mock fallback if DB is empty or unreachable
+      } catch (err) {
+        if (shouldFailClosed()) {
+          throw err;
+        }
       }
     }
 

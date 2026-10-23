@@ -52,6 +52,11 @@ function createPool(): Pool {
 function getPool(): Pool {
   if (!global.__shieldDeskPgPool) {
     global.__shieldDeskPgPool = createPool();
+    // Idempotent schema migration for columns added in Phase O & Standalone Tasks
+    void global.__shieldDeskPgPool.query(
+      "ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;\n" +
+      "ALTER TABLE mitigation_tasks ALTER COLUMN plan_id DROP NOT NULL;"
+    ).catch(() => {});
   }
   return global.__shieldDeskPgPool;
 }
@@ -65,6 +70,22 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   try {
     return await getPool().query<T>(text, params);
   } catch (error) {
+    if (error instanceof Error && error.message.includes("execution_command_id")) {
+      try {
+        await getPool().query("ALTER TABLE mitigation_tasks ADD COLUMN IF NOT EXISTS execution_command_id uuid;");
+        return await getPool().query<T>(text, params);
+      } catch {
+        // Fall through to standard error handler
+      }
+    }
+    if (error instanceof Error && error.message.includes("plan_id") && (error.message.includes("not-null") || error.message.includes("violates not-null constraint"))) {
+      try {
+        await getPool().query("ALTER TABLE mitigation_tasks ALTER COLUMN plan_id DROP NOT NULL;");
+        return await getPool().query<T>(text, params);
+      } catch {
+        // Fall through to standard error handler
+      }
+    }
     MetricsRegistry.increment("shielddesk_db_query_errors_total", 1, { operation });
     throw error;
   } finally {

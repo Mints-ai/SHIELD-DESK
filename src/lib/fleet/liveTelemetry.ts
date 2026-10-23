@@ -4,11 +4,19 @@ import type { EndpointAgentRecord } from "./fleet";
 import { normalizeEndpointIp } from "./ipAddress";
 import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
 
+declare global {
+  // eslint-disable-next-line no-var
+  var __shieldDeskAdminDisconnectedAgents: Set<string> | undefined;
+}
+
 /**
  * Registry of endpoint IDs explicitly marked disconnected by an operator action.
  * Normal timeouts or idle agents are not locked; only explicit admin disconnects are preserved.
  */
-export const adminDisconnectedAgents = new Set<string>();
+if (!global.__shieldDeskAdminDisconnectedAgents) {
+  global.__shieldDeskAdminDisconnectedAgents = new Set<string>();
+}
+export const adminDisconnectedAgents = global.__shieldDeskAdminDisconnectedAgents;
 
 /**
  * Returns the live fleet agents for a caller, reading exclusively from the database.
@@ -187,6 +195,15 @@ export async function setLiveAgentStatus(
 ): Promise<boolean> {
   if (status === "connected") {
     adminDisconnectedAgents.delete(agentId);
+    try {
+      const { rows } = await query<{ hostname: string }>(
+        "SELECT hostname FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1",
+        [agentId]
+      );
+      if (rows.length > 0 && rows[0].hostname) {
+        adminDisconnectedAgents.delete(rows[0].hostname);
+      }
+    } catch {}
   } else if (status === "disconnected") {
     adminDisconnectedAgents.add(agentId);
   }

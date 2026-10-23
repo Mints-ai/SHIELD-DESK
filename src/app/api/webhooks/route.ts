@@ -10,6 +10,11 @@ import {
   deleteTenantWebhookEndpoint,
   recordWebhookDeliveryLog,
   getRecentWebhookDeliveryLogs,
+  getWebhookMetrics,
+  retryWebhookDelivery,
+  retryAllDlqDeliveries,
+  executeWebhookDispatch,
+  detectWebhookPlatform,
   validateWebhookUrl,
   type TenantWebhookEndpoint,
   type WebhookDeliveryLog,
@@ -119,7 +124,7 @@ function getResolvedSystemEndpoints(): WebhookEndpointConfig[] {
 
 /**
  * GET /api/webhooks
- * Returns system and custom tenant endpoints plus recent delivery logs.
+ * Returns system and custom tenant endpoints, live metrics, and recent delivery logs.
  */
 export async function GET(req: NextRequest) {
   let session = await getSessionFromRequest(req);
@@ -161,12 +166,25 @@ export async function GET(req: NextRequest) {
 
   const allEndpoints = [...systemEndpoints, ...customFormatted];
 
+  const { searchParams } = new URL(req.url);
+  const statusParam = searchParams.get("status"); // all | dlq | delivered
+  const limitParam = parseInt(searchParams.get("limit") || "50", 10);
+
+  const filter: { isDlq?: boolean; status?: string } = {};
+  if (statusParam === "dlq") {
+    filter.isDlq = true;
+  } else if (statusParam === "delivered") {
+    filter.isDlq = false;
+  }
+
   let deliveryLogs: WebhookDeliveryLog[] = [];
   try {
-    deliveryLogs = await getRecentWebhookDeliveryLogs(session.tenantId, 15);
+    deliveryLogs = await getRecentWebhookDeliveryLogs(session.tenantId, limitParam, filter);
   } catch {
     // Non-fatal
   }
+
+  const metrics = await getWebhookMetrics(session.tenantId);
 
   return NextResponse.json({
     status: "ok",
@@ -178,6 +196,7 @@ export async function GET(req: NextRequest) {
       destination: ep.destination.replace(/^(https?:\/\/[^/]+\/).*$/, "$1***"),
     })),
     delivery_logs: deliveryLogs,
+    metrics,
     dispatcher: {
       engine: "Go 1.22 HMAC Dispatcher & Next.js Dynamic Client",
       active_listeners: allEndpoints.filter((e) => e.configured).length,
@@ -189,7 +208,7 @@ export async function GET(req: NextRequest) {
 
 /**
  * POST /api/webhooks
- * Handles creating endpoints (admin-only) and test dispatches.
+ * Handles creating endpoints, test dispatches, and single / batch DLQ replay.
  */
 export async function POST(req: NextRequest) {
   let session = await getSessionFromRequest(req);
@@ -210,6 +229,44 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
 
+    // ACTION: Retry a dead-lettered webhook delivery
+    if (body.action === "retry_delivery") {
+      const { delivery_id } = body;
+      if (!delivery_id) {
+        return NextResponse.json(
+          { error: "Missing required parameter: delivery_id is required for retry." },
+          { status: 400 }
+        );
+      }
+
+      try {
+        const retriedLog = await retryWebhookDelivery(String(delivery_id), session.tenantId);
+        return NextResponse.json({
+          success: retriedLog.success,
+          delivery_id: retriedLog.delivery_id,
+          log: retriedLog,
+          message: retriedLog.success
+            ? `Webhook delivery ${delivery_id} successfully replayed (${retriedLog.latency_ms}ms).`
+            : `Webhook delivery replay failed with HTTP ${retriedLog.status_code || 500}.`,
+        });
+      } catch (retryErr) {
+        return NextResponse.json(
+          { error: retryErr instanceof Error ? retryErr.message : "Failed to retry delivery" },
+          { status: 404 }
+        );
+      }
+    }
+
+    // ACTION: Batch replay all pending DLQ deliveries for tenant
+    if (body.action === "retry_all_dlq") {
+      const batchResult = await retryAllDlqDeliveries(session.tenantId);
+      return NextResponse.json({
+        success: true,
+        ...batchResult,
+        message: `DLQ replay complete: ${batchResult.succeeded_count} recovered, ${batchResult.failed_count} failed out of ${batchResult.total_dlq_found} dead letters.`,
+      });
+    }
+
     // ACTION: Create new custom webhook endpoint
     if (body.action === "create_endpoint") {
       if (!isAdmin) {
@@ -219,10 +276,12 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const { name, type, destination, secret_key, events, min_severity } = body;
-      if (!name || !destination || !type) {
+      const { name, destination, secret_key, events, min_severity } = body;
+      let { type } = body;
+
+      if (!name || !destination) {
         return NextResponse.json(
-          { error: "Missing required fields: name, type, and destination are required." },
+          { error: "Missing required fields: name and destination are required." },
           { status: 400 }
         );
       }
@@ -232,6 +291,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: val.reason || "Invalid destination URL" }, { status: 400 });
       }
 
+<<<<<<< HEAD
       // Auto-resolve platform type if generic was selected but a known provider URL was provided
       let resolvedType = type;
       const destTrimmed = String(destination).trim().toLowerCase();
@@ -241,6 +301,16 @@ export async function POST(req: NextRequest) {
         resolvedType = "slack";
       } else if (destTrimmed.includes("office.com/webhook") || destTrimmed.includes("outlook.office.com")) {
         resolvedType = "teams";
+=======
+      // Auto-detect platform if not provided or set to generic
+      if (!type || type === "generic") {
+        const detected = detectWebhookPlatform(destination);
+        if (detected !== "generic") {
+          type = detected;
+        } else if (!type) {
+          type = "generic";
+        }
+>>>>>>> 1d7a9db2a27a8bcd5e14cda26249c57dce7dd583
       }
 
       const created = await createTenantWebhookEndpoint({
@@ -301,18 +371,29 @@ export async function POST(req: NextRequest) {
       : allEndpoints[0];
 
     const deliveryId = `del_${crypto.randomBytes(12).toString("hex")}`;
-    const nowEpoch = Math.floor(Date.now() / 1000);
     const eventType = body.event_type || "test.webhook.verification";
+    const severity = body.severity || "HIGH";
 
-    const testPayload = JSON.stringify({
+    const testPayload = {
       id: deliveryId,
       event: eventType,
       timestamp: new Date().toISOString(),
-      severity: body.severity || "HIGH",
+      severity,
       tenant_id: session.tenantId,
       message: body.message || `ShieldDesk HMAC-SHA256 webhook test dispatch for ${targetEndpoint.name}.`,
+    };
+
+    const dispatchResult = await executeWebhookDispatch({
+      destination: targetEndpoint.destination,
+      type: targetEndpoint.type,
+      eventType,
+      severity,
+      tenantId: session.tenantId,
+      payload: testPayload,
+      deliveryId,
     });
 
+<<<<<<< HEAD
     const secret =
       process.env.SHIELDDESK_WEBHOOK_SECRET ||
       (process.env.NODE_ENV !== "production" ? "sd_webhook_dev_secret" : "");
@@ -421,6 +502,8 @@ export async function POST(req: NextRequest) {
     const latencyMs = Date.now() - startTime;
     const isSuccess = deliveryStatus >= 200 && deliveryStatus < 300;
 
+=======
+>>>>>>> 1d7a9db2a27a8bcd5e14cda26249c57dce7dd583
     // Record delivery audit log
     await recordWebhookDeliveryLog({
       deliveryId,
@@ -428,29 +511,30 @@ export async function POST(req: NextRequest) {
       endpointId: targetEndpoint.id,
       endpointName: targetEndpoint.name,
       eventType,
-      severity: body.severity || "HIGH",
-      statusCode: deliveryStatus,
-      latencyMs,
-      payload: JSON.parse(testPayload),
-      responseBody: responseBody.slice(0, 500),
-      success: isSuccess,
+      severity,
+      statusCode: dispatchResult.statusCode,
+      latencyMs: dispatchResult.latencyMs,
+      payload: testPayload,
+      responseBody: dispatchResult.responseBody.slice(0, 500),
+      success: dispatchResult.success,
+      destination: targetEndpoint.destination,
+      errorMessage: dispatchResult.errorMessage,
     }).catch(() => {});
 
     return NextResponse.json({
-      success: isSuccess,
+      success: dispatchResult.success,
       delivery_id: deliveryId,
       endpoint_id: targetEndpoint.id,
       endpoint_name: targetEndpoint.name,
       endpoint_type: targetEndpoint.type,
-      dispatched_payload: JSON.parse(testPayload),
+      dispatched_payload: testPayload,
       headers_sent: {
-        ...(signature ? { "X-ShieldDesk-Signature": `sha256=${signature}` } : {}),
         "X-ShieldDesk-Event": eventType,
         "Content-Type": "application/json",
       },
-      response_code: deliveryStatus,
-      latency_ms: latencyMs,
-      message: `Test webhook dispatched to ${targetEndpoint.name} with HTTP ${deliveryStatus} (${latencyMs}ms).`,
+      response_code: dispatchResult.statusCode,
+      latency_ms: dispatchResult.latencyMs,
+      message: `Test webhook dispatched to ${targetEndpoint.name} with HTTP ${dispatchResult.statusCode} (${dispatchResult.latencyMs}ms).`,
     });
   } catch (err) {
     trackError(err, { route: "POST /api/webhooks", tenantId: session.tenantId });

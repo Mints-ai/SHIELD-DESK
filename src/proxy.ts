@@ -291,6 +291,11 @@ export function proxy(req: NextRequest) {
   // 0. Edge IP Containment & Ban Guard: Block all inbound traffic from quarantined IPs
   const clientIp = resolveRequestIp(req);
   if (clientIp && isIpBlocked(clientIp)) {
+    // Allow login route to process authentication, record containment telemetry, and dispatch alerts
+    if (pathname === "/api/auth/login") {
+      return NextResponse.next();
+    }
+
     // Allow authenticated system administrators to access unblock routes
     const isUnblockPath =
       (pathname === "/api/threats" ||
