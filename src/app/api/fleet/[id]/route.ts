@@ -6,6 +6,16 @@ import { trackError } from "@/lib/observability/errorTracker";
 import { query } from "@/lib/db";
 import { adminDisconnectedAgents } from "@/lib/fleet/liveTelemetry";
 
+declare global {
+  // eslint-disable-next-line no-var
+  var __shieldDeskDisconnectTimestamps: Map<string, number> | undefined;
+}
+
+if (!global.__shieldDeskDisconnectTimestamps) {
+  global.__shieldDeskDisconnectTimestamps = new Map<string, number>();
+}
+export const disconnectTimestamps = global.__shieldDeskDisconnectTimestamps;
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -65,6 +75,7 @@ export async function PATCH(
       caller.role === "system_admin" || caller.role === "super_admin";
 
     if (action === "disconnect") {
+      disconnectTimestamps.set(id, Date.now());
       adminDisconnectedAgents.add(id);
       // Keep in-memory fallback stores synchronized
       const mockAgent = MOCK_ENDPOINT_AGENTS.find(
@@ -112,6 +123,27 @@ export async function PATCH(
     }
 
     if (action === "reconnect" || action === "refresh") {
+      const disconnectedAt = disconnectTimestamps.get(id);
+      // Reconnect is only permitted within 5-second grace window (allowing 5.5s for network transit)
+      if (disconnectedAt !== undefined) {
+        if (Date.now() - disconnectedAt > 5500) {
+          return NextResponse.json(
+            {
+              error: "Reconnect grace period has expired (5-second limit). Reconnecting is no longer permitted. Only endpoint deletion is allowed.",
+            },
+            { status: 403 }
+          );
+        }
+        disconnectTimestamps.delete(id);
+      } else if (adminDisconnectedAgents.has(id)) {
+        return NextResponse.json(
+          {
+            error: "Reconnect grace period has expired. Reconnecting is no longer permitted for this host. Only endpoint deletion is allowed.",
+          },
+          { status: 403 }
+        );
+      }
+
       adminDisconnectedAgents.delete(id);
       const reconnectMock = MOCK_ENDPOINT_AGENTS.find(
         (a) => (a.id === id || a.hostname === id) && (isCrossTenant || a.tenant_id === caller.tenant_id)
@@ -309,6 +341,7 @@ export async function DELETE(
         if (row.hostname) adminDisconnectedAgents.delete(row.hostname);
       }
       adminDisconnectedAgents.delete(id);
+      disconnectTimestamps.delete(id);
     } catch (dbErr) {
       console.error("[DELETE /api/fleet/[id]] DB error:", dbErr);
     }

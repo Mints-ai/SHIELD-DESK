@@ -112,7 +112,37 @@ export default function FleetPage() {
   const [filterAgentId, setFilterAgentId] = useState<string>("all");
   const [reconnectingAgentId, setReconnectingAgentId] = useState<string | null>(null);
   // Map of agentId -> timestamp (ms) when 5-second reconnect grace window expires
-  const [disconnectGracePeriods, setDisconnectGracePeriods] = useState<Record<string, number>>({});
+  const [disconnectGracePeriods, setDisconnectGracePeriods] = useState<Record<string, number>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage.getItem("shielddesk_disconnect_grace");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          const now = Date.now();
+          const valid: Record<string, number> = {};
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "number" && v > now) {
+              valid[k] = v;
+            }
+          }
+          return valid;
+        }
+      } catch {}
+    }
+    return {};
+  });
+
+  const updateDisconnectGrace = (updater: (prev: Record<string, number>) => Record<string, number>) => {
+    setDisconnectGracePeriods((prev) => {
+      const next = updater(prev);
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem("shielddesk_disconnect_grace", JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+  };
   const [currentTime, setCurrentTime] = useState<number>(() => Date.now());
 
   // High-frequency clock to tick countdowns smoothly
@@ -688,7 +718,7 @@ export default function FleetPage() {
   // Disconnect an agent (starts 5s reconnect grace period; marks as disconnected in DB)
   const handleDisconnectAgent = async (agentId: string) => {
     // Start 5-second countdown grace period immediately
-    setDisconnectGracePeriods((prev) => ({
+    updateDisconnectGrace((prev) => ({
       ...prev,
       [agentId]: Date.now() + 5000,
     }));
@@ -721,7 +751,7 @@ export default function FleetPage() {
         fetchFleet();
       } else {
         // Revert grace period on error
-        setDisconnectGracePeriods((prev) => {
+        updateDisconnectGrace((prev) => {
           const next = { ...prev };
           delete next[agentId];
           return next;
@@ -730,7 +760,7 @@ export default function FleetPage() {
         alert(data.error || "Failed to disconnect agent");
       }
     } catch {
-      setDisconnectGracePeriods((prev) => {
+      updateDisconnectGrace((prev) => {
         const next = { ...prev };
         delete next[agentId];
         return next;
@@ -740,11 +770,17 @@ export default function FleetPage() {
     }
   };
 
-  // Reconnect/refresh a disconnected agent
+  // Reconnect/refresh a disconnected agent (only allowed within 5s grace period)
   const handleReconnectAgent = async (agentId: string) => {
+    const graceExpiresAt = disconnectGracePeriods[agentId];
+    if (!graceExpiresAt || Date.now() > graceExpiresAt) {
+      alert("Reconnect window expired. Reconnecting is only permitted within 5 seconds of disconnection. Only deletion is allowed.");
+      return;
+    }
+
     setReconnectingAgentId(agentId);
     // Clear grace period so countdown is removed immediately
-    setDisconnectGracePeriods((prev) => {
+    updateDisconnectGrace((prev) => {
       const next = { ...prev };
       delete next[agentId];
       return next;
@@ -798,7 +834,7 @@ export default function FleetPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setDisconnectGracePeriods((prev) => {
+        updateDisconnectGrace((prev) => {
           const next = { ...prev };
           delete next[agentId];
           return next;
@@ -1513,7 +1549,7 @@ export default function FleetPage() {
                             <Unplug className="h-3.5 w-3.5" />
                             <span>Disconnect</span>
                           </button>
-                        ) : (
+                        ) : isWithinGrace ? (
                           <div className="w-full flex items-center gap-2">
                             <button
                               type="button"
@@ -1524,19 +1560,14 @@ export default function FleetPage() {
                                 }
                               }}
                               disabled={reconnectingAgentId === agent.id}
-                              className={cn(
-                                "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 transition cursor-pointer disabled:opacity-60",
-                                isWithinGrace && "animate-pulse border-emerald-500/70"
-                              )}
-                              title={isWithinGrace ? `Reconnect host (${remainingSeconds}s remaining)` : "Reconnect endpoint to fleet"}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 transition cursor-pointer disabled:opacity-60 animate-pulse border-emerald-500/70"
+                              title={`Reconnect host (${remainingSeconds}s remaining)`}
                             >
                               <RefreshCw className={cn("h-3.5 w-3.5", reconnectingAgentId === agent.id && "animate-spin")} />
                               <span>
                                 {reconnectingAgentId === agent.id
                                   ? "Reconnecting..."
-                                  : isWithinGrace
-                                  ? `Reconnect (${remainingSeconds}s)`
-                                  : "Reconnect Host"}
+                                  : `Reconnect (${remainingSeconds}s)`}
                               </span>
                             </button>
                             {canManageFleetAgents && (
@@ -1554,6 +1585,21 @@ export default function FleetPage() {
                               </button>
                             )}
                           </div>
+                        ) : (
+                          canManageFleetAgents && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveAgent(agent.id, agent.hostname);
+                              }}
+                              className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-red-500/40 text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:border-red-500/70 transition cursor-pointer"
+                              title="Remove endpoint from fleet"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Delete</span>
+                            </button>
+                          )
                         )}
                       </div>
                     )}
