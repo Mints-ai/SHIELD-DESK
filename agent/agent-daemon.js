@@ -873,15 +873,47 @@ async function start() {
                   const dir = parts[2] || 'in';
                   const act = parts[3] || 'block';
                   const proto = parts[4] || 'TCP';
-                  const port = parts[5] || '';
+                  let port = '';
+                  let remoteIp = '';
+                  if (parts[5]) {
+                    if (parts[5].includes('.') || parts[5].includes(':')) {
+                      remoteIp = parts[5];
+                    } else {
+                      port = parts[5];
+                    }
+                  }
+                  if (parts[6]) {
+                    if (!remoteIp) remoteIp = parts[6];
+                    else if (!port) port = parts[6];
+                  }
                   const portArg = port ? `localport=${port}` : '';
-                  cp.execSync(`netsh advfirewall firewall add rule name="${name}" dir=${dir} action=${act} protocol=${proto} ${portArg}`, { timeout: 5000, stdio: 'ignore' });
+                  const ipArg = remoteIp ? `remoteip=${remoteIp}` : '';
+                  cp.execSync(`netsh advfirewall firewall add rule name="${name}" dir=${dir} action=${act} protocol=${proto} ${portArg} ${ipArg}`.trim(), { timeout: 5000, stdio: 'ignore' });
                   execOutput = `Firewall rule ${name} added successfully on ${customHostname}.`;
                 } else if (cmd.command.startsWith('firewall_delete_rule')) {
                   const parts = cmd.command.split(/\s+/);
                   const name = parts[1];
                   cp.execSync(`netsh advfirewall firewall delete rule name="${name}"`, { timeout: 5000, stdio: 'ignore' });
                   execOutput = `Firewall rule ${name} deleted successfully on ${customHostname}.`;
+                } else if (cmd.command.startsWith('firewall_set_profile')) {
+                  const parts = cmd.command.split(/\s+/);
+                  const profile = parts[1] || 'all';
+                  const state = parts[2] || 'on';
+                  let targetProf = 'allprofiles';
+                  if (profile.toLowerCase() === 'domain') targetProf = 'domainprofile';
+                  else if (profile.toLowerCase() === 'private') targetProf = 'privateprofile';
+                  else if (profile.toLowerCase() === 'public') targetProf = 'publicprofile';
+                  const targetState = (state.toLowerCase() === 'off' || state.toLowerCase() === 'disabled') ? 'off' : 'on';
+                  cp.execSync(`netsh advfirewall set ${targetProf} state ${targetState}`, { timeout: 5000, stdio: 'ignore' });
+                  execOutput = `Firewall profile ${targetProf} set to ${targetState.toUpperCase()} successfully on ${customHostname}.`;
+                } else if (cmd.command.startsWith('firewall_set_default')) {
+                  const parts = cmd.command.split(/\s+/);
+                  const inbound = parts[1] || 'block';
+                  const outbound = parts[2] || 'allow';
+                  const inAction = inbound.toLowerCase() === 'allow' ? 'allowinbound' : 'blockinbound';
+                  const outAction = outbound.toLowerCase() === 'block' ? 'blockoutbound' : 'allowoutbound';
+                  cp.execSync(`netsh advfirewall set allprofiles firewallpolicy ${inAction},${outAction}`, { timeout: 5000, stdio: 'ignore' });
+                  execOutput = `Default firewall policy set to ${inAction},${outAction} on ${customHostname}.`;
                 } else if (cmd.command.startsWith('isolate_host')) {
                   try {
                     cp.execSync('netsh advfirewall firewall delete rule name="ShieldDesk-Isolate"', { timeout: 5000, stdio: 'ignore' });

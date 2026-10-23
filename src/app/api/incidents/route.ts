@@ -7,6 +7,7 @@ import { query } from "@/lib/db";
 import { dispatchSecurityNotification } from "@/lib/notifications/dispatcher";
 import { trackError } from "@/lib/observability/errorTracker";
 import { recordHashChainEvent } from "@/lib/fleet/fleet";
+import { shouldFailClosed } from "@/lib/config/environment";
 
 export async function GET(req: NextRequest) {
   const session = await getSessionFromRequest(req);
@@ -137,8 +138,11 @@ export async function POST(req: NextRequest) {
           );
         }
       }
-    } catch {
-      // Offline DB mode
+    } catch (dbErr) {
+      if (shouldFailClosed()) {
+        throw dbErr;
+      }
+      // Offline fallback mode for unit test runners
     }
 
     // Record audit event
@@ -232,8 +236,11 @@ export async function PATCH(req: NextRequest) {
         resolvedId = rows[0].id;
         currentTenantId = rows[0].tenant_id;
       }
-    } catch {
-      // Mock / fallback
+    } catch (err) {
+      if (shouldFailClosed()) {
+        throw err;
+      }
+      // Offline fallback mode for unit test runners
     }
 
     if (!currentTenantId) {

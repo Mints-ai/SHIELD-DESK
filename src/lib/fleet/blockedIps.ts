@@ -101,7 +101,28 @@ export async function recordBlockedIp({
   // 1. Sync with Threat Alert Containment Store
   syncThreatAlertBlock(cleanIp, effectiveReason, 1, tenantId);
 
-  // 2. Persist to PostgreSQL
+  // 2. Synchronize with adminDisconnectedAgents and disconnect target endpoints in database ONLY if their registered IP matches the blocked IP
+  try {
+    const { adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
+
+    const { rows: matchedAgents } = await query<{ id: string; hostname: string }>(
+      `UPDATE endpoint_agents
+       SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+       WHERE (tenant_id = $1 OR $1 = 'mints-global')
+         AND ip_address = $2
+       RETURNING id, hostname;`,
+      [tenantId, cleanIp]
+    );
+
+    for (const a of matchedAgents) {
+      adminDisconnectedAgents.add(a.id);
+      if (a.hostname) adminDisconnectedAgents.add(a.hostname);
+    }
+  } catch (syncErr) {
+    console.warn("[recordBlockedIp] Agent disconnect sync warning:", syncErr);
+  }
+
+  // 3. Persist to PostgreSQL
   try {
     // Check if an active record already exists
     const existing = await query<BlockedIpRecord>(
@@ -145,7 +166,7 @@ export async function recordBlockedIp({
     console.warn("[recordBlockedIp] DB write warning, using in-memory store:", err);
   }
 
-  // 3. Fallback in-memory record
+  // 4. Fallback in-memory record
   const mockRecord: BlockedIpRecord = {
     id: `blk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     tenant_id: tenantId,
@@ -183,13 +204,53 @@ export async function recordUnblockedIp({
   // 1. Lift containment in Threat Alert Store
   syncThreatAlertUnblock(cleanIp, tenantId);
 
-  // 2. Update PostgreSQL
+  // 2. Clear admin disconnected locks and restore connectivity in database
+  try {
+    const { adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
+    const { rows: affectedAgents } = await query<{ id: string; hostname: string }>(
+      `UPDATE endpoint_agents
+       SET status = 'connected', last_seen_at = now()
+       WHERE (tenant_id = $1 OR $1 = 'mints-global' OR tenant_id IS NULL)
+         AND (
+           ip_address = $2
+           OR id::text IN (SELECT agent_id FROM fleet_blocked_ips WHERE ip_address = $2 AND agent_id IS NOT NULL)
+           OR hostname IN (SELECT hostname FROM fleet_blocked_ips WHERE ip_address = $2 AND hostname IS NOT NULL)
+         )
+       RETURNING id, hostname;`,
+      [tenantId, cleanIp]
+    );
+
+    for (const a of affectedAgents) {
+      adminDisconnectedAgents.delete(a.id);
+      if (a.hostname) adminDisconnectedAgents.delete(a.hostname);
+    }
+
+    // Direct sweep for any agent registered under cleanIp
+    const { rows: directAgents } = await query<{ id: string; hostname: string }>(
+      `SELECT id, hostname FROM endpoint_agents WHERE ip_address = $1;`,
+      [cleanIp]
+    ).catch(() => ({ rows: [] }));
+
+    for (const a of directAgents) {
+      adminDisconnectedAgents.delete(a.id);
+      if (a.hostname) adminDisconnectedAgents.delete(a.hostname);
+    }
+  } catch (unblockSyncErr) {
+    console.warn("[recordUnblockedIp] Agent reconnect sync warning:", unblockSyncErr);
+  }
+
+  // 3. Update PostgreSQL
   let dbUpdated = false;
   try {
     const res = await query(
       `UPDATE fleet_blocked_ips
        SET status = 'unblocked', unblocked_at = now()
-       WHERE tenant_id = $1 AND ip_address = $2 AND status = 'blocked';`,
+       WHERE (tenant_id = $1 OR $1 = 'mints-global' OR tenant_id IS NULL)
+         AND (
+           ip_address = $2
+           OR ($2 = '127.0.0.1' AND ip_address IN ('127.0.0.1', '::1', 'localhost'))
+         )
+         AND status = 'blocked';`,
       [tenantId, cleanIp]
     );
     dbUpdated = (res.rowCount || 0) > 0;
@@ -197,13 +258,31 @@ export async function recordUnblockedIp({
     console.warn("[recordUnblockedIp] DB update warning:", err);
   }
 
-  // 3. Update in-memory fallback
+  // 4. Update in-memory fallback
   for (const r of MOCK_FLEET_BLOCKED_IPS) {
-    if (r.tenant_id === tenantId && r.ip_address === cleanIp && r.status === "blocked") {
+    if (
+      (r.tenant_id === tenantId || tenantId === "mints-global") &&
+      (r.ip_address === cleanIp || (cleanIp === "127.0.0.1" && ["127.0.0.1", "::1", "localhost"].includes(r.ip_address))) &&
+      r.status === "blocked"
+    ) {
       r.status = "unblocked";
       r.unblocked_at = new Date().toISOString();
     }
   }
+
+  try {
+    const { adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
+    const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+    for (const a of MOCK_ENDPOINT_AGENTS) {
+      if (
+        (a.tenant_id === tenantId || tenantId === "mints-global") &&
+        (a.ip_address === cleanIp || (cleanIp === "127.0.0.1" && ["127.0.0.1", "::1", "localhost"].includes(a.ip_address)))
+      ) {
+        adminDisconnectedAgents.delete(a.id);
+        if (a.hostname) adminDisconnectedAgents.delete(a.hostname);
+      }
+    }
+  } catch {}
 
   return dbUpdated || true;
 }
@@ -223,21 +302,30 @@ export async function isIpBlockedInFleet(ip: string, tenantId?: string): Promise
   // 2. Check PostgreSQL registry
   try {
     await ensureBlockedIpsTable();
+    const isLoopback = cleanIp === "127.0.0.1";
     const res = await query<{ count: string }>(
       `SELECT count(*) FROM fleet_blocked_ips 
-       WHERE ip_address = $1 
+       WHERE (
+         ip_address = $1
+         OR ($3 = true AND ip_address IN ('127.0.0.1', '::1', 'localhost'))
+       )
          AND status = 'blocked'
          AND ($2::text IS NULL OR tenant_id = $2)`,
-      [cleanIp, tenantId || null]
+      [cleanIp, tenantId || null, isLoopback]
     );
     if (res.rows.length > 0 && parseInt(res.rows[0].count, 10) > 0) {
       return true;
     }
-  } catch {}
+  } catch (err) {
+    console.warn("[isIpBlockedInFleet] DB query warning:", err);
+  }
 
   // 3. Check in-memory store fallback
   const inMock = MOCK_FLEET_BLOCKED_IPS.some(
-    (r) => r.ip_address === cleanIp && r.status === "blocked" && (!tenantId || r.tenant_id === tenantId)
+    (r) =>
+      (r.ip_address === cleanIp || (cleanIp === "127.0.0.1" && ["127.0.0.1", "::1", "localhost"].includes(r.ip_address))) &&
+      r.status === "blocked" &&
+      (!tenantId || r.tenant_id === tenantId)
   );
   return inMock;
 }

@@ -882,11 +882,22 @@ export async function executeAgentCommand({
     }
 
     const isCurrentlyBlocked = await checkIsIpCurrentlyBlocked(rawIp, caller.tenant_id, tokenId);
-    if (isUnblock && !isCurrentlyBlocked) {
-      throw new Error(`The IP address ${rawIp} is not blocked.`);
-    }
-    if (!isUnblock && isCurrentlyBlocked) {
-      throw new Error(`The IP address ${rawIp} is already blocked.`);
+    // Unblock should be idempotent: allow command to proceed to agent to verify and clear host firewall rules
+    if (!isUnblock && isCurrentlyBlocked && !tokenId) {
+      try {
+        const { rows: agentBlockCheck } = await query<{ count: string }>(
+          `SELECT COUNT(*) as count FROM agent_command_logs
+           WHERE agent_id = $1 AND (command ILIKE $2 OR command ILIKE $3) AND status IN ('succeeded', 'verified')`,
+          [agent.id, `block_ip ${rawIp}%`, `block ip ${rawIp}%`]
+        );
+        if (parseInt(agentBlockCheck[0]?.count || "0", 10) > 0) {
+          throw new Error(`The IP address ${rawIp} is already blocked on endpoint ${agent.hostname}.`);
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes("is already blocked")) {
+          throw err;
+        }
+      }
     }
   } else if (command.startsWith("kill_process")) {
     const rawPid = command.replace(/^kill_process\s+/i, "").trim();

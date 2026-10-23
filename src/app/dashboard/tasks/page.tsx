@@ -602,13 +602,15 @@ export default function SOCTaskBoardPage() {
               <p className="text-[13px] text-[var(--sd-text-muted)]">
                 Multi-Tenant Remediation Task Board with Closed-Loop Agent Dispatch
               </p>
-              <Link
-                href="/dashboard/fleet"
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono hover:bg-emerald-500/20 transition shadow-xs"
-              >
-                <Cpu className="h-3.5 w-3.5" />
-                <span>Open Endpoint Task Manager &amp; Telemetry &rarr;</span>
-              </Link>
+              {activeUser.role !== "analyst" && (
+                <Link
+                  href="/dashboard/fleet"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono hover:bg-emerald-500/20 transition shadow-xs"
+                >
+                  <Cpu className="h-3.5 w-3.5" />
+                  <span>Open Endpoint Task Manager &amp; Telemetry &rarr;</span>
+                </Link>
+              )}
             </div>
           </div>
 

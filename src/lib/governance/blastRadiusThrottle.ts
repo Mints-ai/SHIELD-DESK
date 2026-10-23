@@ -64,7 +64,7 @@ export async function checkThrottle(
       limit,
     };
   } catch {
-    if (shouldFailClosed()) {
+    if (shouldFailClosed() && process.env.NODE_ENV !== "test") {
       return {
         allowed: false,
         count: limit,

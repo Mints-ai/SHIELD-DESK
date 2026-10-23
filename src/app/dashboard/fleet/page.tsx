@@ -89,7 +89,8 @@ const COMMAND_TIERS: Record<string, "Tier 1" | "Tier 2"> = {
 
 export default function FleetPage() {
   const { activeUserId, activeUser } = useChat();
-  const canManageFleetAgents = true;
+  const isAnalyst = activeUser.role === "analyst";
+  const canManageFleetAgents = !isAnalyst;
 
 
   const [agents, setAgents] = useState<EndpointAgentRecord[]>([]);
@@ -169,8 +170,15 @@ export default function FleetPage() {
   // Connect endpoint modal state
   const [showConnectModal, setShowConnectModal] = useState(false);
 
-  // Governed Core Function Monitoring state
   const [activeConsoleTab, setActiveConsoleTab] = useState<"console" | "monitoring">("console");
+
+  // Auto-switch away from monitoring tab if active user is an analyst
+  useEffect(() => {
+    if (isAnalyst && activeConsoleTab === "monitoring") {
+      setActiveConsoleTab("console");
+    }
+  }, [isAnalyst, activeConsoleTab]);
+
   const [monitoringPolicy, setMonitoringPolicy] = useState<{
     enabled_scopes: CoreFunctionScope[];
     approved_by: string;
@@ -932,9 +940,14 @@ export default function FleetPage() {
 
   const handleCreateRuleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = fwRuleName.trim();
-    if (!cleanName) {
+    const rawName = fwRuleName.trim();
+    if (!rawName) {
       setFwFeedback({ type: "error", message: "Rule name is required." });
+      return;
+    }
+    const cleanName = rawName.replace(/\s+/g, "-").replace(/[^a-zA-Z0-9_-]/g, "");
+    if (!cleanName) {
+      setFwFeedback({ type: "error", message: "Rule name must contain alphanumeric characters." });
       return;
     }
     await handleFirewallAction({
@@ -1083,19 +1096,21 @@ export default function FleetPage() {
 
           <div className="flex items-center gap-3">
             {/* Connect Endpoints Button */}
-            <button
-              onClick={() => setShowConnectModal(true)}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-2 rounded-full border text-[12px] font-medium transition cursor-pointer shadow-xs",
-                showConnectModal
-                  ? "bg-[var(--sd-pine)] text-[var(--sd-on-accent)] border-[var(--sd-pine)]"
-                  : "sd-surface border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text)]"
-              )}
-              title="Connect a real endpoint to the ShieldDesk fleet"
-            >
-              <Plus className="h-3 w-3" />
-              <span>Connect Endpoints</span>
-            </button>
+            {!isAnalyst && (
+              <button
+                onClick={() => setShowConnectModal(true)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-full border text-[12px] font-medium transition cursor-pointer shadow-xs",
+                  showConnectModal
+                    ? "bg-[var(--sd-pine)] text-[var(--sd-on-accent)] border-[var(--sd-pine)]"
+                    : "sd-surface border-[var(--sd-border)] hover:bg-[var(--sd-panel-hover)] text-[var(--sd-text)]"
+                )}
+                title="Connect a real endpoint to the ShieldDesk fleet"
+              >
+                <Plus className="h-3 w-3" />
+                <span>Connect Endpoints</span>
+              </button>
+            )}
 
             {/* Toggle Pause / Resume Live Stream */}
             <button
@@ -1155,17 +1170,19 @@ export default function FleetPage() {
         </div>
 
         {/* ── Connect Endpoint Modal ── */}
-        <ConnectEndpointModal
-          isOpen={showConnectModal}
-          onClose={() => setShowConnectModal(false)}
-          activeUserId={activeUserId}
-          serverUrl={serverURL}
-          existingAgents={agents}
-          onEndpointConnected={() => {
-            fetchFleet(true);
-            fetchLogs();
-          }}
-        />
+        {!isAnalyst && (
+          <ConnectEndpointModal
+            isOpen={showConnectModal}
+            onClose={() => setShowConnectModal(false)}
+            activeUserId={activeUserId}
+            serverUrl={serverURL}
+            existingAgents={agents}
+            onEndpointConnected={() => {
+              fetchFleet(true);
+              fetchLogs();
+            }}
+          />
+        )}
 
         {/* Fleet KPI Banner */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -1280,13 +1297,15 @@ export default function FleetPage() {
                 on your endpoint to connect it.
               </p>
             </div>
-            <button
-              onClick={() => setShowConnectModal(true)}
-              className="sd-button sd-button-primary flex items-center gap-2 px-5 py-2.5 rounded-xl text-[13px] font-medium cursor-pointer shadow-xs"
-            >
-              <Plus className="h-4 w-4" />
-              Connect Your First Endpoint
-            </button>
+            {!isAnalyst && (
+              <button
+                onClick={() => setShowConnectModal(true)}
+                className="sd-button sd-button-primary flex items-center gap-2 px-5 py-2.5 rounded-xl text-[13px] font-medium cursor-pointer shadow-xs"
+              >
+                <Plus className="h-4 w-4" />
+                Connect Your First Endpoint
+              </button>
+            )}
           </div>
         ) : (
           /* Real Agent Cards Grid */
@@ -1479,61 +1498,65 @@ export default function FleetPage() {
                     </div>
                   </div>
 
-                    <div className="flex items-center gap-2 pt-2 border-t border-[var(--sd-border)]/40">
-                      {!isDisconnected ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDisconnectAgent(agent.id);
-                          }}
-                          className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/60 transition cursor-pointer"
-                          title="Disconnect this endpoint"
-                        >
-                          <Unplug className="h-3.5 w-3.5" />
-                          <span>Disconnect</span>
-                        </button>
-                      ) : isWithinGrace ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (reconnectingAgentId !== agent.id) {
-                              handleReconnectAgent(agent.id);
-                            }
-                          }}
-                          disabled={reconnectingAgentId === agent.id}
-                          className="w-full flex items-center justify-center gap-2 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 hover:border-emerald-500/80 transition cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed shadow-xs shadow-emerald-500/10 animate-pulse"
-                          title={`Reconnect host — window expires in ${remainingSeconds}s`}
-                        >
-                          <RefreshCw className={cn("h-3.5 w-3.5", reconnectingAgentId === agent.id && "animate-spin")} />
-                          <span>
-                            {reconnectingAgentId === agent.id
-                              ? "Reconnecting..."
-                              : `Reconnect Host (${remainingSeconds}s)`}
-                          </span>
-                        </button>
-                      ) : (
-                        canManageFleetAgents ? (
+                    {!isAnalyst && (
+                      <div className="flex items-center gap-2 pt-2 border-t border-[var(--sd-border)]/40">
+                        {!isDisconnected ? (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleRemoveAgent(agent.id, agent.hostname);
+                              handleDisconnectAgent(agent.id);
                             }}
-                            className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-red-500/40 text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:border-red-500/70 transition cursor-pointer"
-                            title="Remove endpoint from fleet"
+                            className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10 hover:border-amber-500/60 transition cursor-pointer"
+                            title="Disconnect this endpoint"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            <span>Delete Host</span>
+                            <Unplug className="h-3.5 w-3.5" />
+                            <span>Disconnect</span>
                           </button>
                         ) : (
-                          <div className="w-full py-1.5 text-center text-[10px] font-mono text-[var(--sd-text-dim)]">
-                            Endpoint Severed
+                          <div className="w-full flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (reconnectingAgentId !== agent.id) {
+                                  handleReconnectAgent(agent.id);
+                                }
+                              }}
+                              disabled={reconnectingAgentId === agent.id}
+                              className={cn(
+                                "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 transition cursor-pointer disabled:opacity-60",
+                                isWithinGrace && "animate-pulse border-emerald-500/70"
+                              )}
+                              title={isWithinGrace ? `Reconnect host (${remainingSeconds}s remaining)` : "Reconnect endpoint to fleet"}
+                            >
+                              <RefreshCw className={cn("h-3.5 w-3.5", reconnectingAgentId === agent.id && "animate-spin")} />
+                              <span>
+                                {reconnectingAgentId === agent.id
+                                  ? "Reconnecting..."
+                                  : isWithinGrace
+                                  ? `Reconnect (${remainingSeconds}s)`
+                                  : "Reconnect Host"}
+                              </span>
+                            </button>
+                            {canManageFleetAgents && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveAgent(agent.id, agent.hostname);
+                                }}
+                                className="flex items-center justify-center gap-1 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-red-500/40 text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:border-red-500/70 transition cursor-pointer"
+                                title="Remove endpoint from fleet"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            )}
                           </div>
-                        )
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    )}
                 </div>
               );
             })}
@@ -1559,25 +1582,27 @@ export default function FleetPage() {
                 <span>Command Console &amp; Audit Trail</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => setActiveConsoleTab("monitoring")}
-                className={cn(
-                  "flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-mono font-medium transition cursor-pointer relative",
-                  activeConsoleTab === "monitoring"
-                    ? "bg-[var(--sd-panel-raised)] text-[var(--sd-pine)] border border-[var(--sd-border)] shadow-xs"
-                    : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
-                )}
-              >
-                <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                <span>Endpoint Task Manager &amp; Live Telemetry</span>
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  Authority Approved
-                </span>
-              </button>
+              {!isAnalyst && (
+                <button
+                  type="button"
+                  onClick={() => setActiveConsoleTab("monitoring")}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-mono font-medium transition cursor-pointer relative",
+                    activeConsoleTab === "monitoring"
+                      ? "bg-[var(--sd-panel-raised)] text-[var(--sd-pine)] border border-[var(--sd-border)] shadow-xs"
+                      : "text-[var(--sd-text-muted)] hover:text-[var(--sd-text)]"
+                  )}
+                >
+                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                  <span>Endpoint Task Manager &amp; Live Telemetry</span>
+                  <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    Authority Approved
+                  </span>
+                </button>
+              )}
             </div>
 
-            {activeConsoleTab === "console" ? (
+            {activeConsoleTab === "console" || isAnalyst ? (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Terminal Command Dispatcher */}
@@ -2391,23 +2416,23 @@ export default function FleetPage() {
                       {monitoringData?.network_sockets?.enabled ? (
                         <div className="overflow-x-auto max-h-60">
                           <table className="w-full text-left text-[11px] font-mono">
-                            <thead>
-                              <tr className="border-b border-[var(--sd-border)] text-[var(--sd-text-dim)] sticky top-0 bg-[var(--sd-panel)]">
-                                <th className="py-1">Proto</th>
-                                <th className="py-1">Local Address</th>
-                                <th className="py-1">Remote</th>
-                                <th className="py-1">State</th>
-                                <th className="py-1">Process</th>
+                            <thead className="sticky top-0 z-10 bg-[var(--sd-panel)] shadow-xs">
+                              <tr className="border-b border-[var(--sd-border)] text-[var(--sd-text-dim)]">
+                                <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">Proto</th>
+                                <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">Local Address</th>
+                                <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">Remote</th>
+                                <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">State</th>
+                                <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">Process</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-[var(--sd-border)]/40">
                               {monitoringData.network_sockets.sockets?.map((s: any, idx: number) => (
                                 <tr key={idx} className="hover:bg-[var(--sd-panel-raised)]/50">
-                                  <td className="py-1 text-emerald-400">{s.proto}</td>
-                                  <td className="py-1 text-[var(--sd-text)]">{s.local}</td>
-                                  <td className="py-1 text-[var(--sd-text-muted)]">{s.remote}</td>
-                                  <td className="py-1 text-amber-300 font-semibold">{s.state}</td>
-                                  <td className="py-1 text-[var(--sd-text-dim)] truncate max-w-[120px]">{s.process}</td>
+                                  <td className="py-1 px-2 text-emerald-400">{s.proto}</td>
+                                  <td className="py-1 px-2 text-[var(--sd-text)]">{s.local}</td>
+                                  <td className="py-1 px-2 text-[var(--sd-text-muted)]">{s.remote}</td>
+                                  <td className="py-1 px-2 text-amber-300 font-semibold">{s.state}</td>
+                                  <td className="py-1 px-2 text-[var(--sd-text-dim)] truncate max-w-[140px]" title={s.process}>{s.process}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -2467,13 +2492,13 @@ export default function FleetPage() {
 
                           <div className="overflow-x-auto max-h-72">
                             <table className="w-full text-left text-[11px] font-mono">
-                              <thead>
-                                <tr className="border-b border-[var(--sd-border)] text-[var(--sd-text-dim)] sticky top-0 bg-[var(--sd-panel)]">
-                                  <th className="py-1">PID</th>
-                                  <th className="py-1">Executable Name</th>
-                                  <th className="py-1">RAM</th>
-                                  <th className="py-1">Protection</th>
-                                  <th className="py-1 text-right">Task Action</th>
+                              <thead className="sticky top-0 z-10 bg-[var(--sd-panel)] shadow-xs">
+                                <tr className="border-b border-[var(--sd-border)] text-[var(--sd-text-dim)]">
+                                  <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">PID</th>
+                                  <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">Executable Name</th>
+                                  <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">RAM</th>
+                                  <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium">Protection</th>
+                                  <th className="py-1.5 px-2 bg-[var(--sd-panel)] font-medium text-right">Task Action</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-[var(--sd-border)]/40">
@@ -2485,11 +2510,11 @@ export default function FleetPage() {
                                   )
                                   .map((p: any, idx: number) => (
                                     <tr key={idx} className="hover:bg-[var(--sd-panel-raised)]/50">
-                                      <td className="py-1 text-emerald-400">{p.pid}</td>
-                                      <td className="py-1 text-[var(--sd-text)] truncate max-w-[150px]" title={p.name}>
+                                      <td className="py-1 px-2 text-emerald-400">{p.pid}</td>
+                                      <td className="py-1 px-2 text-[var(--sd-text)] truncate max-w-[150px]" title={p.name}>
                                         {p.name}
                                       </td>
-                                      <td className="py-1 text-[var(--sd-text-muted)]">{p.memoryMb} MB</td>
+                                      <td className="py-1 px-2 text-[var(--sd-text-muted)]">{p.memoryMb} MB</td>
                                       <td className="py-1">
                                         {p.protected ? (
                                           <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded text-[10px]">
@@ -3718,7 +3743,7 @@ export default function FleetPage() {
       )}
 
       {/* Connect Endpoint Modal */}
-      {showConnectModal && (
+      {showConnectModal && !isAnalyst && (
         <ConnectEndpointModal
           isOpen={showConnectModal}
           onClose={() => setShowConnectModal(false)}

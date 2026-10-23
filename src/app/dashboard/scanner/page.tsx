@@ -34,6 +34,7 @@ import {
   Search,
   Server,
   Activity,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +61,7 @@ interface CveFinding {
   epss_score?: number;
   asset_id?: string;
   target?: string;
+  title?: string;
   description: string;
   remediation?: string;
 }
@@ -97,6 +99,13 @@ export default function ScannerDashboardPage() {
   const [serviceConnected, setServiceConnected] = useState(false);
   const [mitigatingId, setMitigatingId] = useState<string | null>(null);
   const [mitigatedIds, setMitigatedIds] = useState<Set<string>>(new Set());
+  const [activeFindingAction, setActiveFindingAction] = useState<{
+    findingKey: string;
+    action: "runbook" | "impact";
+  } | null>(null);
+
+  const getFindingKey = (cve: CveFinding) =>
+    `${cve.cve_id}::${cve.package_name || ""}::${cve.installed_version || ""}::${cve.target || ""}`;
 
   // Review & Remediation modal state
   const [reviewingSecret, setReviewingSecret] = useState<SecretFinding | null>(null);
@@ -164,7 +173,7 @@ export default function ScannerDashboardPage() {
   };
 
   // Patching state
-  const [patchHost, setPatchHost] = useState("10.0.4.12 (srv-prod-api-01)");
+  const [patchHost, setPatchHost] = useState("");
   const [isDryRun, setIsDryRun] = useState(false);
   const [patchLogs, setPatchLogs] = useState<string[]>([
     "[SYSTEM READY] SSH patch orchestrator client ready. Verify service status and configure target host.",
@@ -174,10 +183,11 @@ export default function ScannerDashboardPage() {
   const [patchPort, setPatchPort] = useState<number>(22);
   const [patchUser, setPatchUser] = useState<string>("ubuntu");
   const [patchPrivateKey, setPatchPrivateKey] = useState<string>("");
-  const [patchHostKeyFingerprint, setPatchHostKeyFingerprint] = useState<string>("SHA256:d8a2b3c4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2");
-  const [patchPackage, setPatchPackage] = useState<string>("openssh-server");
-  const [patchTargetVersion, setPatchTargetVersion] = useState<string>("1:8.9p1-3ubuntu0.10");
+  const [patchHostKeyFingerprint, setPatchHostKeyFingerprint] = useState<string>("");
+  const [patchPackage, setPatchPackage] = useState<string>("");
+  const [patchTargetVersion, setPatchTargetVersion] = useState<string>("");
   const [patchRestartServices, setPatchRestartServices] = useState<string>("ssh");
+  const [snapshotCount, setSnapshotCount] = useState<number>(0);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [activeJobState, setActiveJobState] = useState<string | null>(null);
@@ -214,6 +224,7 @@ export default function ScannerDashboardPage() {
   // Advisor Modal / Drawer state
   const [advisorContent, setAdvisorContent] = useState<string | null>(null);
   const [advisorTitle, setAdvisorTitle] = useState("");
+  const [copiedAdvisor, setCopiedAdvisor] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -242,6 +253,7 @@ export default function ScannerDashboardPage() {
       }
 
       if (data.secretFindings) setSecrets(data.secretFindings);
+      if (data.metrics?.patchedHosts !== undefined) setSnapshotCount(data.metrics.patchedHosts);
       setServiceConnected(Boolean(data.serviceConnected));
     } catch (err) {
       console.error("Failed to load scan data:", err);
@@ -253,7 +265,9 @@ export default function ScannerDashboardPage() {
   const fetchThreatIntel = async (isPoll = false) => {
     try {
       if (!isPoll) setShodanLoading(true);
-      const res = await fetch("/api/intel/shodan");
+      const res = await fetch("/api/intel/shodan", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const data = await res.json();
       if (data.configured) {
         setShodanStatus({
@@ -278,7 +292,9 @@ export default function ScannerDashboardPage() {
         setShodanInspectError(null);
       }
 
-      const hibpRes = await fetch("/api/intel/hibp");
+      const hibpRes = await fetch("/api/intel/hibp", {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const hibpData = await hibpRes.json();
       setHibpConfigured(Boolean(hibpData.configured));
     } catch (err: any) {
@@ -299,7 +315,9 @@ export default function ScannerDashboardPage() {
     try {
       setShodanLoading(true);
       setShodanInspectError(null);
-      const res = await fetch(`/api/intel/shodan?ip=${encodeURIComponent(target)}`);
+      const res = await fetch(`/api/intel/shodan?ip=${encodeURIComponent(target)}`, {
+        headers: { "X-ShieldDesk-User": activeUserId },
+      });
       const data = await res.json();
       if (!data.configured) {
         setShodanStatus({
@@ -418,8 +436,8 @@ export default function ScannerDashboardPage() {
         (finding.rule_id?.includes("github")
           ? "revoke_pat"
           : finding.rule_id?.includes("aws")
-          ? "rotate_key"
-          : "rotate_key");
+            ? "rotate_key"
+            : "rotate_key");
 
       const res = await fetch("/api/gitleaks/mitigate", {
         method: "POST",
@@ -431,7 +449,7 @@ export default function ScannerDashboardPage() {
           action: chosenAction,
           finding_id: finding.fingerprint || finding.secret_hash,
           rule_id: finding.rule_id || "",
-          key_id: "AKIA1234567890ABCDEF",
+          key_id: finding.fingerprint || finding.secret_hash || finding.rule_id || "",
         }),
       });
       const data = await res.json();
@@ -737,7 +755,8 @@ export default function ScannerDashboardPage() {
   };
 
   const runBlastRadius = async (cve: CveFinding) => {
-    setLoading(true);
+    const findingKey = getFindingKey(cve);
+    setActiveFindingAction({ findingKey, action: "impact" });
     setAdvisorTitle(`Impact Analysis: ${cve.cve_id} (${cve.package_name})`);
     try {
       const res = await fetch("/api/ai/advisor", {
@@ -746,7 +765,20 @@ export default function ScannerDashboardPage() {
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "blast_radius", cve_id: cve.cve_id, host_id: cve.asset_id }),
+        body: JSON.stringify({
+          action: "blast_radius",
+          cve_id: cve.cve_id,
+          host_id: cve.asset_id || cve.target || "Local Repository Workspace",
+          package_name: cve.package_name,
+          installed_version: cve.installed_version,
+          fixed_version: cve.fixed_version,
+          target: cve.target,
+          severity: cve.severity,
+          title: cve.title,
+          description: cve.description,
+          remediation: cve.remediation,
+          cvss_score: cve.cvss_score,
+        }),
       });
       const data = await res.json();
       const br = data.blast_radius;
@@ -758,7 +790,7 @@ export default function ScannerDashboardPage() {
 
         const formatted = `Impact Assessment for ${data.cve_id || cve.cve_id}:
 
-1. Target Asset & Scope: ${data.host_id || cve.asset_id}
+1. Target Asset & Scope: ${data.host_id || cve.target || cve.asset_id || "Application"}
 2. Direct Assets at Risk: ${br.direct_assets_at_risk ?? "N/A"}
 3. Downstream Dependencies:
 ${deps}
@@ -776,13 +808,14 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
     } catch {
       setAdvisorContent("Failed to perform impact analysis. Please ensure the application server is running and try again.");
     } finally {
-      setLoading(false);
+      setActiveFindingAction(null);
     }
   };
 
 
   const generateRunbook = async (cve: CveFinding) => {
-    setLoading(true);
+    const findingKey = getFindingKey(cve);
+    setActiveFindingAction({ findingKey, action: "runbook" });
     setAdvisorTitle(`Recovery Runbook: ${cve.cve_id}`);
     try {
       const res = await fetch("/api/ai/advisor", {
@@ -791,16 +824,28 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
           "Content-Type": "application/json",
           "X-ShieldDesk-User": activeUserId,
         },
-        body: JSON.stringify({ action: "generate_runbook", cve_id: cve.cve_id, host_id: cve.asset_id }),
+        body: JSON.stringify({
+          action: "generate_runbook",
+          cve_id: cve.cve_id,
+          host_id: cve.asset_id || cve.target || "Local Repository Workspace",
+          package_name: cve.package_name,
+          installed_version: cve.installed_version,
+          fixed_version: cve.fixed_version,
+          target: cve.target,
+          severity: cve.severity,
+          title: cve.title,
+          description: cve.description,
+          remediation: cve.remediation,
+          cvss_score: cve.cvss_score,
+        }),
       });
       const data = await res.json();
       const raw = data.runbook || "No runbook returned.";
-      const clean = raw.split("\n").map((l: string) => l.replace(/^[#*\s]+/, "").replace(/[`*]/g, "")).filter((l: string) => !l.startsWith("```")).join("\n");
-      setAdvisorContent(clean);
+      setAdvisorContent(raw);
     } catch {
       setAdvisorContent("Failed to generate runbook.");
     } finally {
-      setLoading(false);
+      setActiveFindingAction(null);
     }
   };
 
@@ -834,9 +879,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
             <button
               onClick={triggerTrivyScan}
               disabled={loading}
-              className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium shadow-xs transition cursor-pointer disabled:opacity-50"
+              className="sd-button sd-button-primary flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-white text-[13px] font-semibold shadow-xs transition cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+              <RefreshCw className={cn("h-3.5 w-3.5 text-white", loading && "animate-spin")} />
               <span>Trigger Trivy Scan</span>
             </button>
           </div>
@@ -902,8 +947,8 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               {secrets.length === 0
                 ? "No secrets detected"
                 : secrets.some((s) => s.risk_level === "CRITICAL")
-                ? `${secrets.filter((s) => s.risk_level === "CRITICAL").length} critical credential${secrets.filter((s) => s.risk_level === "CRITICAL").length !== 1 ? "s" : ""} exposed`
-                : `${secrets.length} credential${secrets.length !== 1 ? "s" : ""} detected`}
+                  ? `${secrets.filter((s) => s.risk_level === "CRITICAL").length} critical credential${secrets.filter((s) => s.risk_level === "CRITICAL").length !== 1 ? "s" : ""} exposed`
+                  : `${secrets.length} credential${secrets.length !== 1 ? "s" : ""} detected`}
             </p>
           </div>
 
@@ -912,9 +957,10 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               <span className="text-[13px] font-medium">LVM Snapshots</span>
               <HardDrive className="h-4 w-4 text-[var(--sd-pine-bright)]" />
             </div>
-            <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">14</div>
-            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">Pre-patch rollback restore points</p>
-            <span className="sd-sample-label mt-2 w-fit">Sample metric</span>
+            <div className="text-2xl font-medium text-[var(--sd-pine-bright)] font-mono">{snapshotCount}</div>
+            <p className="text-[11px] text-[var(--sd-text-muted)] mt-1">
+              {snapshotCount === 0 ? "0 pre-patch rollback restore points" : `${snapshotCount} rollback restore point${snapshotCount !== 1 ? "s" : ""}`}
+            </p>
           </div>
         </div>
 
@@ -954,9 +1000,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 <button
                   onClick={triggerTrivyScan}
                   disabled={loading}
-                  className="sd-button sd-button-primary mt-2 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer disabled:opacity-50 transition shadow-xs"
+                  className="sd-button sd-button-primary mt-2 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-white text-[13px] font-semibold cursor-pointer disabled:opacity-50 transition shadow-xs"
                 >
-                  <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+                  <RefreshCw className={cn("h-3.5 w-3.5 text-white", loading && "animate-spin")} />
                   <span>Trigger Trivy Scan</span>
                 </button>
               </div>
@@ -981,7 +1027,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                           className={cn(
                             "sd-button px-2.5 py-1 rounded-full text-[13px] font-medium font-mono transition cursor-pointer flex items-center gap-1.5",
                             severityFilter === sev
-                              ? "sd-button-primary text-[var(--sd-on-accent)]"
+                              ? "sd-button-primary text-white font-semibold"
                               : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] border border-[var(--sd-border)]"
                           )}
                         >
@@ -1004,168 +1050,199 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 </div>
 
                 <div className="grid grid-cols-1 gap-3.5">
-                  {paginatedCves.map((cve, index) => (
-                    <div
-                      key={`${cve.cve_id}-${index}`}
-                      className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
-                    >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <span
-                          className={cn(
-                            "px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider font-mono",
-                            cve.severity === "CRITICAL"
-                              ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
-                              : cve.severity === "HIGH"
-                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
-                              : cve.severity === "MEDIUM"
-                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
-                              : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]"
-                          )}
-                        >
-                          {cve.severity}
-                        </span>
-                        <span className="font-mono text-sm font-medium text-[var(--sd-text)]">
-                          {cve.cve_id}
-                        </span>
-                        {(cve.target || cve.asset_id) && (
-                          <span className="text-[13px] text-[var(--sd-text-muted)]">
-                            Target: <code className="text-[var(--sd-text)] font-medium">{cve.target || cve.asset_id}</code>
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                  {paginatedCves.map((cve, index) => {
+                    const findingKey = getFindingKey(cve);
+                    const isThisFindingBusy = activeFindingAction?.findingKey === findingKey;
+                    const isThisImpactLoading = isThisFindingBusy && activeFindingAction.action === "impact";
+                    const isThisRunbookLoading = isThisFindingBusy && activeFindingAction.action === "runbook";
 
-                    <p className="text-[13px] text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
-
-                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-[13px]">
-                      <div className="flex items-center gap-3 text-[var(--sd-text-muted)] flex-wrap">
-                        <span>Package: <code className="text-[var(--sd-text)] font-medium">{cve.package_name}</code></span>
-                        {cve.installed_version && (
-                          <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
-                        )}
-                        {cve.fixed_version && cve.fixed_version !== "N/A" && (
-                          <span>Fixed in: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)] text-[var(--sd-success)] font-medium">{cve.fixed_version}</code></span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => prefillPatchForFinding(cve)}
-                          className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-pine-bright)] border border-[var(--sd-pine-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
-                          title="Stage and remediate this package in SSH Patch Orchestrator"
-                        >
-                          <Terminal className="h-3 w-3 text-[var(--sd-pine)]" />
-                          <span>Patch Host</span>
-                        </button>
-                        <button
-                          onClick={() => runBlastRadius(cve)}
-                          disabled={loading}
-                          className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-text)] border border-[var(--sd-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
-                        >
-                          <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
-                          <span>Impact Analysis</span>
-                        </button>
-                        <button
-                          onClick={() => generateRunbook(cve)}
-                          disabled={loading}
-                          className="sd-button sd-button-primary px-2.5 py-1 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
-                        >
-                          <FileCode className="h-3 w-3" />
-                          <span>Recovery Runbook</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Pagination Controls */}
-              {totalPages > 1 && (
-                <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface">
-                  <div className="text-[13px] text-[var(--sd-text-muted)] font-mono">
-                    Page <strong className="text-[var(--sd-text)]">{currentPage}</strong> of <strong className="text-[var(--sd-text)]">{totalPages}</strong>
-                    <span className="hidden sm:inline text-[var(--sd-text-muted)] ml-2">
-                      ({filteredCves.length} total findings · 3 per page)
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => handlePageChange(1)}
-                      disabled={currentPage === 1}
-                      className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
-                      title="First Page"
-                      aria-label="First page"
-                    >
-                      <ChevronsLeft className="h-3.5 w-3.5" />
-                      <span className="hidden md:inline">First</span>
-                    </button>
-
-                    <button
-                      onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
-                      disabled={currentPage === 1}
-                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
-                      title="Previous Page"
-                      aria-label="Previous page"
-                    >
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                      <span>Prev</span>
-                    </button>
-
-                    {/* Numeric Page Buttons */}
-                    <div className="flex items-center gap-1 px-1">
-                      {getPaginationRange(currentPage, totalPages).map((p, idx) =>
-                        p === "..." ? (
-                          <span key={`ellipsis-${idx}`} className="px-1 text-[12px] text-[var(--sd-text-muted)] font-mono">
-                            …
-                          </span>
-                        ) : (
-                          <button
-                            key={p}
-                            onClick={() => handlePageChange(Number(p))}
-                            className={cn(
-                              "min-w-8 h-8 px-2 rounded-lg text-[12px] font-mono font-medium transition cursor-pointer flex items-center justify-center",
-                              currentPage === p
-                                ? "sd-button-primary text-[var(--sd-on-accent)] shadow-xs"
-                                : "border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:sd-surface"
+                    return (
+                      <div
+                        key={`${cve.cve_id}-${index}`}
+                        className="p-4 rounded-xl border border-[var(--sd-border)] sd-surface hover:border-[var(--sd-border-strong)] transition-all shadow-xs space-y-3"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            <span
+                              className={cn(
+                                "px-2 py-0.5 rounded text-[10px] font-medium uppercase tracking-wider font-mono",
+                                cve.severity === "CRITICAL"
+                                  ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border border-[var(--sd-danger-border)]"
+                                  : cve.severity === "HIGH"
+                                    ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                                    : cve.severity === "MEDIUM"
+                                      ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border border-[var(--sd-warning-border)]"
+                                      : "bg-[var(--sd-bg)] text-[var(--sd-text-muted)] border border-[var(--sd-border)]"
+                              )}
+                            >
+                              {cve.severity}
+                            </span>
+                            <span className="font-mono text-sm font-medium text-[var(--sd-text)]">
+                              {cve.cve_id}
+                            </span>
+                            {(cve.target || cve.asset_id) && (
+                              <span className="text-[13px] text-[var(--sd-text-muted)]">
+                                Target: <code className="text-[var(--sd-text)] font-medium">{cve.target || cve.asset_id}</code>
+                              </span>
                             )}
-                            aria-label={`Go to page ${p}`}
-                            aria-current={currentPage === p ? "page" : undefined}
-                          >
-                            {p}
-                          </button>
-                        )
-                      )}
+                          </div>
+                        </div>
+
+                        <p className="text-[13px] text-[var(--sd-text)] leading-relaxed">{cve.description}</p>
+
+                        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/60 text-[13px]">
+                          <div className="flex items-center gap-3 text-[var(--sd-text-muted)] flex-wrap">
+                            <span>Package: <code className="text-[var(--sd-text)] font-medium">{cve.package_name}</code></span>
+                            {cve.installed_version && (
+                              <span>Installed: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)]">{cve.installed_version}</code></span>
+                            )}
+                            {cve.fixed_version && cve.fixed_version !== "N/A" && (
+                              <span>Fixed in: <code className="bg-[var(--sd-bg)] px-1.5 py-0.5 rounded border border-[var(--sd-border)] text-[var(--sd-success)] font-medium">{cve.fixed_version}</code></span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => prefillPatchForFinding(cve)}
+                              className="sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-pine-bright)] border border-[var(--sd-pine-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5"
+                              title="Stage and remediate this package in SSH Patch Orchestrator"
+                            >
+                              <Terminal className="h-3 w-3 text-[var(--sd-pine)]" />
+                              <span>Patch Host</span>
+                            </button>
+                            <button
+                              onClick={() => runBlastRadius(cve)}
+                              disabled={isThisFindingBusy}
+                              className={cn(
+                                "sd-button px-2.5 py-1 rounded-full bg-[var(--sd-bg)] hover:sd-surface text-[var(--sd-text)] border border-[var(--sd-border)] text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5",
+                                isThisFindingBusy && "opacity-50 cursor-not-allowed"
+                              )}
+                            >
+                              {isThisImpactLoading ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 text-[var(--sd-warning)] animate-spin" />
+                                  <span>Analyzing…</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Zap className="h-3 w-3 text-[var(--sd-warning)]" />
+                                  <span>Impact Analysis</span>
+                                </>
+                              )}
+                            </button>
+                            <button
+                              onClick={() => generateRunbook(cve)}
+                              disabled={isThisFindingBusy}
+                              className={cn(
+                                "sd-button sd-button-primary px-2.5 py-1 rounded-full text-white text-[13px] font-semibold transition cursor-pointer flex items-center gap-1.5",
+                                isThisFindingBusy && "opacity-50 cursor-not-allowed"
+                              )}
+                            >
+                              {isThisRunbookLoading ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  <span>Generating…</span>
+                                </>
+                              ) : (
+                                <>
+                                  <FileCode className="h-3 w-3" />
+                                  <span>Recovery Runbook</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 rounded-xl border border-[var(--sd-border)] sd-surface">
+                    <div className="text-[13px] text-[var(--sd-text-muted)] font-mono">
+                      Page <strong className="text-[var(--sd-text)]">{currentPage}</strong> of <strong className="text-[var(--sd-text)]">{totalPages}</strong>
+                      <span className="hidden sm:inline text-[var(--sd-text-muted)] ml-2">
+                        ({filteredCves.length} total findings · 3 per page)
+                      </span>
                     </div>
 
-                    <button
-                      onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
-                      disabled={currentPage === totalPages}
-                      className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
-                      title="Next Page"
-                      aria-label="Next page"
-                    >
-                      <span>Next</span>
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        onClick={() => handlePageChange(1)}
+                        disabled={currentPage === 1}
+                        className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                        title="First Page"
+                        aria-label="First page"
+                      >
+                        <ChevronsLeft className="h-3.5 w-3.5" />
+                        <span className="hidden md:inline">First</span>
+                      </button>
 
-                    <button
-                      onClick={() => handlePageChange(totalPages)}
-                      disabled={currentPage === totalPages}
-                      className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
-                      title="Last Page"
-                      aria-label="Last page"
-                    >
-                      <span className="hidden md:inline">Last</span>
-                      <ChevronsRight className="h-3.5 w-3.5" />
-                    </button>
+                      <button
+                        onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                        disabled={currentPage === 1}
+                        className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                        title="Previous Page"
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                        <span>Prev</span>
+                      </button>
+
+                      {/* Numeric Page Buttons */}
+                      <div className="flex items-center gap-1 px-1">
+                        {getPaginationRange(currentPage, totalPages).map((p, idx) =>
+                          p === "..." ? (
+                            <span key={`ellipsis-${idx}`} className="px-1 text-[12px] text-[var(--sd-text-muted)] font-mono">
+                              …
+                            </span>
+                          ) : (
+                            <button
+                              key={p}
+                              onClick={() => handlePageChange(Number(p))}
+                              className={cn(
+                                "min-w-8 h-8 px-2 rounded-lg text-[12px] font-mono font-medium transition cursor-pointer flex items-center justify-center",
+                                currentPage === p
+                                  ? "sd-button-primary text-white font-semibold shadow-xs"
+                                  : "border border-[var(--sd-border)] bg-[var(--sd-bg)] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] hover:sd-surface"
+                              )}
+                              aria-label={`Go to page ${p}`}
+                              aria-current={currentPage === p ? "page" : undefined}
+                            >
+                              {p}
+                            </button>
+                          )
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
+                        disabled={currentPage === totalPages}
+                        className="sd-button px-3 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                        title="Next Page"
+                        aria-label="Next page"
+                      >
+                        <span>Next</span>
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+
+                      <button
+                        onClick={() => handlePageChange(totalPages)}
+                        disabled={currentPage === totalPages}
+                        className="sd-button px-2.5 py-1.5 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface disabled:opacity-30 disabled:cursor-not-allowed text-[12px] font-medium transition cursor-pointer flex items-center gap-1"
+                        title="Last Page"
+                        aria-label="Last page"
+                      >
+                        <span className="hidden md:inline">Last</span>
+                        <ChevronsRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {/* Tab 2: Gitleaks Secrets Detection */}
@@ -1192,10 +1269,10 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                 id="gitleaks-scan-btn"
                 onClick={triggerSecretsScan}
                 disabled={secretScanLoading}
-                className="sd-button sd-button-primary flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium hover:bg-[var(--sd-pine-hover)] transition cursor-pointer disabled:opacity-60 shadow-xs"
+                className="sd-button sd-button-primary flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-white text-[13px] font-semibold hover:bg-[var(--sd-pine-hover)] transition cursor-pointer disabled:opacity-60 shadow-xs"
               >
-                <RefreshCw className={cn("h-3.5 w-3.5", secretScanLoading && "animate-spin")} />
-                {secretScanLoading ? "Scanning…" : "Scan Repository Now"}
+                <RefreshCw className={cn("h-3.5 w-3.5 text-white", secretScanLoading && "animate-spin")} />
+                <span>{secretScanLoading ? "Scanning…" : "Scan Repository Now"}</span>
               </button>
             </div>
 
@@ -1288,8 +1365,8 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                             sec.risk_level === "CRITICAL"
                               ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
                               : sec.risk_level === "HIGH"
-                              ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
-                              : "bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
+                                ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                                : "bg-[var(--sd-panel-hover)] text-[var(--sd-text-muted)] border-[var(--sd-border)]"
                           )}
                         >
                           {sec.risk_level}
@@ -1305,11 +1382,11 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                                 setReviewingSecret(sec);
                                 setRemediationFeedback(null);
                               }}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[12px] font-medium text-[var(--sd-pine-bright)] bg-[var(--sd-pine)]/15 border border-[var(--sd-pine)]/30 hover:bg-[var(--sd-pine)]/25 transition cursor-pointer shadow-xs ml-auto"
+                              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/40 transition cursor-pointer shadow-xs ml-auto"
                               title="Click to view remediation details"
                             >
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              <span>Remediated · Details</span>
+                              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                              <span className="text-emerald-300">Remediated · Details</span>
                             </button>
                           ) : (
                             <button
@@ -1318,9 +1395,9 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                                 setReviewingSecret(sec);
                                 setRemediationFeedback(null);
                               }}
-                              className="sd-button px-2.5 py-1 rounded-lg bg-[var(--sd-danger)] hover:bg-[var(--sd-danger)]/90 text-[var(--sd-on-accent)] font-medium text-[12px] transition cursor-pointer shadow-xs flex items-center gap-1.5 ml-auto"
+                              className="sd-button sd-button-primary inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-white text-xs font-semibold hover:bg-[var(--sd-pine-hover)] transition cursor-pointer shadow-xs ml-auto"
                             >
-                              <Wrench className="h-3.5 w-3.5" />
+                              <Wrench className="h-3.5 w-3.5 text-white" />
                               <span>{sec.action_available || "Review & Remediate"}</span>
                             </button>
                           );
@@ -1388,7 +1465,6 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     <option value="10.0.4.12 (srv-prod-api-01 - Ubuntu 22.04)" />
                     <option value="10.0.4.15 (srv-app-worker-02 - Debian 11)" />
                     <option value="10.0.5.21 (k8s-node-worker-03 - RHEL 9)" />
-                    <option value="192.168.1.50 (demo-host)" />
                   </datalist>
                 </div>
 
@@ -1530,7 +1606,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                   <button
                     onClick={() => executePatch(isDryRun)}
                     disabled={loading || testingSSH}
-                    className="sd-button sd-button-primary w-full h-10 px-4 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium transition cursor-pointer flex items-center justify-center gap-2 shadow-xs whitespace-nowrap disabled:opacity-50"
+                    className="sd-button sd-button-primary w-full h-10 px-4 rounded-full text-white text-[13px] font-semibold transition cursor-pointer flex items-center justify-center gap-2 shadow-xs whitespace-nowrap disabled:opacity-50"
                   >
                     <Play className="h-4 w-4 fill-current shrink-0" />
                     <span>{isDryRun ? "Execute Dry Run Simulation" : "Apply Security Patch"}</span>
@@ -1601,8 +1677,8 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                     <span className={cn(
                       "h-2 w-2 rounded-full",
                       activeJobState === "REMEDIATED" ? "bg-emerald-400" :
-                      activeJobState?.includes("FAIL") || activeJobState?.includes("ESCALATED") ? "bg-rose-500" :
-                      activeJobState ? "bg-amber-400 animate-ping" : "bg-[var(--sd-success)]"
+                        activeJobState?.includes("FAIL") || activeJobState?.includes("ESCALATED") ? "bg-rose-500" :
+                          activeJobState ? "bg-amber-400 animate-ping" : "bg-[var(--sd-success)]"
                     )} />
                     <span className="text-[var(--sd-text)] font-semibold">SSH Patching Terminal</span>
                     {activeJobState && (
@@ -1959,12 +2035,37 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
             <div className="p-6 space-y-4">
               <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-3">
                 <h3 id="scanner-advisor-title" className="text-lg font-normal text-[var(--sd-text)]">{advisorTitle}</h3>
-                <button
-                  onClick={() => setAdvisorContent(null)}
-                  className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer"
-                >
-                  ✕ Close
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (advisorContent) {
+                        navigator.clipboard.writeText(advisorContent);
+                        setCopiedAdvisor(true);
+                        setTimeout(() => setCopiedAdvisor(false), 2000);
+                      }
+                    }}
+                    className="sd-button px-2.5 py-1 rounded-lg border border-[var(--sd-border)] bg-[var(--sd-bg)] hover:sd-surface text-[12px] text-[var(--sd-text)] flex items-center gap-1 cursor-pointer font-medium"
+                    title="Copy runbook to clipboard"
+                  >
+                    {copiedAdvisor ? (
+                      <>
+                        <Check className="h-3 w-3 text-[var(--sd-pine)]" />
+                        <span className="text-[var(--sd-pine)] font-sans">Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-3 w-3" />
+                        <span className="font-sans">Copy</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setAdvisorContent(null)}
+                    className="sd-button text-[13px] text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] font-mono cursor-pointer"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
               </div>
 
               <pre className="p-4 rounded-xl bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[13px] font-mono text-[var(--sd-text)] overflow-x-auto max-h-96 whitespace-pre-wrap leading-relaxed">
@@ -1974,7 +2075,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               <div className="flex justify-end pt-2">
                 <button
                   onClick={() => setAdvisorContent(null)}
-                  className="sd-button sd-button-primary px-4 py-2 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer"
+                  className="sd-button sd-button-primary px-4 py-2 rounded-full text-white text-[13px] font-semibold cursor-pointer"
                 >
                   Done
                 </button>
@@ -2068,8 +2169,8 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                         reviewingSecret.risk_level === "CRITICAL"
                           ? "bg-[var(--sd-danger-dim)] text-[var(--sd-danger)] border-[var(--sd-danger-border)]"
                           : reviewingSecret.risk_level === "HIGH"
-                          ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
-                          : "bg-[var(--sd-panel-hover)] text-[var(--sd-text)] border-[var(--sd-border)]"
+                            ? "bg-[var(--sd-warning-dim)] text-[var(--sd-warning)] border-[var(--sd-warning-border)]"
+                            : "bg-[var(--sd-panel-hover)] text-[var(--sd-text)] border-[var(--sd-border)]"
                       )}
                     >
                       {reviewingSecret.risk_level}
@@ -2169,16 +2270,16 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                       <button
                         onClick={() => executeRemediation(reviewingSecret, "rotate_key")}
                         disabled={isMitigating}
-                        className="sd-button sd-button-primary shrink-0 px-3 py-1.5 rounded-lg text-[12px] font-medium text-[var(--sd-on-accent)] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        className="sd-button sd-button-primary shrink-0 px-3.5 py-1.5 rounded-full text-[12px] font-semibold text-white flex items-center gap-1.5 cursor-pointer disabled:opacity-50 hover:bg-[var(--sd-pine-hover)] transition shadow-xs"
                       >
                         {isMitigating ? (
                           <>
-                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                            <RefreshCw className="h-3.5 w-3.5 text-white animate-spin" />
                             <span>Revoking…</span>
                           </>
                         ) : (
                           <>
-                            <RotateCcw className="h-3.5 w-3.5" />
+                            <RotateCcw className="h-3.5 w-3.5 text-white" />
                             <span>Revoke / Rotate Key</span>
                           </>
                         )}
@@ -2267,7 +2368,7 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
                       setRemediationFeedback(null);
                       setCopiedGitCmd(false);
                     }}
-                    className="sd-button sd-button-primary px-4 py-1.5 rounded-full text-[var(--sd-on-accent)] text-[13px] font-medium cursor-pointer"
+                    className="sd-button sd-button-primary px-4 py-1.5 rounded-full text-white text-[13px] font-semibold cursor-pointer"
                   >
                     Done
                   </button>

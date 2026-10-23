@@ -3,7 +3,7 @@ import type OpenAI from "openai";
 import { query, withTenantContext } from "@/lib/db";
 import { canAccess } from "@/lib/permissions";
 import type { ChatSession } from "@/lib/auth/session";
-import { isDemoMode } from "@/lib/config/environment";
+import { isDemoMode, shouldFailClosed } from "@/lib/config/environment";
 
 export type { ChatSession } from "@/lib/auth/session";
 
@@ -186,35 +186,7 @@ interface IncidentAssetRow {
   asset_type: string;
 }
 
-export const DEMO_FALLBACK_INCIDENTS: IncidentDbRow[] = [
-  {
-    id: "00000000-0000-0000-0000-000000001042",
-    incident_code: "INC-1042",
-    severity: "critical",
-    status: "open",
-    title: "Unauthorized Lateral Movement via SSH & Suspicious RCE Probe",
-    description: "Detected multi-stage intrusion attempt targeting internal production cluster. Exploit payload observed attempting CVE-2024-6387 OpenSSH race condition with subsequent privileged credential dumping.",
-    created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-  },
-  {
-    id: "00000000-0000-0000-0000-000000002045",
-    incident_code: "INC-2045",
-    severity: "high",
-    status: "investigating",
-    title: "Anomalous Outbound C2 Beaconing to High-Risk IP",
-    description: "Endpoint agent reported unexpected HTTPS connection to known malicious threat group infrastructure with recurring 60s jitter interval.",
-    created_at: new Date(Date.now() - 3600000 * 6).toISOString(),
-  },
-  {
-    id: "00000000-0000-0000-0000-000000003089",
-    incident_code: "INC-3089",
-    severity: "medium",
-    status: "open",
-    title: "Repeated Failed Administrative Logins (Brute Force)",
-    description: "Multiple failed authentication attempts across 14 workstations originating from subnet 10.0.4.0/24 within a 5-minute window.",
-    created_at: new Date(Date.now() - 3600000 * 12).toISOString(),
-  },
-];
+export const DEMO_FALLBACK_INCIDENTS: IncidentDbRow[] = [];
 
 // ---------------------------------------------------------------------------
 // Tool: getIncidents
@@ -255,23 +227,14 @@ export async function getIncidents(
        LIMIT $${params.length}`,
       params
     );
-    if (result.rows.length > 0 || !isDemoMode()) {
-      return { incidents: result.rows };
-    }
+    return { incidents: result.rows };
   } catch (err) {
-    if (!isDemoMode()) {
+    if (shouldFailClosed() || String(err).includes("DATABASE_URL is not set") || !isDemoMode()) {
       throw err;
     }
-    console.warn("[getIncidents] Database query error in demo mode, returning fallback incidents:", err);
+    console.warn("[getIncidents] Database query error, returning empty list:", err);
+    return { incidents: [] };
   }
-
-  const filtered = DEMO_FALLBACK_INCIDENTS.filter((inc) => {
-    if (args.severity && inc.severity.toLowerCase() !== args.severity.toLowerCase()) return false;
-    if (args.status && inc.status.toLowerCase() !== args.status.toLowerCase()) return false;
-    return true;
-  }).slice(0, limit);
-
-  return { incidents: filtered };
 }
 
 // ---------------------------------------------------------------------------
@@ -322,33 +285,11 @@ export async function investigateIncident(
       assetsRows = assets.rows;
     }
   } catch (err) {
-    if (!isDemoMode()) throw err;
-    console.warn("[investigateIncident] Database query error in demo mode, returning fallback detail:", err);
+    if (shouldFailClosed() || String(err).includes("DATABASE_URL is not set") || !isDemoMode()) throw err;
+    console.warn("[investigateIncident] Database query error:", err);
   }
 
   if (!incident) {
-    if (isDemoMode()) {
-      const demo = DEMO_FALLBACK_INCIDENTS.find(i => i.incident_code === args.incidentId) || DEMO_FALLBACK_INCIDENTS[0]!;
-      return {
-        incident: {
-          incidentCode: demo.incident_code,
-          severity: demo.severity,
-          status: demo.status,
-          title: demo.title,
-          description: demo.description,
-          createdAt: demo.created_at,
-        },
-        events: [
-          { occurred_at: demo.created_at, description: "Initial threat detection event triggered by endpoint heuristic sensor" },
-          { occurred_at: new Date(Date.now() - 1800000).toISOString(), description: "Suspicious child process spawned under elevated privileges" },
-          { occurred_at: new Date(Date.now() - 900000).toISOString(), description: "Threat containment alert dispatched to SOC team" },
-        ],
-        affectedAssets: [
-          { hostname: "prod-db-cluster-01", asset_type: "database_server" },
-          { hostname: "sec-ops-jumpbox", asset_type: "bastion_host" },
-        ],
-      };
-    }
     return { error: "not_found" };
   }
 
@@ -636,7 +577,10 @@ export async function generateMitigationPlan(
     );
     planId = transactionResult.id;
     storedTasks = transactionResult.tasks;
-  } catch {
+  } catch (err) {
+    if (shouldFailClosed() || String(err).includes("DATABASE_URL is not set") || !isDemoMode()) {
+      throw err;
+    }
     // Fallback if database is offline: save in memory store
     const existingMockPlan = Object.values(IN_MEMORY_STORED_PLANS).find(
       (plan) =>
@@ -753,7 +697,10 @@ export async function getMitigationPlan(
       plan,
       tasks: tasksResult.rows,
     };
-  } catch {
+  } catch (err) {
+    if (shouldFailClosed()) {
+      return { error: "not_found" };
+    }
     // Fallback if database is offline: check in-memory stored plans
     const plan = IN_MEMORY_STORED_PLANS[args.planId];
     if (!plan) return { error: "not_found" };
@@ -796,196 +743,13 @@ export interface BlastRadiusSimulation {
   automated_mitigation: string;
 }
 
-const SPECIALIZED_BLAST_RADIUS: Record<string, Partial<BlastRadiusSimulation>> = {
-  "CVE-2007-4475": {
-    target_asset: "SAPgui Client Endpoint (FIN-WS-042)",
-    simulated_blast_radius: "Workstation endpoint + SAP session pivot to application tier",
-    direct_assets_at_risk: 2,
-    downstream_dependencies: [
-      "sap-gateway-dispatcher (10.0.4.12)",
-      "active-directory-sam-db (10.0.1.10)",
-      "file-share-finance (10.0.2.8)",
-    ],
-    posture_downgrade: {
-      before: "A- (91%)",
-      simulated_after_breach: "C (72%)",
-      posture_delta: "-19%",
-    },
-    network_exposure: "Client-side ActiveX execution via Internet Explorer web navigation",
-    compliance_impact: [
-      "SOC 2 CC6.8 (Endpoint Protection Controls) compromised",
-      "ISO 27001 A.12.6.1 (Technical Vulnerability Management) non-compliant",
-      "PCI-DSS Req 6.2 (Security Patching) overdue",
-    ],
-    containment_timeline_minutes: 15,
-    remediation_urgency: "High — Client-side remote execution on SAP workstations",
-    automated_mitigation: "Deploy Group Policy (GPO) ActiveX kill-bit for CLSID {2137D4D8-...} and patch SAPgui to 7.10 Patch 9.",
-    layers: [
-      {
-        layer: "Initial Vector",
-        damage_level: "Critical",
-        scope: "An attacker hosts a malicious web page targeting the `SaveViewToSessionFile` method in the ActiveX control. A user running an unpatched SAPgui accesses the link via Internet Explorer.",
-      },
-      {
-        layer: "Process Layer",
-        damage_level: "High",
-        scope: "The buffer overflows on the stack. The attacker executes arbitrary binary code directly under the execution context of the hosting browser or application (`iexplore.exe` or `saplogon.exe`).",
-      },
-      {
-        layer: "Host System",
-        damage_level: "Medium",
-        scope: "The payload inherits the **privilege level of the local desktop user**. If the employee runs as a Local Administrator, the attacker gains total control over the endpoint (registry, local data, credential dumping).",
-      },
-      {
-        layer: "Network Layer",
-        damage_level: "Low-to-Medium",
-        scope: "Isolated to the workstation initially. The blast radius expands horizontally *only* if the compromised workstation holds active SAP session tokens or administrative network credentials to pivot to corporate SAP application servers.",
-      },
-    ],
-  },
-  "CVE-2018-2412": {
-    target_asset: "sap-disclosure-mgmt-app01",
-    simulated_blast_radius: "1 application instance + linked financial reporting data",
-    direct_assets_at_risk: 1,
-    downstream_dependencies: [
-      "sap-fin-reporting-db (10.0.3.40)",
-      "sec-filing-export-service (10.0.3.44)",
-      "corporate-audit-datastore (10.0.3.50)",
-    ],
-    posture_downgrade: {
-      before: "A (95%)",
-      simulated_after_breach: "B+ (88%)",
-      posture_delta: "-7%",
-    },
-    network_exposure: "Authenticated HTTP/HTTPS management endpoint (Port 8443)",
-    compliance_impact: [
-      "SOX Section 404 (Financial Reporting Internal Controls) deficiency",
-      "ISO 27001 A.9.4.1 (Information Access Restriction) violated",
-    ],
-    containment_timeline_minutes: 45,
-    remediation_urgency: "Medium — Authorization bypass on financial disclosures",
-    automated_mitigation: "Apply SAP Security Note 2537150 and enforce role-based authorization filters.",
-    layers: [
-      {
-        layer: "Initial Vector",
-        damage_level: "Low",
-        scope: "Authenticated user accesses administrative or reporting endpoints in SAP Disclosure Management 10.1 lacking proper authorization checks (`CWE-862`).",
-      },
-      {
-        layer: "Process Layer",
-        damage_level: "Low",
-        scope: "Exploitation occurs within the existing authenticated web session; no memory corruption or arbitrary binary code execution is triggered.",
-      },
-      {
-        layer: "Host System",
-        damage_level: "Low-to-Medium",
-        scope: "The underlying host OS and shell remain uncompromised. Impact is constrained to unauthorized elevation of application roles and access to confidential disclosure statements.",
-      },
-      {
-        layer: "Network Layer",
-        damage_level: "Low",
-        scope: "Confined to SAP Disclosure Management application boundaries. No lateral network pivoting or host subnet traversal is feasible.",
-      },
-    ],
-  },
-  "CVE-2018-14860": {
-    target_asset: "odoo-erp-core-prod",
-    simulated_blast_radius: "3 adjacent ERP microservices + 1 database instance",
-    direct_assets_at_risk: 3,
-    downstream_dependencies: [
-      "odoo-postgres-primary (10.0.5.2)",
-      "redis-session-store (10.0.5.15)",
-      "internal-invoice-storage (10.0.5.30)",
-    ],
-    posture_downgrade: {
-      before: "A- (90%)",
-      simulated_after_breach: "D+ (58%)",
-      posture_delta: "-32%",
-    },
-    network_exposure: "Authenticated ERP Web Interface (Port 8069)",
-    compliance_impact: [
-      "PCI-DSS Req 6.5.1 (Injection Flaws) critical failure",
-      "SOC 2 CC6.6 (Boundary Protection) compromised",
-      "ISO 27001 A.12.1.2 (Change Management) non-compliant",
-    ],
-    containment_timeline_minutes: 10,
-    remediation_urgency: "Immediate — CVSS 9.1 OS Command Injection in core ERP",
-    automated_mitigation: "Isolate Odoo application container, restrict egress traffic to database port 5432, and upgrade Odoo to patched release.",
-    layers: [
-      {
-        layer: "Initial Vector",
-        damage_level: "High",
-        scope: "Authenticated user with low-to-medium privileges submits malicious dynamic user expressions via unsanitized Python evaluation inputs (`CWE-78`).",
-      },
-      {
-        layer: "Process Layer",
-        damage_level: "Critical",
-        scope: "Arbitrary OS commands execute directly under the runtime context of the `odoo-bin` daemon, spawning unauthorized subshells (`/bin/sh`, `/bin/bash`).",
-      },
-      {
-        layer: "Host System",
-        damage_level: "High",
-        scope: "Complete compromise of the Odoo application server; attacker can read `odoo.conf`, access master database credentials, and dump application storage.",
-      },
-      {
-        layer: "Network Layer",
-        damage_level: "High",
-        scope: "The compromised Odoo container/VM serves as an internal pivot point into the private backend subnet, directly exposing internal database clusters and Redis caches.",
-      },
-    ],
-  },
-  "CVE-2024-6387": {
-    target_asset: "srv-prod-api-01 (Finance Subnet)",
-    simulated_blast_radius: "3 adjacent microservices + 1 database instance",
-    direct_assets_at_risk: 3,
-    downstream_dependencies: [
-      "db-primary-postgres (10.0.1.5)",
-      "redis-cache-cluster (10.0.2.14)",
-      "auth-iam-service (10.0.3.20)",
-    ],
-    posture_downgrade: {
-      before: "A- (91%)",
-      simulated_after_breach: "C+ (68%)",
-      posture_delta: "-23%",
-    },
-    network_exposure: "Public Ingress Port 22/443 exposed via VPC Security Group",
-    compliance_impact: [
-      "SOC 2 CC6.1 (Logical Access Controls) breached",
-      "ISO 27001 A.12.1.2 (Change Management) non-compliant",
-      "PCI-DSS Req 6.2 (Security Patching) overdue",
-    ],
-    containment_timeline_minutes: 12,
-    remediation_urgency: "Immediate — CVSS 8.1+ lateral movement threat",
-    automated_mitigation: "Quarantine ingress subnet ACL & rotate active session tokens via Tier 2 approval.",
-    layers: [
-      {
-        layer: "Initial Vector",
-        damage_level: "Critical",
-        scope: "Remote unauthenticated attacker exploits a signal handler race condition in `sshd` on port 22 (`SIGALRM`), bypassing standard cryptographic handshake.",
-      },
-      {
-        layer: "Process Layer",
-        damage_level: "Critical",
-        scope: "Arbitrary code executes in the OpenSSH server process memory, escalating directly to `root` execution context via glibc heap manipulation.",
-      },
-      {
-        layer: "Host System",
-        damage_level: "Critical",
-        scope: "Attacker achieves full **root privilege** on `srv-prod-api-01`, enabling kernel tampering, credential harvesting, and local log disabling.",
-      },
-      {
-        layer: "Network Layer",
-        damage_level: "High",
-        scope: "Target host acts as an ingress bastion; compromise exposes adjacent finance microservices and allows unmonitored horizontal pivoting across the VPC.",
-      },
-    ],
-  },
-};
+const SPECIALIZED_BLAST_RADIUS: Record<string, Partial<BlastRadiusSimulation>> = {};
 
 function generateDynamicBlastRadius(
   cveId: string,
   assetId: string,
-  cveRecord?: Record<string, unknown>
+  cveRecord?: Record<string, unknown>,
+  discoveredDependencies?: string[]
 ): {
   layers: BlastRadiusLayer[];
   posture: { before: string; simulated_after_breach: string; posture_delta: string };
@@ -1065,6 +829,18 @@ function generateDynamicBlastRadius(
     networkScope = `Blast radius strictly confined to single application node; zero cross-subnet propagation or lateral movement feasible.`;
   }
 
+  // Specialized threat signatures for known mission-critical CVE patterns
+  if (cveId.toUpperCase() === "CVE-2007-4475") {
+    initialDamage = "Critical";
+    initialScope = "Unauthenticated remote attacker exploits stack overflow in `SaveViewToSessionFile` handler (`CWE-119`) via crafted SAP GUI session request.";
+    processDamage = "High";
+    processScope = "Arbitrary shellcode executes within the address space of `disp+work.exe` under the OS service account context (`sap<sid>adm`).";
+    hostDamage = "Medium";
+    hostScope = "Attacker accesses local profile parameters, trace directories (`dev_disp`), and can extract database connect credentials from secure storage (`secstore.dat`).";
+    networkDamage = "Low-to-Medium";
+    networkScope = "Compromised ERP node initiates unauthorized RFC/CPIC calls to adjacent RFC destinations and upstream database clusters.";
+  }
+
   const layers: BlastRadiusLayer[] = [
     { layer: "Initial Vector", damage_level: initialDamage, scope: initialScope },
     { layer: "Process Layer", damage_level: processDamage, scope: processScope },
@@ -1083,11 +859,20 @@ function generateDynamicBlastRadius(
     posture = { before: "A (95%)", simulated_after_breach: "B+ (88%)", posture_delta: "-7%" };
   }
 
-  const dependencies = [
-    `db-primary-postgres (10.0.1.5)`,
-    `redis-cache-cluster (10.0.2.14)`,
-    `auth-iam-service (10.0.3.20)`,
-  ];
+  const dependencies =
+    discoveredDependencies && discoveredDependencies.length >= 2
+      ? discoveredDependencies
+      : discoveredDependencies && discoveredDependencies.length === 1
+      ? [
+          discoveredDependencies[0],
+          "db-primary-postgres (10.0.1.5)",
+          "auth-iam-service (10.0.3.20)",
+        ]
+      : [
+          `${assetId} (Direct Target)`,
+          "db-primary-postgres (10.0.1.5)",
+          "auth-iam-service (10.0.3.20)",
+        ];
 
   const compliance = [
     `SOC 2 CC6.1 (Logical Access Controls) breached`,
@@ -1172,39 +957,30 @@ export async function simulateBlastRadius(
     }
   }
 
-  // 3. High-fidelity dynamic simulation
-  const specialized = SPECIALIZED_BLAST_RADIUS[targetCve];
-  if (specialized) {
-    return {
-      simulation: {
-        target_cve: targetCve,
-        target_asset: targetAsset || specialized.target_asset || "srv-prod-api-01",
-        tenant_id: session.tenantId,
-        incident_title: linkedIncidentTitle || undefined,
-        simulated_blast_radius: specialized.simulated_blast_radius || "3 adjacent microservices + 1 database instance",
-        direct_assets_at_risk: specialized.direct_assets_at_risk || 3,
-        downstream_dependencies: specialized.downstream_dependencies || [
-          "db-primary-postgres (10.0.1.5)",
-          "redis-cache-cluster (10.0.2.14)",
-          "auth-iam-service (10.0.3.20)",
-        ],
-        posture_downgrade: specialized.posture_downgrade || {
-          before: "A- (91%)",
-          simulated_after_breach: "C+ (68%)",
-          posture_delta: "-23%",
-        },
-        network_exposure: specialized.network_exposure || "Public Ingress Port 22/443 exposed via VPC Security Group",
-        compliance_impact: specialized.compliance_impact || [
-          "SOC 2 CC6.1 (Logical Access Controls) breached",
-          "ISO 27001 A.12.1.2 (Change Management) non-compliant",
-          "PCI-DSS Req 6.2 (Security Patching) overdue",
-        ],
-        containment_timeline_minutes: specialized.containment_timeline_minutes || 12,
-        remediation_urgency: specialized.remediation_urgency || "Immediate — High threat lateral movement",
-        automated_mitigation: specialized.automated_mitigation || "Quarantine affected host and rotate active session tokens.",
-        layers: specialized.layers || [],
-      },
-    };
+  // 3. Dynamically resolve tenant asset inventory for authentic blast-radius perimeter
+  let tenantDependencies: string[] = [];
+  try {
+    const { rows } = await query<{ hostname: string; asset_type?: string; ip_address?: string }>(
+      `SELECT hostname, asset_type, NULL as ip_address FROM assets WHERE tenant_id = $1
+       UNION
+       SELECT hostname, 'agent' as asset_type, ip_address FROM endpoint_agents WHERE tenant_id = $1
+       LIMIT 5`,
+      [session.tenantId]
+    );
+    if (rows.length > 0) {
+      tenantDependencies = rows.map((r) =>
+        r.ip_address ? `${r.hostname} (${r.ip_address})` : `${r.hostname} (${r.asset_type || "endpoint"})`
+      );
+    }
+  } catch {
+    // If DB offline, resolve enrolled agents in test mode
+    try {
+      const { MOCK_ENDPOINT_AGENTS } = await import("@/lib/fleet/fleet");
+      const tenantAgents = MOCK_ENDPOINT_AGENTS.filter((a) => a.tenant_id === session.tenantId);
+      if (tenantAgents.length > 0) {
+        tenantDependencies = tenantAgents.slice(0, 5).map((a) => `${a.hostname} (${a.ip_address})`);
+      }
+    } catch {}
   }
 
   // For arbitrary CVEs: query analyzeCve to inspect real metadata if available
@@ -1218,7 +994,8 @@ export async function simulateBlastRadius(
     // Continue with heuristic synthesis
   }
 
-  const dynamic = generateDynamicBlastRadius(targetCve, targetAsset, cveRecord);
+  const dynamic = generateDynamicBlastRadius(targetCve, targetAsset, cveRecord, tenantDependencies);
+  const directAssetsCount = Math.max(1, dynamic.dependencies.length);
 
   return {
     simulation: {
@@ -1226,8 +1003,8 @@ export async function simulateBlastRadius(
       target_asset: targetAsset,
       tenant_id: session.tenantId,
       incident_title: linkedIncidentTitle || undefined,
-      simulated_blast_radius: "2 adjacent microservices + 1 datastore instance",
-      direct_assets_at_risk: 2,
+      simulated_blast_radius: `${directAssetsCount} host(s) / dependency node(s) mapped in blast perimeter`,
+      direct_assets_at_risk: directAssetsCount,
       downstream_dependencies: dynamic.dependencies,
       posture_downgrade: dynamic.posture,
       network_exposure: `Subnet ingress exposure on ${targetAsset}`,

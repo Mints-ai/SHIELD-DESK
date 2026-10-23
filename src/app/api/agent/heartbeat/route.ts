@@ -6,6 +6,7 @@ import { trackError } from "@/lib/observability/errorTracker";
 import { MetricsRegistry } from "@/lib/observability/metrics";
 import { storeEndpointCoreTelemetry } from "@/lib/fleet/liveTelemetryCollector";
 import { isIpBlocked } from "@/lib/alerts/threatAlertStore";
+import { isIpBlockedInFleet, MOCK_FLEET_BLOCKED_IPS } from "@/lib/fleet/blockedIps";
 import { adminDisconnectedAgents } from "@/lib/fleet/liveTelemetry";
 
 /**
@@ -41,34 +42,117 @@ export async function POST(req: NextRequest) {
         ? JSON.stringify(body.coreTelemetry)
         : null;
 
-    // Enforce SOC IP containment: check if resolved IP or agent's registered IP is blocked
-    let isBlocked = ipAddress ? isIpBlocked(ipAddress) : false;
-    if (!isBlocked && agentId) {
-      try {
-        const { rows: agentRows } = await query<{ ip_address: string }>(
-          `SELECT ip_address FROM endpoint_agents WHERE id::text = $1 LIMIT 1;`,
-          [agentId]
-        );
-        if (agentRows.length > 0 && agentRows[0].ip_address) {
-          isBlocked = isIpBlocked(agentRows[0].ip_address);
-        }
-      } catch {
-        const mockAgent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId);
-        if (mockAgent && mockAgent.ip_address) {
-          isBlocked = isIpBlocked(mockAgent.ip_address);
+    // 1. Resolve agent identity and current database status
+    let agentRecord: {
+      id: string;
+      tenant_id: string;
+      hostname: string;
+      ip_address: string;
+      status: string;
+      kill_switch_active: boolean;
+    } | null = null;
+
+    try {
+      const { rows: agentLookupRows } = await query<{
+        id: string;
+        tenant_id: string;
+        hostname: string;
+        ip_address: string;
+        status: string;
+        kill_switch_active: boolean;
+      }>(
+        `SELECT id, tenant_id, hostname, ip_address, status, kill_switch_active
+         FROM endpoint_agents
+         WHERE id::text = $1 OR hostname = $1
+         LIMIT 1;`,
+        [agentId]
+      );
+      if (agentLookupRows.length > 0) {
+        agentRecord = agentLookupRows[0];
+      }
+    } catch {
+      // Mock / offline fallback
+      const mockAgent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
+      if (mockAgent) {
+        agentRecord = {
+          id: mockAgent.id,
+          tenant_id: mockAgent.tenant_id,
+          hostname: mockAgent.hostname,
+          ip_address: mockAgent.ip_address,
+          status: mockAgent.status,
+          kill_switch_active: mockAgent.kill_switch_active,
+        };
+      }
+    }
+
+    const effectiveTenantId = agentRecord?.tenant_id || "acme-tenant";
+
+    // 2. Comprehensive IP & Endpoint containment check across all registries
+    let isBlocked = false;
+    const candidateIps = Array.from(
+      new Set(
+        [
+          ipAddress,
+          agentRecord?.ip_address,
+          typeof body.ipAddress === "string" ? body.ipAddress.trim() : null,
+        ].filter(Boolean) as string[]
+      )
+    );
+
+    for (const testIp of candidateIps) {
+      if (isIpBlocked(testIp)) {
+        isBlocked = true;
+        break;
+      }
+      if (await isIpBlockedInFleet(testIp, effectiveTenantId)) {
+        isBlocked = true;
+        break;
+      }
+    }
+
+    if (!isBlocked && agentRecord) {
+      const agentIp = (agentRecord.ip_address || "").trim();
+      if (agentIp && agentIp !== "Unknown") {
+        try {
+          const { rows: fleetBlockedCheck } = await query(
+            `SELECT 1 FROM fleet_blocked_ips
+             WHERE status = 'blocked'
+               AND ($1::text IS NULL OR tenant_id = $1)
+               AND ip_address = $2
+             LIMIT 1;`,
+            [effectiveTenantId, agentIp]
+          );
+          if (fleetBlockedCheck.length > 0) {
+            isBlocked = true;
+          }
+        } catch {
+          const match = MOCK_FLEET_BLOCKED_IPS.find(
+            (b) =>
+              b.status === "blocked" &&
+              b.ip_address === agentIp
+          );
+          if (match) isBlocked = true;
         }
       }
     }
 
     if (isBlocked) {
+      adminDisconnectedAgents.add(agentId);
+      if (agentRecord) {
+        adminDisconnectedAgents.add(agentRecord.id);
+        if (agentRecord.hostname) adminDisconnectedAgents.add(agentRecord.hostname);
+      }
+
       await query(
         `UPDATE endpoint_agents
          SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
-         WHERE id::text = $1 OR ip_address = $2;`,
-        [agentId, ipAddress || ""]
+         WHERE id::text = $1 OR hostname = $1 OR ip_address = $2;`,
+        [agentId, ipAddress || agentRecord?.ip_address || ""]
       ).catch(() => {});
 
-      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || (ipAddress && a.ip_address === ipAddress));
+      const currentMock = MOCK_ENDPOINT_AGENTS.find(
+        (a) => a.id === agentId || a.hostname === agentId || (ipAddress && a.ip_address === ipAddress)
+      );
       if (currentMock) {
         currentMock.status = "disconnected";
         currentMock.cpu_usage = 0;
@@ -80,7 +164,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error: "IP_BLOCKED",
-          message: `Traffic from IP ${ipAddress || "this host"} is blocked by SOC security policy. Connectivity has been terminated. To restore connectivity, run 'unblock_ip'.`,
+          message: `Traffic from IP ${ipAddress || agentRecord?.ip_address || "this host"} is blocked by SOC security policy. Connectivity has been terminated. To restore connectivity, run 'unblock_ip'.`,
           status: "disconnected",
           killSwitchActive: false,
         },
@@ -88,60 +172,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check if operator explicitly disconnected this specific agent
-    let isExplicitlyDisconnected = adminDisconnectedAgents.has(agentId);
-    if (!isExplicitlyDisconnected) {
-      try {
-        const { rows: agentLookup } = await query<{ id: string; hostname: string }>(
-          `SELECT id, hostname FROM endpoint_agents WHERE id::text = $1 OR hostname = $1 LIMIT 1;`,
-          [agentId]
-        );
-        if (agentLookup.length > 0) {
-          if (
-            adminDisconnectedAgents.has(agentLookup[0].id) ||
-            (agentLookup[0].hostname && adminDisconnectedAgents.has(agentLookup[0].hostname))
-          ) {
-            isExplicitlyDisconnected = true;
-          }
-        }
-      } catch {
-        const mockAgent = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
-        if (
-          mockAgent &&
-          (adminDisconnectedAgents.has(mockAgent.id) ||
-            (mockAgent.hostname && adminDisconnectedAgents.has(mockAgent.hostname)))
-        ) {
-          isExplicitlyDisconnected = true;
-        }
-      }
+    // 3. Emergency Admin Kill Switch: if engaged, immediately lock agent out with 423
+    if (agentRecord?.kill_switch_active) {
+      MetricsRegistry.increment("shielddesk_agent_heartbeat_failures_total", 1, { reason: "kill_switch" });
+      return NextResponse.json(
+        { error: "KILL_SWITCH_ACTIVE", killSwitchActive: true },
+        { status: 423 }
+      );
     }
 
-    if (isExplicitlyDisconnected) {
-      await query(
-        `UPDATE endpoint_agents
-         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
-         WHERE id::text = $1 OR hostname = $1;`,
-        [agentId]
-      ).catch(() => {});
-
-      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
-      if (currentMock) {
-        currentMock.status = "disconnected";
-        currentMock.cpu_usage = 0;
-        currentMock.memory_usage = 0;
-        currentMock.eps = 0;
-      }
-
-      return NextResponse.json({
-        success: true,
-        agentId,
-        status: "disconnected",
-        killSwitchActive: false,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    // Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
+    // 4. Enforce single-endpoint-per-IP: check if another agent in the same tenant is already actively connected
     if (ipAddress && requestedStatus !== "disconnected") {
       try {
         const { rows: conflictRows } = await query<{ id: string; hostname: string }>(
@@ -208,6 +248,40 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 5. Check if operator explicitly disconnected this specific agent via admin lock
+    const isExplicitlyDisconnected =
+      adminDisconnectedAgents.has(agentId) ||
+      (agentRecord !== null && (
+        adminDisconnectedAgents.has(agentRecord.id) ||
+        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname))
+      ));
+
+    if (isExplicitlyDisconnected) {
+      await query(
+        `UPDATE endpoint_agents
+         SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
+         WHERE id::text = $1 OR hostname = $1;`,
+        [agentId]
+      ).catch(() => {});
+
+      const currentMock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
+      if (currentMock) {
+        currentMock.status = "disconnected";
+        currentMock.cpu_usage = 0;
+        currentMock.memory_usage = 0;
+        currentMock.eps = 0;
+      }
+
+      return NextResponse.json({
+        success: true,
+        agentId,
+        status: "disconnected",
+        killSwitchActive: false,
+        message: "Endpoint is administratively disconnected or contained.",
+        timestamp: new Date().toISOString(),
+      });
+    }
+
     try {
       const { rows } = await query<{
         id: string;
@@ -249,7 +323,7 @@ export async function POST(req: NextRequest) {
         }>(
           `INSERT INTO endpoint_agents (id, tenant_id, hostname, ip_address, os_type, agent_version, status, cpu_usage, memory_usage, eps, kill_switch_active, last_seen_at, created_at)
            VALUES ($1, $2, $3, $4, $5, '0.4.2', 'connected', $6, $7, $8, false, now(), now())
-           ON CONFLICT (id) DO UPDATE SET last_seen_at = now(), status = 'connected', cpu_usage = EXCLUDED.cpu_usage, memory_usage = EXCLUDED.memory_usage, eps = EXCLUDED.eps
+           ON CONFLICT (id) DO UPDATE SET last_seen_at = now(), status = CASE WHEN endpoint_agents.status = 'isolated' THEN 'isolated' ELSE 'connected' END, cpu_usage = EXCLUDED.cpu_usage, memory_usage = EXCLUDED.memory_usage, eps = EXCLUDED.eps
            RETURNING id, kill_switch_active, tenant_id, status;`,
           [agentId, tenantId, host, ipAddress, osType, finalCpu, finalMem, finalEps]
         ).catch(() => ({ rows: [] }));

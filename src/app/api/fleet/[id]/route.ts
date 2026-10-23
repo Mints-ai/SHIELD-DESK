@@ -51,6 +51,13 @@ export async function PATCH(
       );
     }
 
+    if (caller.role === "analyst") {
+      return NextResponse.json(
+        { error: "Forbidden: Analysts do not have permission to modify endpoint agent state" },
+        { status: 403 }
+      );
+    }
+
     const { id } = await params;
     const body = await req.json().catch(() => ({}));
     const action = body.action || "disconnect";
@@ -115,13 +122,24 @@ export async function PATCH(
       }
       try {
         const tenantFilterSql = isCrossTenant ? "" : `AND tenant_id = '${caller.tenant_id}'`;
-        const { rows: reconnRows } = await query<{ id: string; hostname: string }>(
-          `SELECT id, hostname FROM endpoint_agents WHERE (id::text = $1 OR hostname = $1) ${tenantFilterSql};`,
+        const { rows: reconnRows } = await query<{ id: string; hostname: string; ip_address: string }>(
+          `SELECT id, hostname, ip_address FROM endpoint_agents WHERE (id::text = $1 OR hostname = $1) ${tenantFilterSql};`,
           [id]
         );
         for (const row of reconnRows) {
           adminDisconnectedAgents.delete(row.id);
           if (row.hostname) adminDisconnectedAgents.delete(row.hostname);
+          if (row.ip_address && row.ip_address !== "Unknown") {
+            adminDisconnectedAgents.delete(row.ip_address);
+            try {
+              const { recordUnblockedIp } = await import("@/lib/fleet/blockedIps");
+              await recordUnblockedIp({
+                tenantId: caller.tenant_id,
+                ip: row.ip_address,
+                unblockedBy: caller.email || caller.id,
+              });
+            } catch {}
+          }
         }
       } catch {}
       // Single-endpoint-per-IP: verify no other endpoint with this IP is currently connected
@@ -243,6 +261,13 @@ export async function DELETE(
       return NextResponse.json(
         { error: "Unauthorized: Valid authentication session required" },
         { status: 401 }
+      );
+    }
+
+    if (caller.role === "analyst") {
+      return NextResponse.json(
+        { error: "Forbidden: Analysts do not have permission to delete endpoint agents" },
+        { status: 403 }
       );
     }
 
