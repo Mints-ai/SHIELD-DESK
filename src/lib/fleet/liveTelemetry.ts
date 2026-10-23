@@ -60,7 +60,11 @@ export async function getLiveFleetAgents(
 
     let computedStatus: import("./fleet").AgentStatus = String(row.status || "disconnected") as import("./fleet").AgentStatus;
     const isBlocked = cleanIp !== "Unknown" && isIpBlocked(cleanIp);
-    if (isBlocked) {
+    const isExplicitlyDisconnected =
+      adminDisconnectedAgents.has(String(row.id)) ||
+      (row.hostname && adminDisconnectedAgents.has(String(row.hostname)));
+
+    if (isBlocked || isExplicitlyDisconnected) {
       computedStatus = "disconnected";
     } else if (row.kill_switch_active) {
       computedStatus = "disconnected";
@@ -119,6 +123,8 @@ export async function disconnectLiveAgent(agentId: string, tenantId?: string): P
     (a) => (a.id === agentId || a.hostname === agentId) && (!tenantId || a.tenant_id === tenantId)
   );
   if (mockAgent) {
+    adminDisconnectedAgents.add(mockAgent.id);
+    if (mockAgent.hostname) adminDisconnectedAgents.add(mockAgent.hostname);
     mockAgent.status = "disconnected";
     mockAgent.cpu_usage = 0;
     mockAgent.memory_usage = 0;

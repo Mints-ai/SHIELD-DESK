@@ -257,15 +257,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 5. Check if operator explicitly disconnected this specific agent via admin lock
+    // 5. Check if operator explicitly disconnected this specific agent via admin lock or persisted DB status
     const isExplicitlyDisconnected =
       adminDisconnectedAgents.has(agentId) ||
       (agentRecord !== null && (
         adminDisconnectedAgents.has(agentRecord.id) ||
-        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname))
+        (agentRecord.hostname && adminDisconnectedAgents.has(agentRecord.hostname)) ||
+        agentRecord.status === "disconnected"
       ));
 
     if (isExplicitlyDisconnected) {
+      adminDisconnectedAgents.add(agentId);
+      if (agentRecord?.id) adminDisconnectedAgents.add(agentRecord.id);
+      if (agentRecord?.hostname) adminDisconnectedAgents.add(agentRecord.hostname);
       await query(
         `UPDATE endpoint_agents
          SET status = 'disconnected', cpu_usage = 0, memory_usage = 0, eps = 0
@@ -307,6 +311,7 @@ export async function POST(req: NextRequest) {
              core_telemetry = CASE WHEN $7::jsonb IS NOT NULL THEN $7::jsonb ELSE core_telemetry END,
              status = CASE
                WHEN status = 'isolated' THEN 'isolated'
+               WHEN status = 'disconnected' THEN 'disconnected'
                WHEN $6::text = 'disconnected' THEN 'disconnected'
                ELSE 'connected'
              END
@@ -332,7 +337,7 @@ export async function POST(req: NextRequest) {
         }>(
           `INSERT INTO endpoint_agents (id, tenant_id, hostname, ip_address, os_type, agent_version, status, cpu_usage, memory_usage, eps, kill_switch_active, last_seen_at, created_at)
            VALUES ($1, $2, $3, $4, $5, '0.4.2', 'connected', $6, $7, $8, false, now(), now())
-           ON CONFLICT (id) DO UPDATE SET last_seen_at = now(), status = CASE WHEN endpoint_agents.status = 'isolated' THEN 'isolated' ELSE 'connected' END, cpu_usage = EXCLUDED.cpu_usage, memory_usage = EXCLUDED.memory_usage, eps = EXCLUDED.eps
+           ON CONFLICT (id) DO UPDATE SET last_seen_at = now(), status = CASE WHEN endpoint_agents.status = 'isolated' THEN 'isolated' WHEN endpoint_agents.status = 'disconnected' THEN 'disconnected' ELSE 'connected' END, cpu_usage = EXCLUDED.cpu_usage, memory_usage = EXCLUDED.memory_usage, eps = EXCLUDED.eps
            RETURNING id, kill_switch_active, tenant_id, status;`,
           [agentId, tenantId, host, ipAddress, osType, finalCpu, finalMem, finalEps]
         ).catch(() => ({ rows: [] }));
@@ -379,7 +384,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      if (adminDisconnectedAgents.has(agentId) || requestedStatus === "disconnected") {
+      if (adminDisconnectedAgents.has(agentId) || requestedStatus === "disconnected" || agent.status === "disconnected") {
         agent.status = "disconnected";
         agent.cpu_usage = 0;
         agent.memory_usage = 0;

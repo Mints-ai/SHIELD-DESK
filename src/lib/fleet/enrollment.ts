@@ -1,3 +1,4 @@
+import { adminDisconnectedAgents } from "@/lib/fleet/liveTelemetry";
 import crypto from "crypto";
 import { query } from "@/lib/db";
 import { recordHashChainEvent } from "@/lib/fleet/fleet";
@@ -234,6 +235,8 @@ export async function enrollEndpointAgent({
   }
 
   const agentId = crypto.randomUUID();
+  adminDisconnectedAgents.delete(agentId);
+  adminDisconnectedAgents.delete(hostname);
 
   try {
     await query(
