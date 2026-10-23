@@ -10,7 +10,7 @@ export default function CheckoutSuccessPage() {
   return (
     <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
-      <main className="max-w-xl mx-auto px-6 py-20 flex-1 flex flex-col items-center justify-center text-center">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-xl mx-auto my-8 p-6 md:p-8 flex flex-col items-center justify-center text-center">
         <React.Suspense fallback={<RefreshCw className="w-8 h-8 animate-spin text-[var(--sd-pine)]" />}>
           <CheckoutStatusVerifier />
         </React.Suspense>

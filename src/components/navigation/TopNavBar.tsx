@@ -206,7 +206,16 @@ export function TopNavBar() {
       </header>
       <aside id="workspace-navigation" className="sd-sidebar" data-open={mobileNavOpen} onKeyDown={(event) => { if (event.key === "Escape") { setMobileNavOpen(false); navigationToggleRef.current?.focus(); } }}>
         <Link href="/" className="sd-brand" aria-label="ShieldDesk home"><img src="/shield-emblem.png" alt="ShieldDesk" className="w-9 h-9 object-contain flex-shrink-0" /><div><div className="sd-brand-name">ShieldDesk</div><div className="sd-brand-caption">Security operations</div></div></Link>
-        <nav aria-label="Dashboard"><p className="sd-nav-label">Workspace</p>{navLinks.map(({ href, label, icon: Icon }) => <Link key={href} href={href} prefetch={true} onClick={() => setMobileNavOpen(false)} className="sd-nav-link" aria-current={(href === "/" ? pathname === "/" : pathname?.startsWith(href)) ? "page" : undefined}><Icon size={18} strokeWidth={1.5} /><span>{label}</span></Link>)}</nav>
+        <nav aria-label="Dashboard"><p className="sd-nav-label">Workspace</p>{navLinks.map(({ href, label, icon: Icon }) => {
+          const isActive = href === "/"
+            ? pathname === "/"
+            : href === "/dashboard/billing"
+            ? (pathname === "/dashboard/billing" || pathname === "/billing" || pathname?.startsWith("/pricing"))
+            : pathname?.startsWith(href);
+          return (
+            <Link key={href} href={href} prefetch={true} onClick={() => setMobileNavOpen(false)} className="sd-nav-link" aria-current={isActive ? "page" : undefined}><Icon size={18} strokeWidth={1.5} /><span>{label}</span></Link>
+          );
+        })}</nav>
         <div className="sd-sidebar-bottom"><p>Clarity in every signal.<br />Confidence in every action.</p><div className="sd-sidebar-rule" /><span className="sd-sample-label"><i className="sd-status-dot" />{envMeta.isDemoMode ? "Demo environment" : "Live SOC"}</span><div className="sd-sidebar-footnote">{envMeta.isDemoMode ? "Illustrative data · Development workspace" : "Live telemetry · Governed operations"}<br />ShieldDesk · Mints Global</div></div>
       </aside>
 
