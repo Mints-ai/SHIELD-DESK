@@ -291,17 +291,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: val.reason || "Invalid destination URL" }, { status: 400 });
       }
 
-<<<<<<< HEAD
-      // Auto-resolve platform type if generic was selected but a known provider URL was provided
-      let resolvedType = type;
-      const destTrimmed = String(destination).trim().toLowerCase();
-      if (destTrimmed.includes("discord.com/api/webhooks") || destTrimmed.includes("discordapp.com/api/webhooks")) {
-        resolvedType = "discord";
-      } else if (destTrimmed.includes("hooks.slack.com")) {
-        resolvedType = "slack";
-      } else if (destTrimmed.includes("office.com/webhook") || destTrimmed.includes("outlook.office.com")) {
-        resolvedType = "teams";
-=======
       // Auto-detect platform if not provided or set to generic
       if (!type || type === "generic") {
         const detected = detectWebhookPlatform(destination);
@@ -310,13 +299,12 @@ export async function POST(req: NextRequest) {
         } else if (!type) {
           type = "generic";
         }
->>>>>>> 1d7a9db2a27a8bcd5e14cda26249c57dce7dd583
       }
 
       const created = await createTenantWebhookEndpoint({
         tenantId: session.tenantId,
         name: String(name).trim(),
-        type: resolvedType,
+        type,
         destination: String(destination).trim(),
         secretKey: secret_key ? String(secret_key).trim() : undefined,
         events: Array.isArray(events) ? events : undefined,
@@ -393,117 +381,6 @@ export async function POST(req: NextRequest) {
       deliveryId,
     });
 
-<<<<<<< HEAD
-    const secret =
-      process.env.SHIELDDESK_WEBHOOK_SECRET ||
-      (process.env.NODE_ENV !== "production" ? "sd_webhook_dev_secret" : "");
-
-    const hmacHex = secret
-      ? crypto.createHmac("sha256", secret).update(`${nowEpoch}.${testPayload}`).digest("hex")
-      : "";
-    const signature = hmacHex ? `t=${nowEpoch},v1=${hmacHex}` : "";
-    const legacySig = secret
-      ? `sha256=${crypto.createHmac("sha256", secret).update(testPayload).digest("hex")}`
-      : "";
-
-    const startTime = Date.now();
-    let deliveryStatus = 200;
-    let responseBody = "";
-
-    const destLower = targetEndpoint.destination.toLowerCase();
-    const isDiscord =
-      targetEndpoint.type === "discord" ||
-      destLower.includes("discord.com/api/webhooks") ||
-      destLower.includes("discordapp.com/api/webhooks");
-    const isSlack = targetEndpoint.type === "slack" || destLower.includes("hooks.slack.com");
-    const isTeams =
-      targetEndpoint.type === "teams" ||
-      destLower.includes("office.com/webhook") ||
-      destLower.includes("outlook.office.com");
-
-    try {
-      if (isDiscord) {
-        const discordRes = await fetch(targetEndpoint.destination, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(signature ? {
-              "X-ShieldDesk-Signature": signature,
-              "X-ShieldDesk-Signature-Legacy": legacySig,
-              "X-ShieldDesk-Timestamp": String(nowEpoch),
-              "X-ShieldDesk-Delivery-Id": deliveryId,
-            } : {}),
-          },
-          body: JSON.stringify({
-            content: "🛡️ **[ShieldDesk SOC]** Real Webhook Verification Dispatch",
-            embeds: [
-              {
-                title: `ShieldDesk Webhook Test: ${targetEndpoint.name}`,
-                description: "This is a real test event dispatched from the ShieldDesk Threat Engine.",
-                color: 0x10b981,
-                fields: [
-                  { name: "Tenant", value: session.tenantId, inline: true },
-                  { name: "Event Type", value: eventType, inline: true },
-                  { name: "Signature", value: signature ? `${signature.slice(0, 24)}...` : "None", inline: false },
-                  { name: "Delivery ID", value: deliveryId, inline: false },
-                ],
-                footer: { text: "ShieldDesk Autonomous EDR / SOC" },
-                timestamp: new Date().toISOString(),
-              },
-            ],
-          }),
-          signal: AbortSignal.timeout(5000),
-        });
-        deliveryStatus = discordRes.status;
-        responseBody = await discordRes.text().catch(() => "");
-      } else if (isSlack) {
-        const slackRes = await fetch(targetEndpoint.destination, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(signature ? {
-              "X-ShieldDesk-Signature": signature,
-              "X-ShieldDesk-Signature-Legacy": legacySig,
-              "X-ShieldDesk-Timestamp": String(nowEpoch),
-              "X-ShieldDesk-Delivery-Id": deliveryId,
-            } : {}),
-          },
-          body: JSON.stringify({
-            text: `🛡️ *[ShieldDesk SOC]* Webhook Test Dispatch for *${targetEndpoint.name}* (Tenant: ${session.tenantId}, Delivery: ${deliveryId})`,
-          }),
-          signal: AbortSignal.timeout(5000),
-        });
-        deliveryStatus = slackRes.status;
-        responseBody = await slackRes.text().catch(() => "");
-      } else {
-        const genericRes = await fetch(targetEndpoint.destination, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(signature ? {
-              "X-ShieldDesk-Signature": signature,
-              "X-ShieldDesk-Signature-Legacy": legacySig,
-              "X-ShieldDesk-Timestamp": String(nowEpoch),
-              "X-ShieldDesk-Delivery-Id": deliveryId,
-            } : {}),
-            "X-ShieldDesk-Event": eventType,
-          },
-          body: testPayload,
-          signal: AbortSignal.timeout(5000),
-        });
-        deliveryStatus = genericRes.status;
-        responseBody = await genericRes.text().catch(() => "");
-      }
-    } catch (deliveryErr) {
-      deliveryStatus = 504;
-      responseBody = deliveryErr instanceof Error ? deliveryErr.message : "Network delivery timeout";
-    }
-
-    const latencyMs = Date.now() - startTime;
-    const isSuccess = deliveryStatus >= 200 && deliveryStatus < 300;
-
-=======
->>>>>>> 1d7a9db2a27a8bcd5e14cda26249c57dce7dd583
     // Record delivery audit log
     await recordWebhookDeliveryLog({
       deliveryId,
