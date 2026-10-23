@@ -1,0 +1,21 @@
+{
+  "active_champion": "v1.0.0-baseline",
+  "active_challenger": null,
+  "shadow_evaluation_enabled": false,
+  "total_shadow_inferences": 0,
+  "shadow_divergences": 0,
+  "versions": {
+    "v1.0.0-baseline": {
+      "version": "v1.0.0-baseline",
+      "artifact_path": "C:\\Users\\Abinand\\Desktop\\Abinand\\SHIELD-DESK\\ai-chat-desk\\models\\cve_random_forest_model.joblib",
+      "created_at": "2026-10-23T08:14:44.217479+00:00",
+      "promoted_at": "2026-10-23T08:14:44.217494+00:00",
+      "git_commit": "0a21d18d085c42dd17084719ada60462c8b99287",
+      "status": "CHAMPION",
+      "receipt": null
+    }
+  },
+  "history": [
+    "v1.0.0-baseline"
+  ]
+}

@@ -1,3 +1,4 @@
+import "./setup";
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
@@ -69,7 +70,11 @@ describe("Webhook Dispatcher Event & Severity Filtering Suite", () => {
   });
 
   it("Step 3: End-to-end multi-endpoint subscription and severity suppression", async () => {
-    // Register Endpoint 1: PagerDuty / Critical Threats only
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }), { status: 200 });
+
+    try {
+      // Register Endpoint 1: PagerDuty / Critical Threats only
     const criticalEndpoint = await createTenantWebhookEndpoint({
       tenantId: testTenant,
       name: "Critical Escalations",
@@ -174,5 +179,8 @@ describe("Webhook Dispatcher Event & Severity Filtering Suite", () => {
       false,
       "Paused endpoint must NEVER receive notifications"
     );
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });

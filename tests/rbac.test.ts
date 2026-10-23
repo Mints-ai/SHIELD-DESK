@@ -186,4 +186,12 @@ describe("ShieldDesk Multi-Tenant RBAC & Isolation Suite", () => {
     });
     assert.ok(!("error" in adminRes), "system_admin should access plan across tenants");
   });
+
+  it("Threat Intelligence Sync RBAC: strictly grants live sync to system_admin and super_admin, denying responder and analyst", () => {
+    assert.strictEqual(canAccess("system_admin", "intel.sync"), true, "system_admin must be authorized for intel.sync");
+    assert.strictEqual(canAccess("super_admin", "intel.sync"), true, "super_admin must be authorized for intel.sync");
+    assert.strictEqual(canAccess("responder", "intel.sync"), false, "responder must be FORBIDDEN from intel.sync");
+    assert.strictEqual(canAccess("analyst", "intel.sync"), false, "analyst must be FORBIDDEN from intel.sync");
+  });
 });
+

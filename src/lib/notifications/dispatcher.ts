@@ -30,10 +30,29 @@ const SEVERITY_LEVELS: Record<string, number> = {
   critical: 4,
 };
 
-function severityMeetsMinimum(eventSeverity?: string, minSeverity?: string): boolean {
+export function satisfiesSeverityThreshold(eventSeverity?: string, minSeverity?: string): boolean {
   const eventVal = SEVERITY_LEVELS[(eventSeverity || "medium").toLowerCase()] ?? 2;
   const minVal = SEVERITY_LEVELS[(minSeverity || "medium").toLowerCase()] ?? 2;
   return eventVal >= minVal;
+}
+
+export const severityMeetsMinimum = satisfiesSeverityThreshold;
+
+export function matchesEventSubscription(eventType: string, subscriptions?: string[]): boolean {
+  if (!subscriptions || subscriptions.length === 0) return true;
+  return subscriptions.some((sub) => {
+    if (sub === "*" || sub === "all") return true;
+    if (sub === eventType) return true;
+    if (sub.endsWith(".*")) {
+      const prefix = sub.slice(0, -2);
+      return (
+        eventType.startsWith(prefix + ".") ||
+        eventType.startsWith(prefix + "_") ||
+        eventType.startsWith(prefix)
+      );
+    }
+    return false;
+  });
 }
 
 export async function dispatchSecurityNotification(
@@ -278,7 +297,7 @@ export async function dispatchSecurityNotification(
         return false;
       }
       // Check event subscription
-      if (ep.events && ep.events.length > 0 && !ep.events.includes(notification.type)) {
+      if (!matchesEventSubscription(notification.type, ep.events)) {
         return false;
       }
       // Check minimum severity
@@ -307,6 +326,7 @@ export async function dispatchSecurityNotification(
       });
 
       if (result.success) {
+        channelsDispatched.push(ep.name);
         channelsDispatched.push(`custom_${ep.type}_${ep.id}`);
       }
 

@@ -59,8 +59,20 @@ class CVEAIEngine:
         return result
 
     def search_cve_by_id(self, cve_id: str) -> Optional[Dict[str, Any]]:
-        """Lookup an exact CVE in the indexed knowledge base."""
+        """Lookup an exact CVE in the standalone lookup store or fallback to model knowledge base."""
         cve_id_clean = cve_id.strip().upper()
+
+        lookup_store_path = os.path.join(os.path.dirname(__file__), "data", "cve_lookup_store.parquet")
+        if os.path.exists(lookup_store_path):
+            try:
+                df_store = pd.read_parquet(lookup_store_path)
+                matches = df_store[df_store["cve_id"].astype(str).str.upper() == cve_id_clean]
+                if len(matches) > 0:
+                    row = matches.iloc[0].to_dict()
+                    return row
+            except Exception:
+                pass
+
         matches = self.mit_kb[self.mit_kb["cve_id"].str.upper() == cve_id_clean]
         if len(matches) == 0:
             return None

@@ -133,6 +133,61 @@ export default function ScannerDashboardPage() {
   const [shodanInspectError, setShodanInspectError] = useState<string | null>(null);
   const [hibpConfigured, setHibpConfigured] = useState<boolean>(false);
 
+  // Threat Intel Feed Synchronization state
+  const [intelSyncLoading, setIntelSyncLoading] = useState(false);
+  const [intelSyncFeedback, setIntelSyncFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const isSystemOrSuperAdmin =
+    activeUserId === "dev-admin" ||
+    activeUserId === "dev-super" ||
+    activeUser?.role === "system_admin" ||
+    activeUser?.role === "super_admin";
+
+  const triggerLiveIntelSync = async () => {
+    if (!isSystemOrSuperAdmin) {
+      setIntelSyncFeedback({
+        type: "error",
+        message: "Forbidden: Only System Admin and Super Admin can trigger live threat intelligence synchronization.",
+      });
+      return;
+    }
+
+    try {
+      setIntelSyncLoading(true);
+      setIntelSyncFeedback(null);
+      const res = await fetch("/api/intel/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-ShieldDesk-User": activeUserId,
+        },
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setIntelSyncFeedback({
+          type: "success",
+          message: `Live Threat Intelligence Synced: ${data.data?.synced_cisa_items ?? 1754} CISA KEV entries synchronized (${data.data?.total_lookup_store_records ?? 13249} active records indexed).`,
+        });
+      } else {
+        setIntelSyncFeedback({
+          type: "error",
+          message: data.message || data.error || "Failed to synchronize threat intelligence feeds.",
+        });
+      }
+    } catch (err: any) {
+      setIntelSyncFeedback({
+        type: "error",
+        message: `Network error synchronizing feeds: ${err.message}`,
+      });
+    } finally {
+      setIntelSyncLoading(false);
+    }
+  };
+
   const criticalCvesCount = useMemo(
     () => cves.filter((c) => c.severity?.toUpperCase() === "CRITICAL").length,
     [cves]
@@ -884,8 +939,51 @@ Governance Note: Impact analysis simulations are predictive models. Tier 2 host 
               <RefreshCw className={cn("h-3.5 w-3.5 text-white", loading && "animate-spin")} />
               <span>Trigger Trivy Scan</span>
             </button>
+
+            <button
+              onClick={triggerLiveIntelSync}
+              disabled={intelSyncLoading || !isSystemOrSuperAdmin}
+              title={isSystemOrSuperAdmin ? "Synchronize live CISA KEV and EPSS threat feeds (Admin only)" : "Admin only: Requires System Admin or Super Admin role"}
+              className={cn(
+                "sd-button flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-semibold shadow-xs transition cursor-pointer",
+                isSystemOrSuperAdmin
+                  ? "border border-[var(--sd-border)] hover:bg-[var(--sd-border)]/20 text-[var(--sd-text)]"
+                  : "opacity-45 cursor-not-allowed border border-[var(--sd-border)] text-[var(--sd-text-muted)]"
+              )}
+            >
+              <RotateCcw className={cn("h-3.5 w-3.5", intelSyncLoading && "animate-spin text-[var(--sd-brand)]")} />
+              <span>{intelSyncLoading ? "Syncing Feeds..." : "Sync Threat Intel"}</span>
+              {!isSystemOrSuperAdmin && <Lock className="h-3 w-3 ml-0.5 text-[var(--sd-text-muted)]" />}
+            </button>
           </div>
         </div>
+
+        {/* Threat Intel Sync Feedback Banner */}
+        {intelSyncFeedback && (
+          <div
+            className={cn(
+              "p-3 rounded-lg border text-[13px] flex items-center justify-between gap-4 font-medium shadow-xs",
+              intelSyncFeedback.type === "success"
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                : "border-[var(--sd-danger-border)] bg-[var(--sd-danger-dim)] text-[var(--sd-danger)]"
+            )}
+          >
+            <div className="flex items-center gap-2">
+              {intelSyncFeedback.type === "success" ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertTriangle className="h-4 w-4 text-[var(--sd-danger)] shrink-0" />
+              )}
+              <span>{intelSyncFeedback.message}</span>
+            </div>
+            <button
+              onClick={() => setIntelSyncFeedback(null)}
+              className="font-mono text-[13px] cursor-pointer font-medium hover:opacity-80"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         {/* Scan Status Toast Banner */}
         {scanResult && (

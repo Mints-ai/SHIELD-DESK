@@ -10,13 +10,35 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, r2_score, mean_squared_error, mean_absolute_error, classification_report, confusion_matrix, roc_auc_score
 from cve_random_forest import CVERandomForestModel
 
-def train_single_rf():
+def train_single_rf(
+    source_parquet: str = None,
+    output_model_path: str = "models/candidate_model.joblib"
+) -> str:
     print("==================================================================")
     print("      TRAINING UNIFIED SINGLE MODEL (RANDOM FOREST ENGINE)        ")
     print("==================================================================")
 
-    df = pd.read_parquet("data/harmonized_cve.parquet")
-    print(f"[+] Total Dataset: {len(df)} records")
+    if not source_parquet:
+        if os.path.exists("data/cve_lookup_store.parquet"):
+            source_parquet = "data/cve_lookup_store.parquet"
+        else:
+            source_parquet = "data/harmonized_cve.parquet"
+
+    df = pd.read_parquet(source_parquet)
+    print(f"[+] Loaded Dataset from {source_parquet}: {len(df)} records")
+
+    # Sanitize and ensure full_text exists
+    df["full_text"] = df["full_text"].fillna("").astype(str) if "full_text" in df.columns else (
+        "Category: " + df["category"].fillna("General") +
+        ". CWE: " + df["cwe_id"].fillna("Unknown") +
+        ". Description: " + df["description"].fillna("")
+    )
+    df["epss_score"] = pd.to_numeric(df["epss_score"], errors="coerce").fillna(0.05)
+    df["kev_listed"] = pd.to_numeric(df["kev_listed"], errors="coerce").fillna(0).astype(int)
+    df["cvss_score"] = pd.to_numeric(df["cvss_score"], errors="coerce").fillna(5.0)
+    df["cvss_severity"] = df["cvss_severity"].fillna("MEDIUM").astype(str)
+    df["assigned_tier"] = df["assigned_tier"].fillna("Tier 2 (Medium-Risk / Human-Approved)").astype(str)
+    df["mitigation_plan"] = df["mitigation_plan"].fillna("").astype(str)
 
     train_df, test_df = train_test_split(
         df, test_size=0.20, random_state=42, stratify=df["cvss_severity"]
@@ -104,11 +126,19 @@ def train_single_rf():
     rf_model.metrics = metrics
 
     # Save the single unified model
-    rf_model.save("models/cve_random_forest_model.joblib")
-    with open("models/evaluation_report.json", "w") as f:
+    os.makedirs(os.path.dirname(output_model_path), exist_ok=True)
+    rf_model.save(output_model_path)
+    report_path = os.path.join(os.path.dirname(output_model_path), "evaluation_report.json")
+    with open(report_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
 
-    print("\n[+] SUCCESS! Single Random Forest Model trained and saved to models/cve_random_forest_model.joblib")
+    print(f"\n[+] SUCCESS! Model trained and saved to {output_model_path}")
+    return output_model_path
 
 if __name__ == "__main__":
-    train_single_rf()
+    import argparse
+    parser = argparse.ArgumentParser(description="Train Unified CVE Random Forest Model")
+    parser.add_argument("--source", default=None, help="Path to input parquet dataset")
+    parser.add_argument("--output", default="models/candidate_model.joblib", help="Output joblib model path")
+    args = parser.parse_args()
+    train_single_rf(source_parquet=args.source, output_model_path=args.output)

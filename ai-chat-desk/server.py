@@ -5,6 +5,7 @@ Serves interactive dashboard and prediction API on localhost:8000.
 
 import os
 import json
+import time
 import urllib.parse
 import requests
 import importlib
@@ -32,13 +33,36 @@ if sentry_dsn:
         print(f"[Sentry] Initialization warning: {init_err}")
 
 PORT = 8000
+from models.registry import ModelRegistry
+from pipeline.feed_sync import CVEFeedSynchronizer
+import threading
+from datetime import datetime, timezone
+
+registry = ModelRegistry()
 engine = CVEAIEngine()
+challenger_engine = None
+
+def get_challenger_engine():
+    global challenger_engine
+    status = registry.get_status()
+    if status.get("shadow_evaluation_enabled") and status.get("active_challenger"):
+        chall_info = status.get("challenger_details") or {}
+        path = chall_info.get("artifact_path")
+        if path and os.path.exists(path):
+            if challenger_engine is None or getattr(challenger_engine, "model_path", None) != path:
+                try:
+                    challenger_engine = CVEAIEngine(model_path=path)
+                except Exception as e:
+                    print(f"[Shadow] Failed to load challenger model: {e}")
+            return challenger_engine
+    return None
 
 class CVEAPIHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=os.path.join(os.path.dirname(__file__), "static"), **kwargs)
 
     def do_POST(self):
+        global engine, challenger_engine
         url = urllib.parse.urlparse(self.path)
         content_length = int(self.headers.get("Content-Length", 0))
         post_body = self.rfile.read(content_length).decode("utf-8")
@@ -54,6 +78,7 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             cwe_id = data.get("cwe_id", "Unknown")
             epss_score = data.get("epss_score", None)
             kev_listed = data.get("kev_listed", None)
+            context = data.get("context", {})
 
             if not description:
                 self._send_json({"error": "Description is required."}, status=400)
@@ -65,9 +90,53 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                     category=category,
                     cwe_id=cwe_id,
                     epss_score=epss_score,
-                    kev_listed=kev_listed
+                    kev_listed=kev_listed,
+                    context=context
                 )
                 self._send_json(result)
+
+                # Asynchronous Shadow Evaluation
+                chall_eng = get_challenger_engine()
+                if chall_eng is not None:
+                    def _run_shadow():
+                        try:
+                            chall_res = chall_eng.analyze_vulnerability(
+                                description=description,
+                                category=category,
+                                cwe_id=cwe_id,
+                                epss_score=epss_score,
+                                kev_listed=kev_listed,
+                                context=context
+                            )
+                            champ_tier = result.get("predictions", {}).get("assigned_tier")
+                            chall_tier = chall_res.get("predictions", {}).get("assigned_tier")
+                            champ_sev = result.get("predictions", {}).get("cvss_severity")
+                            chall_sev = chall_res.get("predictions", {}).get("cvss_severity")
+                            
+                            is_divergent = (champ_tier != chall_tier) or (champ_sev != chall_sev)
+                            audit_entry = {
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "champion_tier": champ_tier,
+                                "challenger_tier": chall_tier,
+                                "champion_sev": champ_sev,
+                                "challenger_sev": chall_sev,
+                                "is_divergent": is_divergent,
+                                "description_snippet": description[:100]
+                            }
+                            audit_path = os.path.join(os.path.dirname(__file__), "models", "shadow_audit.jsonl")
+                            with open(audit_path, "a", encoding="utf-8") as af:
+                                af.write(json.dumps(audit_entry) + "\n")
+
+                            manifest = registry.load_manifest()
+                            manifest["total_shadow_inferences"] = manifest.get("total_shadow_inferences", 0) + 1
+                            if is_divergent:
+                                manifest["shadow_divergences"] = manifest.get("shadow_divergences", 0) + 1
+                            registry.save_manifest(manifest)
+                        except Exception as shadow_err:
+                            print(f"[Shadow] Shadow inference error: {shadow_err}")
+
+                    threading.Thread(target=_run_shadow, daemon=True).start()
+
             except Exception as e:
                 if sentry_sdk is not None:
                     try:
@@ -75,6 +144,34 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                     except Exception:
                         pass
                 self._send_json({"error": str(e)}, status=500)
+            return
+
+        elif url.path == "/api/model/promote":
+            try:
+                promoted_id = registry.promote_challenger_to_champion()
+                status = registry.get_status()
+                champ_details = status.get("champion_details") or {}
+                champ_path = champ_details.get("artifact_path")
+                if champ_path and os.path.exists(champ_path):
+                    engine = CVEAIEngine(model_path=champ_path)
+                challenger_engine = None
+                self._send_json({"success": True, "promoted_version": promoted_id, "status": "active_champion"})
+            except Exception as err:
+                self._send_json({"error": str(err)}, status=400)
+            return
+
+        elif url.path == "/api/model/rollback":
+            try:
+                reverted_id = registry.rollback_to_previous()
+                status = registry.get_status()
+                champ_details = status.get("champion_details") or {}
+                champ_path = champ_details.get("artifact_path")
+                if champ_path and os.path.exists(champ_path):
+                    engine = CVEAIEngine(model_path=champ_path)
+                challenger_engine = None
+                self._send_json({"success": True, "active_version": reverted_id, "status": "rolled_back"})
+            except Exception as err:
+                self._send_json({"error": str(err)}, status=400)
             return
 
         elif url.path == "/api/trigger_scan":
@@ -132,6 +229,21 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             self._send_json({"results": results})
             return
 
+        elif url.path == "/api/intel/sync":
+            try:
+                sync = CVEFeedSynchronizer()
+                cisa_items = sync.sync_cisa_kev()
+                total_records = sync.initialize_or_update_lookup_store(cisa_items=cisa_items)
+                self._send_json({
+                    "success": True,
+                    "synced_cisa_items": len(cisa_items),
+                    "total_lookup_store_records": total_records,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
+            except Exception as e:
+                self._send_json({"error": f"Intel sync failed: {str(e)}"}, status=500)
+            return
+
         self._send_json({"error": "Endpoint not found"}, status=404)
 
     def do_GET(self):
@@ -140,6 +252,10 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
 
         if url.path in ("/health", "/api/health"):
             self._send_json({"status": "ok", "service": "cve-ai-engine"})
+            return
+
+        if url.path == "/api/model/status":
+            self._send_json(registry.get_status())
             return
 
         if url.path == "/api/lookup":
@@ -250,6 +366,27 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
+def start_daily_scheduler(interval_hours: int = 24):
+    """Background daemon thread that periodically runs CISA KEV and EPSS sync."""
+    def _scheduler_loop():
+        # Allow server to initialize first
+        time.sleep(5)
+        print(f"[Scheduler] Daily vulnerability intelligence sync daemon started (Interval: {interval_hours}h).")
+        while True:
+            try:
+                print("[Scheduler] Running automated periodic threat intelligence sync...")
+                from pipeline.feed_sync import CVEFeedSynchronizer
+                syncer = CVEFeedSynchronizer()
+                items = syncer.sync_cisa_kev()
+                total = syncer.initialize_or_update_lookup_store(cisa_items=items)
+                print(f"[Scheduler] Daily sync completed: {len(items)} KEV items checked, {total} active records.")
+            except Exception as e:
+                print(f"[Scheduler] Warning: Error during automated sync: {e}")
+            time.sleep(interval_hours * 3600)
+
+    sched_thread = threading.Thread(target=_scheduler_loop, daemon=True)
+    sched_thread.start()
+
 def run_server(port=PORT):
     os.makedirs("static", exist_ok=True)
     server_address = ("", port)
@@ -257,6 +394,8 @@ def run_server(port=PORT):
     print(f"\n=======================================================")
     print(f"[*] CVE AI Intelligence Server running on http://localhost:{port}")
     print(f"=======================================================\n")
+    # Launch background automated daily scheduler daemon
+    start_daily_scheduler(interval_hours=24)
     httpd.serve_forever()
 
 if __name__ == "__main__":

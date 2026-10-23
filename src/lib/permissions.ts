@@ -26,7 +26,8 @@ export type Permission =
   // Approval tier gates — additive. Each role can approve up to its highest tier.
   | "approve.tier1"  // low-risk reversible (Tier 1)
   | "approve.tier2"  // host isolation / patching (Tier 2) — requires responder+
-  | "approve.tier3"; // break-glass / destructive (Tier 3) — requires super_admin+
+  | "approve.tier3"  // break-glass / destructive (Tier 3) — requires super_admin+
+  | "intel.sync";    // trigger live threat intelligence synchronization
 
 const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
   system_admin: [
@@ -41,6 +42,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "approve.tier1",
     "approve.tier2",
     "approve.tier3",
+    "intel.sync",
   ],
   super_admin: [
     "MANAGE_USERS",
@@ -53,6 +55,7 @@ const ROLE_PERMISSIONS: Record<ShieldDeskRole, Permission[]> = {
     "approve.tier1",
     "approve.tier2",
     "approve.tier3",
+    "intel.sync",
   ],
   responder: [
     "incident.read",

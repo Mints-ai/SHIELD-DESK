@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-10-23T08:14:13.838457+00:00",
+  "model_path": "C:\\Users\\Abinand\\Desktop\\Abinand\\SHIELD-DESK\\ai-chat-desk\\eval\\..\\models\\cve_random_forest_model.joblib",
+  "benchmark_path": "C:\\Users\\Abinand\\Desktop\\Abinand\\SHIELD-DESK\\ai-chat-desk\\eval\\..\\data\\golden_safety_benchmark.parquet",
+  "benchmark_dataset_hash": "ca5a6ff949d73690df07d1e6086ab8476ccd917e3046ea5a2a10c652b750642b",
+  "overall_status": "REJECTED",
+  "gate_checks": {
+    "gate_zero_tier_regressions": {
+      "threshold": "0 violations",
+      "actual": 0,
+      "passed": true
+    },
+    "gate_cisa_kev_roc_auc": {
+      "threshold": ">= 0.970",
+      "actual": 0.8881,
+      "passed": false
+    },
+    "gate_cvss_score_mae": {
+      "threshold": "<= 0.650",
+      "actual": 1.3385,
+      "passed": false
+    },
+    "gate_cvss_severity_f1": {
+      "threshold": ">= 0.800",
+      "actual": 0.3616,
+      "passed": false
+    }
+  },
+  "metrics": {
+    "severity_accuracy": 0.332,
+    "severity_weighted_f1": 0.361566710872542,
+    "cvss_score_mae": 1.3384526167725106,
+    "kev_roc_auc": 0.8881240349974268,
+    "safety_policy_violations": 0
+  },
+  "violations": [],
+  "receipt_hash": "d5df9cd650c9c637d56ee5b1cbd8e53b2994c7122fb8acafc18f1c81d2938403"
+}
