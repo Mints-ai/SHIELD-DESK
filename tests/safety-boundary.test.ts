@@ -76,10 +76,12 @@ describe("Sprint 1: Environment Safety Boundary & Fail-Closed Suite", () => {
   it("Scans API: Rejects apply_patch in production with 503 when remote daemon is offline", async () => {
     const origAppEnv = process.env.APP_ENV;
     const origDemoMode = process.env.DEMO_MODE;
+    const origOrchestratorUrl = process.env.PATCH_ORCHESTRATOR_URL;
 
     try {
       process.env.APP_ENV = "production";
       process.env.DEMO_MODE = "false";
+      process.env.PATCH_ORCHESTRATOR_URL = "http://127.0.0.1:59999";
 
       const token = createSessionToken({
         uid: "usr-admin-01",
@@ -107,6 +109,7 @@ describe("Sprint 1: Environment Safety Boundary & Fail-Closed Suite", () => {
     } finally {
       process.env.APP_ENV = origAppEnv;
       process.env.DEMO_MODE = origDemoMode;
+      if (origOrchestratorUrl !== undefined) process.env.PATCH_ORCHESTRATOR_URL = origOrchestratorUrl; else delete process.env.PATCH_ORCHESTRATOR_URL;
     }
   });
 

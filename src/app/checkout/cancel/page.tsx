@@ -9,7 +9,7 @@ export default function CheckoutCancelPage() {
   return (
     <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
-      <main className="max-w-xl mx-auto px-6 py-20 flex-1 flex flex-col items-center justify-center text-center">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-xl mx-auto my-8 p-6 md:p-8 flex flex-col items-center justify-center text-center">
         <div className="w-full rounded-2xl border border-[var(--sd-border)] sd-surface p-8 shadow-xl space-y-6">
           <div className="w-14 h-14 rounded-full bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] flex items-center justify-center mx-auto text-[var(--sd-text-muted)]">
             <AlertCircle className="w-7 h-7" />

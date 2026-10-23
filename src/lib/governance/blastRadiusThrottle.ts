@@ -2,7 +2,7 @@ import { query } from "@/lib/db";
 import { shouldFailClosed } from "@/lib/config/environment";
 
 export const THROTTLE_WINDOW_MS = 5 * 60 * 1000;
-export const DEFAULT_TIER1_LIMIT = 50;
+export const DEFAULT_TIER1_LIMIT = 5;
 
 export interface ThrottleCheckResult {
   allowed: boolean;
@@ -71,7 +71,6 @@ export async function checkThrottle(
         limit,
       };
     }
-
     // Fall back to in-memory tracking if database is offline or in unit tests
     const cutoff = Date.now() - THROTTLE_WINDOW_MS;
     const count = IN_MEMORY_THROTTLE_ENTRIES.filter(

@@ -8,6 +8,7 @@ import {
   X,
   Zap,
   ArrowRight,
+  ArrowLeft,
   Server,
   Lock,
   Download,
@@ -132,7 +133,24 @@ function PricingContent() {
     <div className="sd-app-shell min-h-screen bg-[var(--sd-bg)] text-[var(--sd-text)] flex flex-col font-sans">
       <TopNavBar />
 
-      <main className="max-w-7xl mx-auto px-6 py-12 flex-1 w-full space-y-12">
+      <main className="sd-dashboard-content min-w-0 flex-1 max-w-7xl w-full mx-auto p-6 md:p-8 space-y-10">
+        {/* Navigation Breadcrumb / Return to Billing */}
+        <div className="flex items-center justify-between border-b border-[var(--sd-border)] pb-4">
+          <Link
+            href="/dashboard/billing"
+            className="inline-flex items-center gap-2 text-xs text-[var(--sd-text-muted)] hover:text-[var(--sd-text)] transition-colors font-mono"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Return to Billing &amp; Licenses</span>
+          </Link>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-mono uppercase tracking-widest text-[var(--sd-pine)] font-semibold">
+              Commercial Portal
+            </span>
+            <span className="text-xs text-[var(--sd-text-muted)]">•</span>
+            <span className="text-xs text-[var(--sd-text-muted)] font-mono">Plan Comparison</span>
+          </div>
+        </div>
         {/* Header Hero */}
         <div className="text-center max-w-3xl mx-auto space-y-4">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--sd-pine)]/10 border border-[var(--sd-pine)]/20 text-[var(--sd-pine)] text-xs font-mono uppercase tracking-widest">

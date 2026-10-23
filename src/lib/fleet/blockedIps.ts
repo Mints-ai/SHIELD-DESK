@@ -205,8 +205,8 @@ export async function recordUnblockedIp({
   syncThreatAlertUnblock(cleanIp, tenantId);
 
   // 2. Clear admin disconnected locks and restore connectivity in database
+  const { adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
   try {
-    const { adminDisconnectedAgents } = await import("@/lib/fleet/liveTelemetry");
     const { rows: affectedAgents } = await query<{ id: string; hostname: string }>(
       `UPDATE endpoint_agents
        SET status = 'connected', last_seen_at = now()
@@ -267,6 +267,12 @@ export async function recordUnblockedIp({
     ) {
       r.status = "unblocked";
       r.unblocked_at = new Date().toISOString();
+      if (r.agent_id) {
+        adminDisconnectedAgents.delete(r.agent_id);
+      }
+      if (r.hostname) {
+        adminDisconnectedAgents.delete(r.hostname);
+      }
     }
   }
 

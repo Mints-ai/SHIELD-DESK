@@ -500,7 +500,6 @@ export async function POST(req: NextRequest) {
         for (const a of MOCK_ENDPOINT_AGENTS) {
           if (
             a.id === (agent?.id || agentId) ||
-            a.ip_address === targetIp ||
             a.hostname === (agent?.hostname || agentId)
           ) {
             a.status = "connected";
