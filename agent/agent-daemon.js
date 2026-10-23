@@ -762,6 +762,7 @@ async function start() {
 
   let tickCount = 0;
   let running = true;
+  let isStandbyDisconnected = false;
 
   process.on('SIGINT', async () => {
     console.log('\n\x1b[33m[*] Agent daemon shutting down — notifying control plane...\x1b[0m');
@@ -790,12 +791,13 @@ async function start() {
     if (!running) return;
 
     tickCount++;
-    const cpu = getCpuUsage();
-    const mem = getMemoryUsage();
+    const isDisconnectedStandby = isStandbyDisconnected;
+    const cpu = isDisconnectedStandby ? 0 : getCpuUsage();
+    const mem = isDisconnectedStandby ? 0 : getMemoryUsage();
     const endpointIp = await getEndpointIpAddress();
     // Real events: baseline background security monitor checks
-    const eps = Math.floor(Math.random() * 20) + 10; 
-    const coreTelemetry = collectEndpointCoreTelemetry(cpu);
+    const eps = isDisconnectedStandby ? 0 : (Math.floor(Math.random() * 20) + 10); 
+    const coreTelemetry = isDisconnectedStandby ? null : collectEndpointCoreTelemetry(cpu);
 
     try {
       const hbRes = await request(`${controlUrl}/api/agent/heartbeat`, {
@@ -810,7 +812,7 @@ async function start() {
         cpuUsage: cpu,
         memoryUsage: mem,
         eps,
-        status: 'connected',
+        status: isDisconnectedStandby ? 'disconnected' : 'connected',
         coreTelemetry,
       });
 
@@ -828,8 +830,17 @@ async function start() {
       } else if (hbRes.status === 200) {
         const timeStr = new Date().toLocaleTimeString();
         if (hbRes.data && hbRes.data.status === 'disconnected') {
+          if (!isStandbyDisconnected) {
+            console.log(`\n\x1b[33m[!] DISCONNECTED BY CONTROL PLANE\x1b[0m — Host was marked disconnected by administrator.`);
+            console.log(`    Entering standby mode. Telemetry streaming paused until reconnected from the ShieldDesk control panel...\n`);
+          }
+          isStandbyDisconnected = true;
           process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> Status: \x1b[33mDISCONNECTED BY CONTROL PANEL (Standing by)\x1b[0m`);
         } else {
+          if (isStandbyDisconnected) {
+            console.log(`\n\x1b[32m[+] RECONNECTED BY CONTROL PANEL\x1b[0m — Host reconnected by administrator. Resuming telemetry streaming...\n`);
+          }
+          isStandbyDisconnected = false;
           process.stdout.write(`\r\x1b[2K[${timeStr}] Heartbeat #${tickCount} -> CPU: \x1b[36m${cpu}%\x1b[0m | RAM: \x1b[36m${mem}%\x1b[0m | EPS: \x1b[36m${eps}\x1b[0m | Status: \x1b[32mOK\x1b[0m`);
         }
       } else {
