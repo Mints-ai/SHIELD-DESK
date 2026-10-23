@@ -32,7 +32,14 @@ export async function GET(
     }
 
     const coreData = await getEndpointCoreFunctionsData(agent.id, agent.tenant_id, agent.hostname);
-    const defenderData = coreData.data?.defender_authority?.defender || null;
+    let defenderData = coreData.data?.defender_authority?.defender || null;
+    if (!defenderData || !defenderData.signatureVersion || defenderData.signatureVersion.startsWith("Awaiting")) {
+      const { getEndpointCoreTelemetry } = await import("@/lib/fleet/liveTelemetryCollector");
+      const live = await getEndpointCoreTelemetry(agent.id, agent.hostname);
+      if (live.defender_status && !live.defender_status.signatureVersion?.startsWith("Awaiting")) {
+        defenderData = live.defender_status;
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -113,7 +120,8 @@ export async function POST(
     const isAuthorityRole = caller.role === "system_admin" || caller.role === "super_admin";
 
     // Auto-provision approval token for SecOps admin if not provided for Tier 2 actions
-    if (!effectiveTokenId && tier === "Tier 2" && isAuthorityRole) {
+    if (!effectiveTokenId && tier === "Tier 2") {
+      if (isAuthorityRole) {
       try {
         const tokenRes = await requestApprovalToken(
           { uid: caller.id, role: "system_admin", tenantId: caller.tenant_id },
@@ -138,7 +146,25 @@ export async function POST(
       } catch (tokenErr) {
         console.warn("[DefenderAPI] Dev auto-token provisioning skipped:", tokenErr);
       }
+    } else {
+      const tokenRes = await requestApprovalToken(
+        { uid: caller.id, role: caller.role, tenantId: caller.tenant_id },
+        {
+          taskId: `def-${Date.now().toString(36)}`,
+          actionType: action,
+          approvalLevel: "Tier 2",
+          targetEndpointIds: [agent.id],
+          blastRadius: `Microsoft Defender enforcement on ${agent.hostname}`,
+        }
+      );
+      return NextResponse.json({
+        success: true,
+        pendingApproval: true,
+        tokenId: tokenRes && "token" in tokenRes && tokenRes.token ? tokenRes.token.id : undefined,
+        message: `Microsoft Defender action '${action}' submitted for Tier 2 Authority Approval.`,
+      });
     }
+  }
 
     const execResult = await executeAgentCommand({
       agentId: agent.id,

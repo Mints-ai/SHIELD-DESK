@@ -279,7 +279,7 @@ export function sampleLiveDefenderStatus(): DefenderStatusData {
         signaturesOutOfDate: Boolean(parsed.SignaturesOutOfDate),
         rebootRequired: Boolean(parsed.RebootRequired),
         computerId: parsed.ComputerID || undefined,
-        activeThreatsCount: threatsList.length,
+        activeThreatsCount: threatsList.filter((t) => t.isActive).length,
         threats: threatsList,
         detections: detectionsList,
         exclusions: {
@@ -793,7 +793,7 @@ const ENDPOINT_CORE_TELEMETRY_REGISTRY = new Map<string, RegistryEntry>();
  * Enriches any cached or stored telemetry with genuine live Task Manager, Defender, and Firewall metrics
  * to prevent serving stale synthetic fallbacks.
  */
-function enrichWithLiveTaskManager(target: LiveTelemetrySample, host?: string): LiveTelemetrySample {
+export function enrichWithLiveTaskManager(target: LiveTelemetrySample, host?: string): LiveTelemetrySample {
   const live = sampleLiveCoreTelemetry(host);
   if (
     !target.process_inventory ||
@@ -830,7 +830,12 @@ function enrichWithLiveTaskManager(target: LiveTelemetrySample, host?: string): 
   if (!target.firewall_baseline || !target.firewall_baseline.profiles || target.firewall_baseline.profiles.length === 0) {
     target.firewall_baseline = live.firewall_baseline;
   }
-  if (!target.defender_status || target.defender_status.activeThreatsCount === undefined) {
+  if (
+    !target.defender_status ||
+    target.defender_status.activeThreatsCount === undefined ||
+    !target.defender_status.signatureVersion ||
+    target.defender_status.signatureVersion.startsWith("Awaiting")
+  ) {
     target.defender_status = live.defender_status;
   }
   if (!target.storage_disk || target.storage_disk.length === 0) {
@@ -897,7 +902,13 @@ function createEmptyEndpointTelemetry(host: string): LiveTelemetrySample {
  * Stores genuine core telemetry reported by a remote endpoint daemon.
  */
 export function storeEndpointCoreTelemetry(agentId: string, data: LiveTelemetrySample, hostname?: string) {
+  const isLocal = Boolean(hostname && hostname.toUpperCase() === os.hostname().toUpperCase());
+  if (isLocal && (!data.defender_status || !data.defender_status.signatureVersion || data.defender_status.signatureVersion.startsWith("Awaiting"))) {
+    data = enrichWithLiveTaskManager(data, hostname);
+  }
   if (agentId && data) {
+
+
     ENDPOINT_CORE_TELEMETRY_REGISTRY.set(agentId, {
       data,
       updatedAt: Date.now(),
@@ -920,20 +931,30 @@ export async function getEndpointCoreTelemetry(
   hostname?: string
 ): Promise<LiveTelemetrySample> {
   const host = String(hostname || "ENDPOINT").toUpperCase();
+  const localHost = os.hostname().toUpperCase();
   const now = Date.now();
   const isExplicitLocalHost = agentId === "localhost" || agentId === "local-host-agent";
+  const isLocalMachine = host === localHost || isExplicitLocalHost;
 
   // 1. Check if cached in memory registry from recent remote agent heartbeat (< 60s)
   if (ENDPOINT_CORE_TELEMETRY_REGISTRY.has(agentId)) {
     const entry = ENDPOINT_CORE_TELEMETRY_REGISTRY.get(agentId)!;
     if (now - entry.updatedAt < 60000) {
-      return entry.data;
+      let data = entry.data;
+      if (isLocalMachine || !data.defender_status || !data.defender_status.signatureVersion || data.defender_status.signatureVersion.startsWith("Awaiting")) {
+        data = enrichWithLiveTaskManager(data, host);
+      }
+      return data;
     }
   }
   if (hostname && ENDPOINT_CORE_TELEMETRY_REGISTRY.has(hostname.toUpperCase())) {
     const entry = ENDPOINT_CORE_TELEMETRY_REGISTRY.get(hostname.toUpperCase())!;
     if (now - entry.updatedAt < 60000) {
-      return entry.data;
+      let data = entry.data;
+      if (isLocalMachine || !data.defender_status || !data.defender_status.signatureVersion || data.defender_status.signatureVersion.startsWith("Awaiting")) {
+        data = enrichWithLiveTaskManager(data, host);
+      }
+      return data;
     }
   }
 
@@ -948,7 +969,11 @@ export async function getEndpointCoreTelemetry(
       const agent = agentRows[0];
       const lastSeen = new Date((agent.last_seen_at || agent.last_heartbeat || 0) as string).getTime();
       if (agent.core_telemetry && typeof agent.core_telemetry === "object" && (now - lastSeen < 60000)) {
-        const stored = agent.core_telemetry as LiveTelemetrySample;
+        let stored = agent.core_telemetry as LiveTelemetrySample;
+        const agentHost = String(agent.hostname || host).toUpperCase();
+        if (agentHost === localHost || isLocalMachine || !stored.defender_status || !stored.defender_status.signatureVersion || stored.defender_status.signatureVersion.startsWith("Awaiting")) {
+          stored = enrichWithLiveTaskManager(stored, agentHost);
+        }
         ENDPOINT_CORE_TELEMETRY_REGISTRY.set(agentId, { data: stored, updatedAt: now });
         return stored;
       }
@@ -960,18 +985,31 @@ export async function getEndpointCoreTelemetry(
     const { MOCK_ENDPOINT_AGENTS } = await import("./fleet");
     const mock = MOCK_ENDPOINT_AGENTS.find((a) => a.id === agentId || a.hostname === agentId);
     if (mock && (mock as any).core_telemetry) {
-      return (mock as any).core_telemetry as LiveTelemetrySample;
+      let stored = (mock as any).core_telemetry as LiveTelemetrySample;
+      stored = enrichWithLiveTaskManager(stored, host);
+      return stored;
     }
   } catch {}
 
   // 4. In automated test runner or for explicit local-host-agent, sample telemetry
   if (isExplicitLocalHost || process.env.NODE_ENV === "test") {
     const live = sampleLiveCoreTelemetry(host || os.hostname());
+
+
     ENDPOINT_CORE_TELEMETRY_REGISTRY.set(agentId, { data: live, updatedAt: now });
     return live;
   }
 
-  // 5. Remote endpoint awaiting connection or offline
+  // 5. If this agent is the host machine where ShieldDesk is running, sample live telemetry
+  if (isLocalMachine) {
+    const live = sampleLiveCoreTelemetry(host || os.hostname());
+
+
+    ENDPOINT_CORE_TELEMETRY_REGISTRY.set(agentId, { data: live, updatedAt: now });
+    return live;
+  }
+
+  // 6. Remote endpoint awaiting connection or offline
   return createEmptyEndpointTelemetry(host);
 }
 

@@ -209,6 +209,16 @@ export default function FleetPage() {
     }
   }, [isAnalyst, activeConsoleTab]);
 
+  // Deep-link direct to monitoring tab if requested via query parameter (?tab=monitoring)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("tab") === "monitoring" && !isAnalyst) {
+        setActiveConsoleTab("monitoring");
+      }
+    }
+  }, [isAnalyst]);
+
   const [monitoringPolicy, setMonitoringPolicy] = useState<{
     enabled_scopes: CoreFunctionScope[];
     approved_by: string;
@@ -884,12 +894,13 @@ export default function FleetPage() {
     if (selectedAgent && activeConsoleTab === "monitoring") {
       setHasUserModifiedScopes(false);
       fetchMonitoring(selectedAgent.id, false);
+      if (!isStreaming || selectedAgent.status === "disconnected") return;
       const interval = setInterval(() => {
         fetchMonitoring(selectedAgent.id, true);
       }, 3000);
       return () => clearInterval(interval);
     }
-  }, [selectedAgent?.id, activeConsoleTab, fetchMonitoring]);
+  }, [selectedAgent?.id, selectedAgent?.status, isStreaming, activeConsoleTab, fetchMonitoring]);
 
   const handleSaveMonitoringPolicy = async () => {
     if (!selectedAgent) return;
@@ -2591,6 +2602,10 @@ export default function FleetPage() {
                                                 });
                                                 const data = await res.json();
                                                 if (res.ok && data.success) {
+                                                  if (data.pendingApproval) {
+                                                    alert(`Process termination request for "${p.name}" (PID: ${p.pid}) submitted for Tier 2 Authority Approval (Task ID: ${data.taskId || data.tokenId || "Pending"}).`);
+                                                    return;
+                                                  }
                                                   setMonitoringData((prev: any) => {
                                                     if (!prev?.process_inventory?.processes) return prev;
                                                     return {
@@ -2982,7 +2997,13 @@ export default function FleetPage() {
                                     )}
                                     title="Click to toggle Real-Time Protection"
                                   >
-                                    {monitoringData?.defender_authority?.defender?.realTimeProtectionEnabled ? "ENABLED" : "DISABLED"}
+                                    {defenderActionLoading ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin inline-block" />
+                                    ) : monitoringData?.defender_authority?.defender?.realTimeProtectionEnabled ? (
+                                      "ENABLED"
+                                    ) : (
+                                      "DISABLED"
+                                    )}
                                   </button>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
@@ -3359,6 +3380,30 @@ export default function FleetPage() {
                                 </div>
                               </div>
                             )}
+
+                          {/* Active Exclusions Summary on Host */}
+                          {((monitoringData?.defender_authority?.defender?.exclusions?.paths?.length || 0) +
+                            (monitoringData?.defender_authority?.defender?.exclusions?.extensions?.length || 0) +
+                            (monitoringData?.defender_authority?.defender?.exclusions?.processes?.length || 0)) > 0 && (
+                            <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20 text-[11px]">
+                              <span className="text-[var(--sd-text-dim)]">Configured Antivirus Exclusions:</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-amber-300">
+                                  {(monitoringData.defender_authority.defender.exclusions.paths?.length || 0) +
+                                    (monitoringData.defender_authority.defender.exclusions.extensions?.length || 0) +
+                                    (monitoringData.defender_authority.defender.exclusions.processes?.length || 0)} active exemptions
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowDefenderModal(true)}
+                                  className="text-[10px] text-[var(--sd-pine)] hover:underline cursor-pointer flex items-center gap-0.5"
+                                >
+                                  <span>View &amp; Remove</span>
+                                  <ArrowRight className="h-2.5 w-2.5" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Extended Defender Engine & Cloud Protection Telemetry */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-[var(--sd-border)]/40 text-[11px]">
@@ -3762,6 +3807,116 @@ export default function FleetPage() {
                 </button>
               </div>
             </div>
+
+            {/* Active Enforced Exclusions List */}
+            {((monitoringData?.defender_authority?.defender?.exclusions?.paths &&
+              monitoringData.defender_authority.defender.exclusions.paths.length > 0) ||
+              (monitoringData?.defender_authority?.defender?.exclusions?.extensions &&
+                monitoringData.defender_authority.defender.exclusions.extensions.length > 0) ||
+              (monitoringData?.defender_authority?.defender?.exclusions?.processes &&
+                monitoringData.defender_authority.defender.exclusions.processes.length > 0)) && (
+              <div className="p-4 rounded-xl bg-[var(--sd-panel)]/50 border border-[var(--sd-border)] space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[12px] font-semibold font-mono text-[var(--sd-text)] uppercase">
+                    Active Configured Exclusions
+                  </h4>
+                  <span className="text-[10px] font-mono text-[var(--sd-text-dim)]">
+                    {(monitoringData.defender_authority.defender.exclusions.paths?.length || 0) +
+                      (monitoringData.defender_authority.defender.exclusions.extensions?.length || 0) +
+                      (monitoringData.defender_authority.defender.exclusions.processes?.length || 0)}{" "}
+                    total
+                  </span>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {monitoringData.defender_authority.defender.exclusions.paths?.map((exPath: string, idx: number) => (
+                    <div
+                      key={`path-${idx}`}
+                      className="flex items-center justify-between p-2 rounded-lg bg-[var(--sd-bg)]/80 border border-[var(--sd-border)]/70 text-[11px] font-mono"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                          PATH
+                        </span>
+                        <span className="text-[var(--sd-text)] truncate" title={exPath}>
+                          {exPath}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={defenderActionLoading}
+                        onClick={() =>
+                          handleDefenderAction({
+                            action: "remove_exclusion",
+                            path: exPath,
+                            approvalTokenId: defenderTokenId.trim() || undefined,
+                          })
+                        }
+                        className="text-red-400 hover:text-red-300 p-1 cursor-pointer disabled:opacity-50"
+                        title={`Remove exclusion for ${exPath}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {monitoringData.defender_authority.defender.exclusions.extensions?.map((ext: string, idx: number) => (
+                    <div
+                      key={`ext-${idx}`}
+                      className="flex items-center justify-between p-2 rounded-lg bg-[var(--sd-bg)]/80 border border-[var(--sd-border)]/70 text-[11px] font-mono"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                          EXT
+                        </span>
+                        <span className="text-[var(--sd-text)] truncate">.{ext}</span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={defenderActionLoading}
+                        onClick={() =>
+                          handleDefenderAction({
+                            action: "remove_exclusion",
+                            path: ext,
+                            approvalTokenId: defenderTokenId.trim() || undefined,
+                          })
+                        }
+                        className="text-red-400 hover:text-red-300 p-1 cursor-pointer disabled:opacity-50"
+                        title={`Remove exclusion for .${ext}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {monitoringData.defender_authority.defender.exclusions.processes?.map((proc: string, idx: number) => (
+                    <div
+                      key={`proc-${idx}`}
+                      className="flex items-center justify-between p-2 rounded-lg bg-[var(--sd-bg)]/80 border border-[var(--sd-border)]/70 text-[11px] font-mono"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-purple-500/10 text-purple-300 border border-purple-500/30">
+                          PROCESS
+                        </span>
+                        <span className="text-[var(--sd-text)] truncate">{proc}</span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={defenderActionLoading}
+                        onClick={() =>
+                          handleDefenderAction({
+                            action: "remove_exclusion",
+                            path: proc,
+                            approvalTokenId: defenderTokenId.trim() || undefined,
+                          })
+                        }
+                        className="text-red-400 hover:text-red-300 p-1 cursor-pointer disabled:opacity-50"
+                        title={`Remove exclusion for ${proc}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Authority Token Input */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/50 text-[11px] font-mono">

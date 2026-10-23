@@ -177,6 +177,9 @@ function getMemoryUsage() {
 
 let cachedCoreTelemetry = null;
 let lastCoreTelemetryTime = 0;
+let cachedDaemonDefenderStatus = null;
+let lastDaemonDefenderTime = 0;
+const DAEMON_DEFENDER_TTL_MS = 15000;
 
 // Harvest genuine endpoint core functions telemetry directly from this host OS
 function collectEndpointCoreTelemetry(currentCpuPct) {
@@ -422,9 +425,12 @@ function collectEndpointCoreTelemetry(currentCpuPct) {
   }
 
   // Defender EDR
-  let defenderStatus = null;
+  let defenderStatus = cachedDaemonDefenderStatus;
   if (os.platform() === 'win32') {
-    try {
+    if (cachedDaemonDefenderStatus && (now - lastDaemonDefenderTime < DAEMON_DEFENDER_TTL_MS)) {
+      defenderStatus = cachedDaemonDefenderStatus;
+    } else {
+      try {
       const psScript = [
         "$ProgressPreference = 'SilentlyContinue';",
         "$ErrorActionPreference = 'SilentlyContinue';",
@@ -620,7 +626,7 @@ function collectEndpointCoreTelemetry(currentCpuPct) {
         signaturesOutOfDate: Boolean(parsed.SignaturesOutOfDate),
         rebootRequired: Boolean(parsed.RebootRequired),
         computerId: parsed.ComputerID || undefined,
-        activeThreatsCount: threatsList.length,
+        activeThreatsCount: threatsList.filter((t) => t.isActive).length,
         threats: threatsList,
         detections: detectionsList,
         exclusions: {
@@ -641,7 +647,14 @@ function collectEndpointCoreTelemetry(currentCpuPct) {
         productStatus: typeof parsed.ProductStatus === "number" ? parsed.ProductStatus : undefined,
         lastAudit: `Defender telemetry verified on ${customHostname} at ${new Date().toLocaleTimeString()}`,
       };
-    } catch {}
+      cachedDaemonDefenderStatus = defenderStatus;
+      lastDaemonDefenderTime = now;
+    } catch {
+      if (cachedDaemonDefenderStatus) {
+        defenderStatus = cachedDaemonDefenderStatus;
+      }
+    }
+    }
   }
 
   cachedCoreTelemetry = {
@@ -857,16 +870,45 @@ async function start() {
                   const type = cmd.command.includes('full') ? 'FullScan' : 'QuickScan';
                   cp.execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-MpScan -ScanType ${type}"`, { timeout: 15000, stdio: 'ignore' });
                   execOutput = `Microsoft Defender ${type} Scan initiated and executing on ${customHostname}.`;
+                  cachedDaemonDefenderStatus = null;
+                  cachedCoreTelemetry = null;
                 } else if (cmd.command.startsWith('defender_update')) {
                   cp.execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Update-MpSignature"`, { timeout: 15000, stdio: 'ignore' });
                   execOutput = `Microsoft Defender antivirus signatures updated successfully on ${customHostname}.`;
+                  cachedDaemonDefenderStatus = null;
+                  cachedCoreTelemetry = null;
                 } else if (cmd.command.startsWith('defender_set_realtime')) {
                   const disable = cmd.command.includes('off') ? '$true' : '$false';
                   cp.execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-MpPreference -DisableRealtimeMonitoring ${disable}"`, { timeout: 10000, stdio: 'ignore' });
                   execOutput = `Microsoft Defender Real-Time Protection set to ${cmd.command.includes('off') ? 'DISABLED' : 'ENABLED'} on ${customHostname}.`;
+                  cachedDaemonDefenderStatus = null;
+                  cachedCoreTelemetry = null;
                 } else if (cmd.command.startsWith('defender_remediate')) {
-                  cp.execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-MpThreat"`, { timeout: 10000, stdio: 'ignore' });
-                  execOutput = `Active threats remediated successfully on ${customHostname}.`;
+                  const parts = cmd.command.split(/\s+/);
+                  const threatId = parts[1] || 'all';
+                  if (threatId !== 'all' && !isNaN(Number(threatId))) {
+                    cp.execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-MpThreat -ThreatID ${threatId}"`, { timeout: 10000, stdio: 'ignore' });
+                    execOutput = `Threat #${threatId} remediated successfully on ${customHostname}.`;
+                  } else {
+                    cp.execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-MpThreat"`, { timeout: 10000, stdio: 'ignore' });
+                    execOutput = `Active threats remediated successfully on ${customHostname}.`;
+                  }
+                  cachedDaemonDefenderStatus = null;
+                  cachedCoreTelemetry = null;
+                } else if (cmd.command.startsWith('defender_add_exclusion')) {
+                  const exclPath = cmd.command.replace(/^defender_add_exclusion\s+/, '').trim();
+                  if (!exclPath) throw new Error('Missing exclusion path');
+                  cp.execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Add-MpPreference -ExclusionPath '${exclPath.replace(/'/g, "''")}'"`, { timeout: 10000, stdio: 'ignore' });
+                  execOutput = `Microsoft Defender exclusion added for '${exclPath}' on ${customHostname}.`;
+                  cachedDaemonDefenderStatus = null;
+                  cachedCoreTelemetry = null;
+                } else if (cmd.command.startsWith('defender_remove_exclusion')) {
+                  const exclPath = cmd.command.replace(/^defender_remove_exclusion\s+/, '').trim();
+                  if (!exclPath) throw new Error('Missing exclusion path to remove');
+                  cp.execSync(`powershell -NoProfile -ExecutionPolicy Bypass -Command "Remove-MpPreference -ExclusionPath '${exclPath.replace(/'/g, "''")}'"`, { timeout: 10000, stdio: 'ignore' });
+                  execOutput = `Microsoft Defender exclusion removed for '${exclPath}' on ${customHostname}.`;
+                  cachedDaemonDefenderStatus = null;
+                  cachedCoreTelemetry = null;
                 } else if (cmd.command.startsWith('firewall_add_rule')) {
                   const parts = cmd.command.split(/\s+/);
                   const name = parts[1];
