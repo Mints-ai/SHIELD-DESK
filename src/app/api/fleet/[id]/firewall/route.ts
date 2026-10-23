@@ -30,7 +30,7 @@ export async function GET(
       return NextResponse.json({ error: "Endpoint agent not found" }, { status: 404 });
     }
 
-    const coreData = await getEndpointCoreFunctionsData(agent.id, agent.tenant_id, agent.hostname);
+    const coreData = await getEndpointCoreFunctionsData(agent.id, agent.tenant_id, agent.hostname, agent.os_type);
     const firewallBaseline = coreData.data?.firewall_baseline?.baseline || null;
 
     return NextResponse.json({

@@ -73,4 +73,29 @@ test("Governed Core Function Monitoring Suite", async (t) => {
     assert.equal(coreData.data.process_inventory.status, "disabled_by_policy");
     assert.equal(coreData.data.process_inventory.processes.length, 0);
   });
+
+  await t.test("Linux Endpoint Telemetry Isolation: Never leaks Windows Defender or host server threats to Linux agents", async () => {
+    const linuxAgentId = "linux-panda-agent-001";
+    await updateEndpointMonitoringPolicy({
+      agentId: linuxAgentId,
+      tenantId: testTenantId,
+      requestedScopes: ["system_performance", "defender_authority"],
+      caller: adminAuthorityUser,
+    });
+
+    const coreData = await getEndpointCoreFunctionsData(linuxAgentId, testTenantId, "panda", "linux");
+    assert.equal(coreData.data.defender_authority.enabled, true);
+    const def = coreData.data.defender_authority.defender;
+    assert.ok(def, "Defender/EDR data must be present");
+    assert.equal(def.antivirusEnabled, true);
+    assert.equal(def.signatureVersion, "Linux Sigma/YARA 2.4");
+    assert.ok(def.productVersion?.includes("Linux"));
+    assert.ok(def.runningMode?.includes("eBPF"));
+    assert.ok(def.lastAudit?.toLowerCase().includes("panda"));
+
+    // Verify zero Windows leakages
+    assert.equal(def.threats?.some((t: any) => t.threatName?.includes("Win32")), false);
+    assert.equal(def.detections?.some((d: any) => JSON.stringify(d).includes("C:\\")), false);
+    assert.equal(def.lastAudit?.includes("DELL"), false);
+  });
 });

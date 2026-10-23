@@ -29,7 +29,7 @@ export async function GET(
       return NextResponse.json({ error: "Endpoint agent not found" }, { status: 404 });
     }
 
-    const result = await getEndpointCoreFunctionsData(agent.id, agent.tenant_id, agent.hostname);
+    const result = await getEndpointCoreFunctionsData(agent.id, agent.tenant_id, agent.hostname, agent.os_type);
     return NextResponse.json({ success: true, agentStatus: agent.status, ...result });
   } catch (err: unknown) {
     trackError(err, { endpoint: "/api/fleet/[id]/monitoring" });

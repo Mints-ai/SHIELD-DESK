@@ -31,11 +31,11 @@ export async function GET(
       return NextResponse.json({ error: "Endpoint agent not found" }, { status: 404 });
     }
 
-    const coreData = await getEndpointCoreFunctionsData(agent.id, agent.tenant_id, agent.hostname);
+    const coreData = await getEndpointCoreFunctionsData(agent.id, agent.tenant_id, agent.hostname, agent.os_type);
     let defenderData = coreData.data?.defender_authority?.defender || null;
     if (!defenderData || !defenderData.signatureVersion || defenderData.signatureVersion.startsWith("Awaiting")) {
       const { getEndpointCoreTelemetry } = await import("@/lib/fleet/liveTelemetryCollector");
-      const live = await getEndpointCoreTelemetry(agent.id, agent.hostname);
+      const live = await getEndpointCoreTelemetry(agent.id, agent.hostname, agent.os_type);
       if (live.defender_status && !live.defender_status.signatureVersion?.startsWith("Awaiting")) {
         defenderData = live.defender_status;
       }

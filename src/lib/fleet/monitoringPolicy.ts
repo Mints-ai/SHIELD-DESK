@@ -170,11 +170,12 @@ import { getEndpointCoreTelemetry } from "./liveTelemetryCollector";
 export async function getEndpointCoreFunctionsData(
   agentId: string,
   tenantId: string,
-  hostname: string
+  hostname: string,
+  osType?: string
 ) {
   const policy = await getEndpointMonitoringPolicy(agentId, tenantId);
   const isEnabled = (scope: CoreFunctionScope) => policy.enabled_scopes.includes(scope);
-  const live = await getEndpointCoreTelemetry(agentId, hostname);
+  const live = await getEndpointCoreTelemetry(agentId, hostname, osType);
 
   return {
     policy,

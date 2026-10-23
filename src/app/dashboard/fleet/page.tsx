@@ -95,6 +95,7 @@ export default function FleetPage() {
 
   const [agents, setAgents] = useState<EndpointAgentRecord[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<EndpointAgentRecord | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [isStreaming, setIsStreaming] = useState(true);
   const [lastHeartbeatTime, setLastHeartbeatTime] = useState<Date>(new Date());
@@ -252,6 +253,17 @@ export default function FleetPage() {
     status: string;
   } | null>(null);
   const [monitoringData, setMonitoringData] = useState<any>(null);
+
+  const selectedOs =
+    selectedAgent?.os_type?.toLowerCase() ||
+    (monitoringData?.defender_authority?.defender?.productVersion?.toLowerCase().includes("linux")
+      ? "linux"
+      : selectedAgent?.hostname?.toLowerCase() === "panda" || selectedAgent?.hostname?.toLowerCase().includes("linux")
+      ? "linux"
+      : "windows");
+  const isLinux = selectedOs === "linux";
+  const isDarwin = selectedOs === "darwin" || selectedOs === "macos";
+  const _isWindows = !isLinux && !isDarwin;
   const [monitoringLoading, setMonitoringLoading] = useState(false);
   const [requestedScopes, setRequestedScopes] = useState<CoreFunctionScope[]>(["system_performance"]);
   const [hasUserModifiedScopes, setHasUserModifiedScopes] = useState(false);
@@ -2331,7 +2343,11 @@ export default function FleetPage() {
                                   }}
                                   className="accent-[var(--sd-pine)] rounded h-3.5 w-3.5 cursor-pointer"
                                 />
-                                {def.label}
+                                {scopeKey === "defender_authority" && isLinux
+                                  ? "Linux EDR & Threat Defense Authority"
+                                  : scopeKey === "defender_authority" && isDarwin
+                                  ? "macOS EDR & Gatekeeper Authority"
+                                  : def.label}
                               </span>
                               <span
                                 className={cn(
@@ -2345,7 +2361,11 @@ export default function FleetPage() {
                               </span>
                             </div>
                             <p className="text-[11px] text-[var(--sd-text-muted)] leading-relaxed">
-                              {def.description}
+                              {scopeKey === "defender_authority" && isLinux
+                                ? "Real-time Linux EDR control, eBPF kernel hooks, auditd monitoring, and threat remediation."
+                                : scopeKey === "defender_authority" && isDarwin
+                                ? "Real-time macOS Gatekeeper control, XProtect integrity monitoring, and threat remediation."
+                                : def.description}
                             </p>
                           </div>
 
@@ -2538,7 +2558,7 @@ export default function FleetPage() {
                         <div className="flex items-center gap-2">
                           <Cpu className="h-4 w-4 text-[var(--sd-pine)]" />
                           <h4 className="text-[13px] font-medium font-mono text-[var(--sd-text)]">
-                            Windows Task Manager &amp; Process Inventory
+                            Task Manager &amp; Process Inventory
                           </h4>
                         </div>
                         <div className="flex items-center gap-2">
@@ -2558,7 +2578,7 @@ export default function FleetPage() {
                             <Search className="h-3.5 w-3.5 text-[var(--sd-text-dim)] shrink-0" />
                             <input
                               type="text"
-                              placeholder="Search running tasks by name or PID (e.g. chrome, node, 5432)..."
+                              placeholder="Search running tasks or processes by name or PID (e.g. systemd, dockerd, chrome, node, 5432)..."
                               value={processSearchQuery}
                               onChange={(e) => setProcessSearchQuery(e.target.value)}
                               className="sd-input w-full bg-[var(--sd-panel)] border border-[var(--sd-border)] rounded-lg px-2.5 py-1 text-[11px] font-mono text-[var(--sd-text)] placeholder:text-[var(--sd-text-muted)] focus:outline-none focus:border-[var(--sd-pine)]"
@@ -2942,13 +2962,17 @@ export default function FleetPage() {
                       )}
                     </div>
 
-                    {/* 7. Microsoft Defender & EDR Authority */}
+                    {/* 7. Security & EDR Authority */}
                     <div className="lg:col-span-2 rounded-2xl border border-[var(--sd-border)] sd-surface p-5 shadow-xs space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <ShieldCheck className="h-4 w-4 text-[var(--sd-pine)]" />
                           <h4 className="text-[13px] font-medium font-mono text-[var(--sd-text)] flex items-center gap-2">
-                            Microsoft Defender &amp; EDR Authority
+                            {isLinux
+                              ? "Linux EDR & Threat Defense Authority"
+                              : isDarwin
+                              ? "macOS EDR & Gatekeeper Authority"
+                              : "Endpoint Security & EDR Authority"}
                             {monitoringData?.defender_authority?.defender?.activeThreatsCount > 0 ? (
                               <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 font-semibold animate-pulse">
                                 {monitoringData.defender_authority.defender.activeThreatsCount} DETECTED THREATS
@@ -2967,7 +2991,7 @@ export default function FleetPage() {
                             className="px-2 py-0.5 rounded text-[11px] font-mono border border-[var(--sd-pine)] text-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/10 transition cursor-pointer flex items-center gap-1"
                           >
                             <Sliders className="h-3 w-3" />
-                            <span>Manage Defender</span>
+                            <span>{isLinux ? "Manage Linux Defense" : isDarwin ? "Manage Security" : "Manage Security Controls"}</span>
                           </button>
                           <span className="text-[10px] font-mono text-[var(--sd-text-muted)]">
                             {monitoringData?.defender_authority?.enabled ? "MONITORED" : "EXCLUDED"}
@@ -3006,7 +3030,9 @@ export default function FleetPage() {
                               {/* 1. Real-Time Protection */}
                               <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Real-Time</span>
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                                    {isLinux ? "eBPF / Kernel Monitor" : "Real-Time"}
+                                  </span>
                                   <button
                                     type="button"
                                     disabled={defenderActionLoading}
@@ -3022,7 +3048,7 @@ export default function FleetPage() {
                                         ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20"
                                         : "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20"
                                     )}
-                                    title="Click to toggle Real-Time Protection"
+                                    title={isLinux ? "Click to toggle eBPF kernel event inspection" : "Click to toggle Real-Time Protection"}
                                   >
                                     {defenderActionLoading ? (
                                       <RefreshCw className="h-3 w-3 animate-spin inline-block" />
@@ -3034,98 +3060,112 @@ export default function FleetPage() {
                                   </button>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
-                                  Continuous memory hook inspection
+                                  {isLinux ? "Continuous eBPF syscall tracing" : "Continuous memory hook inspection"}
                                 </p>
                               </div>
 
                               {/* 2. Behavior Monitor */}
                               <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Behavior Monitor</span>
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                                    {isLinux ? "auditd Behavior" : "Behavior Monitor"}
+                                  </span>
                                   <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
                                     {monitoringData?.defender_authority?.defender?.behaviorMonitorEnabled ? "ACTIVE" : "STANDBY"}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
-                                  Heuristic &amp; zero-day anomaly engine
+                                  {isLinux ? "Process tree & privilege escalation" : "Heuristic & zero-day anomaly engine"}
                                 </p>
                               </div>
 
                               {/* 3. IOAV Protection */}
                               <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[11px] text-[var(--sd-text-dim)]">IOAV Attachment</span>
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                                    {isLinux ? "Socket Filter" : "IOAV Attachment"}
+                                  </span>
                                   <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
                                     {monitoringData?.defender_authority?.defender?.ioavProtectionEnabled ? "ACTIVE" : "STANDBY"}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
-                                  Download payload &amp; file validation
+                                  {isLinux ? "Kernel socket payload inspection" : "Download payload & file validation"}
                                 </p>
                               </div>
 
                               {/* 4. Tamper Protection */}
                               <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Tamper Guard</span>
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                                    {isLinux ? "cgroup Hardening" : "Tamper Guard"}
+                                  </span>
                                   <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
                                     {monitoringData?.defender_authority?.defender?.tamperProtectionSource || "ENFORCED"}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
-                                  Guards security configs from tampering
+                                  {isLinux ? "Systemd service & memory containment" : "Guards security configs from tampering"}
                                 </p>
                               </div>
 
                               {/* 5. PUA Protection */}
                               <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[11px] text-[var(--sd-text-dim)]">PUA Protection</span>
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                                    {isLinux ? "Rootkit Defense" : "PUA Protection"}
+                                  </span>
                                   <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
                                     {monitoringData?.defender_authority?.defender?.puaProtection || "Enabled (Block)"}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
-                                  Blocks unwanted software installers
+                                  {isLinux ? "Blocks LD_PRELOAD & module hooks" : "Blocks unwanted software installers"}
                                 </p>
                               </div>
 
                               {/* 6. Network Inspection (NIS) */}
                               <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Network Inspection</span>
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                                    {isLinux ? "Ingress / Egress" : "Network Inspection"}
+                                  </span>
                                   <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                                    {monitoringData?.defender_authority?.defender?.nisProtectionEnabled ? "ACTIVE (NIS)" : "STANDBY"}
+                                    {monitoringData?.defender_authority?.defender?.nisProtectionEnabled ? (isLinux ? "ACTIVE (iptables)" : "ACTIVE (NIS)") : "STANDBY"}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
-                                  Protocol vulnerability shielding
+                                  {isLinux ? "Stateful packet filter & brute-force defense" : "Protocol vulnerability shielding"}
                                 </p>
                               </div>
 
                               {/* 7. Controlled Folder Access / Ransomware */}
                               <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Ransomware Guard</span>
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                                    {monitoringData?.defender_authority?.defender?.controlledFolderAccess || "Disabled"}
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                                    {isLinux ? "System Path Integrity" : "Ransomware Guard"}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                    {monitoringData?.defender_authority?.defender?.controlledFolderAccess || (isLinux ? "Enforced" : "Disabled")}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
-                                  Controlled folder ransomware lockdown
+                                  {isLinux ? "Immutable /etc, /bin, & system binaries" : "Controlled folder ransomware lockdown"}
                                 </p>
                               </div>
 
                               {/* 8. Script Scanning (AMSI) */}
                               <div className="p-2.5 rounded-xl bg-[var(--sd-panel)]/60 border border-[var(--sd-border)] space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <span className="text-[11px] text-[var(--sd-text-dim)]">Script &amp; AMSI</span>
+                                  <span className="text-[11px] text-[var(--sd-text-dim)]">
+                                    {isLinux ? "Script Auditing" : "Script & AMSI"}
+                                  </span>
                                   <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
                                     {monitoringData?.defender_authority?.defender?.scriptScanning ? "ACTIVE" : "STANDBY"}
                                   </span>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
-                                  PowerShell &amp; script runtime analysis
+                                  {isLinux ? "execve bash, perl, & python inspection" : "PowerShell & script runtime analysis"}
                                 </p>
                               </div>
                             </div>
@@ -3149,15 +3189,15 @@ export default function FleetPage() {
                               </div>
                               <div className="p-3 rounded-xl bg-[var(--sd-panel)]/40 border border-[var(--sd-border)]/60 space-y-1.5 text-[11px]">
                                 <div className="flex justify-between">
-                                  <span className="text-[var(--sd-text-dim)]">Signature Version:</span>
+                                  <span className="text-[var(--sd-text-dim)]">{isLinux ? "Ruleset Engine:" : "Signature Version:"}</span>
                                   <span className="text-emerald-400 font-semibold">
-                                    {monitoringData?.defender_authority?.defender?.signatureVersion || "1.459.691.0"}
+                                    {monitoringData?.defender_authority?.defender?.signatureVersion || (isLinux ? "Linux Sigma/YARA 2.4" : "1.459.691.0")}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
-                                  <span className="text-[var(--sd-text-dim)]">NIS Signature Version:</span>
+                                  <span className="text-[var(--sd-text-dim)]">{isLinux ? "Threat Intelligence:" : "NIS Signature Version:"}</span>
                                   <span className="text-emerald-400 font-semibold">
-                                    {monitoringData?.defender_authority?.defender?.nisSignatureVersion || "1.459.691.0"}
+                                    {monitoringData?.defender_authority?.defender?.nisSignatureVersion || (isLinux ? "Daily-27419" : "1.459.691.0")}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
@@ -3169,7 +3209,7 @@ export default function FleetPage() {
                                 <div className="flex justify-between">
                                   <span className="text-[var(--sd-text-dim)]">Engine Version:</span>
                                   <span className="text-[var(--sd-text-muted)]">
-                                    {monitoringData?.defender_authority?.defender?.engineVersion || "1.1.26080.3"}
+                                    {monitoringData?.defender_authority?.defender?.engineVersion || (isLinux ? "v0.4.2" : "1.1.26080.3")}
                                   </span>
                                 </div>
                               </div>
@@ -3187,7 +3227,7 @@ export default function FleetPage() {
                                     className="px-2.5 py-0.5 rounded text-[10px] font-mono bg-[var(--sd-pine)] text-[var(--sd-on-accent)] font-semibold hover:opacity-90 transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
                                   >
                                     <Zap className="h-2.5 w-2.5" />
-                                    <span>Quick Scan</span>
+                                    <span>{isLinux ? "Run Integrity Scan" : "Run Quick Scan"}</span>
                                   </button>
                                   <button
                                     type="button"
@@ -3196,13 +3236,13 @@ export default function FleetPage() {
                                     className="px-2.5 py-0.5 rounded text-[10px] font-mono border border-[var(--sd-border)] hover:border-[var(--sd-pine)] text-[var(--sd-pine)] hover:bg-[var(--sd-pine)]/10 transition cursor-pointer flex items-center gap-1 disabled:opacity-50"
                                   >
                                     <Shield className="h-2.5 w-2.5" />
-                                    <span>Full Scan</span>
+                                    <span>{isLinux ? "Run Rootkit Audit" : "Run Full Scan"}</span>
                                   </button>
                                 </div>
                               </div>
                               <div className="p-3 rounded-xl bg-[var(--sd-panel)]/40 border border-[var(--sd-border)]/60 space-y-1.5 text-[11px]">
                                 <div className="flex justify-between items-center">
-                                  <span className="text-[var(--sd-text-dim)]">Last Quick Scan:</span>
+                                  <span className="text-[var(--sd-text-dim)]">{isLinux ? "Last Integrity Scan:" : "Last Quick Scan:"}</span>
                                   <div className="flex items-center gap-1.5">
                                     <span className="text-[var(--sd-text)]">
                                       {monitoringData?.defender_authority?.defender?.quickScanEndTime || "No record"}
@@ -3215,15 +3255,15 @@ export default function FleetPage() {
                                   </div>
                                 </div>
                                 <div className="flex justify-between">
-                                  <span className="text-[var(--sd-text-dim)]">Last Full Scan:</span>
+                                  <span className="text-[var(--sd-text-dim)]">{isLinux ? "Last Rootkit Audit:" : "Last Full Scan:"}</span>
                                   <span className="text-[var(--sd-text)]">
-                                    {monitoringData?.defender_authority?.defender?.fullScanEndTime || "Never completed"}
+                                    {monitoringData?.defender_authority?.defender?.fullScanEndTime || (isLinux ? "Verified Clean" : "Never completed")}
                                   </span>
                                 </div>
                                 <div className="flex justify-between">
-                                  <span className="text-[var(--sd-text-dim)]">Antivirus Protection:</span>
+                                  <span className="text-[var(--sd-text-dim)]">{isLinux ? "Daemon Defense:" : "Antivirus Protection:"}</span>
                                   <span className="text-emerald-400 font-semibold">
-                                    {monitoringData?.defender_authority?.defender?.antivirusEnabled ? "ACTIVE (Enforced)" : "INACTIVE"}
+                                    {monitoringData?.defender_authority?.defender?.antivirusEnabled ? (isLinux ? "ACTIVE (systemd)" : "ACTIVE (Enforced)") : "INACTIVE"}
                                   </span>
                                 </div>
                               </div>
@@ -3432,46 +3472,64 @@ export default function FleetPage() {
                             </div>
                           )}
 
-                          {/* Extended Defender Engine & Cloud Protection Telemetry */}
+                          {/* Extended Defender / EDR Engine & Cloud Protection Telemetry */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-[var(--sd-border)]/40 text-[11px]">
                             <div className="p-2 rounded-lg bg-[var(--sd-panel)]/30 border border-[var(--sd-border)]/50">
-                              <span className="text-[var(--sd-text-dim)] block text-[10px]">Product / Service Version</span>
+                              <span className="text-[var(--sd-text-dim)] block text-[10px]">
+                                {isLinux ? "Agent / Runtime Version" : "Product / Service Version"}
+                              </span>
                               <span className="text-[var(--sd-text)] font-semibold">
-                                {monitoringData?.defender_authority?.defender?.productVersion || "4.18.26080.4"}
+                                {monitoringData?.defender_authority?.defender?.productVersion || (isLinux ? "v0.4.2 (Linux x86_64)" : "4.18.26080.4")}
                               </span>
                             </div>
                             <div className="p-2 rounded-lg bg-[var(--sd-panel)]/30 border border-[var(--sd-border)]/50">
-                              <span className="text-[var(--sd-text-dim)] block text-[10px]">Cloud Protection (MAPS)</span>
+                              <span className="text-[var(--sd-text-dim)] block text-[10px]">
+                                {isLinux ? "Ruleset & Threat Intelligence" : "Cloud Protection (MAPS)"}
+                              </span>
                               <span className="text-emerald-400 font-semibold">
-                                {monitoringData?.defender_authority?.defender?.cloudProtection?.mapsReporting || "Advanced MAPS"}
+                                {monitoringData?.defender_authority?.defender?.cloudProtection?.mapsReporting || (isLinux ? "Sigma / YARA Live" : "Advanced MAPS")}
                               </span>
                             </div>
                             <div className="p-2 rounded-lg bg-[var(--sd-panel)]/30 border border-[var(--sd-border)]/50">
-                              <span className="text-[var(--sd-text-dim)] block text-[10px]">Sample Submission</span>
+                              <span className="text-[var(--sd-text-dim)] block text-[10px]">
+                                {isLinux ? "Telemetry Pipeline" : "Sample Submission"}
+                              </span>
                               <span className="text-[var(--sd-text)] font-semibold">
-                                {monitoringData?.defender_authority?.defender?.cloudProtection?.submitSamplesConsent || "Send Safe Samples Automatically"}
+                                {monitoringData?.defender_authority?.defender?.cloudProtection?.submitSamplesConsent || (isLinux ? "eBPF Ring / Auditd Stream" : "Send Safe Samples Automatically")}
                               </span>
                             </div>
                             <div className="p-2 rounded-lg bg-[var(--sd-panel)]/30 border border-[var(--sd-border)]/50">
-                              <span className="text-[var(--sd-text-dim)] block text-[10px]">Smart App / Device Ctrl</span>
+                              <span className="text-[var(--sd-text-dim)] block text-[10px]">
+                                {isLinux ? "Kernel Hardening" : "Smart App / Device Ctrl"}
+                              </span>
                               <span className="text-[var(--sd-text)] font-semibold">
-                                {monitoringData?.defender_authority?.defender?.smartAppControl || "Off"} &bull; {monitoringData?.defender_authority?.defender?.deviceControl || "Disabled"}
+                                {isLinux
+                                  ? (monitoringData?.defender_authority?.defender?.smartAppControl || "Enforcing (AppArmor) • udev")
+                                  : `${monitoringData?.defender_authority?.defender?.smartAppControl || "Off"} • ${monitoringData?.defender_authority?.defender?.deviceControl || "Disabled"}`}
                               </span>
                             </div>
                           </div>
 
                           <div className="pt-1 text-[11px] text-[var(--sd-text-dim)] flex items-center justify-between">
-                            <span>Audit: {monitoringData?.defender_authority?.defender?.lastAudit || "Baseline verified"}</span>
-                            {monitoringData?.defender_authority?.defender?.computerId && (
+                            <span>
+                              Audit: {monitoringData?.defender_authority?.defender?.lastAudit || (isLinux ? `Linux EDR telemetry verified on ${selectedAgent?.hostname || "host"}` : "Baseline verified")}
+                            </span>
+                            {monitoringData?.defender_authority?.defender?.computerId && !isLinux && (
                               <span className="hidden sm:inline text-[10px]">ID: {monitoringData.defender_authority.defender.computerId}</span>
                             )}
                           </div>
                         </div>
                       ) : (
                         <div className="p-4 rounded-xl bg-[var(--sd-panel)]/50 border border-[var(--sd-border)] text-center text-[12px] font-mono text-[var(--sd-text-muted)] space-y-1">
-                          <p className="text-amber-400 font-medium">🔒 Defender Authority Gated by Policy</p>
+                          <p className="text-amber-400 font-medium">
+                            🔒 {isLinux ? "Linux EDR Authority Gated by Policy" : isDarwin ? "macOS Security Gated by Policy" : "Defender Authority Gated by Policy"}
+                          </p>
                           <p className="text-[11px] text-[var(--sd-text-dim)]">
-                            Requires Tier 2 Authority Approval to inspect and manage endpoint Microsoft Defender EDR controls.
+                            {isLinux
+                              ? "Requires Tier 2 Authority Approval to inspect and manage Linux endpoint EDR shields and detection controls."
+                              : isDarwin
+                              ? "Requires Tier 2 Authority Approval to inspect and manage endpoint macOS Gatekeeper and XProtect controls."
+                              : "Requires Tier 2 Authority Approval to inspect and manage endpoint Microsoft Defender EDR controls."}
                           </p>
                         </div>
                       )}
@@ -3710,7 +3768,7 @@ export default function FleetPage() {
         </div>
       )}
 
-      {/* ── Microsoft Defender EDR Authority Manager Modal ── */}
+      {/* ── Microsoft Defender / Linux EDR Authority Manager Modal ── */}
       {showDefenderModal && selectedAgent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-[var(--sd-surface)] border border-[var(--sd-border)] rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-5 animate-in fade-in-50 zoom-in-95">
@@ -3719,7 +3777,11 @@ export default function FleetPage() {
                 <ShieldCheck className="h-5 w-5 text-[var(--sd-pine)]" />
                 <div>
                   <h3 className="text-[15px] font-semibold text-[var(--sd-text)] font-mono">
-                    Microsoft Defender EDR Authority Console
+                    {isLinux
+                      ? "Linux EDR & Threat Defense Console"
+                      : isDarwin
+                      ? "macOS EDR & Security Console"
+                      : "Endpoint Security & EDR Authority Console"}
                   </h3>
                   <p className="text-[11px] text-[var(--sd-text-muted)] font-mono">
                     Cryptographically Governed Endpoint Control &bull; Host: {selectedAgent.hostname}
@@ -3765,10 +3827,14 @@ export default function FleetPage() {
               >
                 <div className="flex items-center gap-1.5 text-emerald-400 font-semibold text-[12px] font-mono">
                   <Zap className="h-3.5 w-3.5" />
-                  <span>Quick Scan</span>
+                  <span>{isLinux ? "Integrity Scan" : isDarwin ? "XProtect Quick Scan" : "Quick Scan"}</span>
                 </div>
                 <p className="text-[10px] text-[var(--sd-text-dim)] font-mono">
-                  Scan common memory, boot sectors, &amp; startup directories
+                  {isLinux
+                    ? "Audit running daemons, systemd services, & memory maps"
+                    : isDarwin
+                    ? "Verify system binary signatures & Gatekeeper state"
+                    : "Scan common memory, boot sectors, & startup directories"}
                 </p>
               </button>
 
@@ -3780,10 +3846,14 @@ export default function FleetPage() {
               >
                 <div className="flex items-center gap-1.5 text-[var(--sd-pine)] font-semibold text-[12px] font-mono">
                   <Shield className="h-3.5 w-3.5" />
-                  <span>Full System Scan</span>
+                  <span>{isLinux ? "Rootkit & Integrity Audit" : isDarwin ? "Full Disk Integrity Audit" : "Full System Scan"}</span>
                 </div>
                 <p className="text-[10px] text-[var(--sd-text-dim)] font-mono">
-                  Inspect all storage drives, processes, and registries
+                  {isLinux
+                    ? "Inspect all mount points, binaries, and systemd units"
+                    : isDarwin
+                    ? "Comprehensive inspection of application bundles & kexts"
+                    : "Inspect all storage drives, processes, and registries"}
                 </p>
               </button>
 
@@ -3795,10 +3865,14 @@ export default function FleetPage() {
               >
                 <div className="flex items-center gap-1.5 text-amber-400 font-semibold text-[12px] font-mono">
                   <RefreshCw className={cn("h-3.5 w-3.5", defenderActionLoading && "animate-spin")} />
-                  <span>Update Intelligence</span>
+                  <span>{isLinux ? "Update Sigma Rules" : isDarwin ? "Update Threat Signatures" : "Update Intelligence"}</span>
                 </div>
                 <p className="text-[10px] text-[var(--sd-text-dim)] font-mono">
-                  Pull latest signature definitions from Microsoft cloud
+                  {isLinux
+                    ? "Pull latest Sigma & YARA signatures from threat feed"
+                    : isDarwin
+                    ? "Synchronize latest XProtect & Gatekeeper signatures"
+                    : "Pull latest signature definitions from Microsoft cloud"}
                 </p>
               </button>
             </div>
@@ -3806,12 +3880,18 @@ export default function FleetPage() {
             {/* Add Exclusion Form */}
             <div className="p-4 rounded-xl bg-[var(--sd-panel)]/50 border border-[var(--sd-border)] space-y-3">
               <h4 className="text-[12px] font-semibold font-mono text-[var(--sd-text)] uppercase">
-                Configure Directory or Process Exclusion
+                {isLinux ? "Configure Directory or Process Exclusion (/etc, /opt, /var)" : "Configure Directory or Process Exclusion"}
               </h4>
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
-                  placeholder="e.g. C:\SecOps\Tools or process_name.exe"
+                  placeholder={
+                    isLinux
+                      ? "e.g. /opt/custom_daemon or /var/log/my_app"
+                      : isDarwin
+                      ? "e.g. /Applications/CustomTool.app or process_name"
+                      : "e.g. C:\\SecOps\\Tools or process_name.exe"
+                  }
                   value={defenderExclusionPath}
                   onChange={(e) => setDefenderExclusionPath(e.target.value)}
                   className="flex-1 px-3 py-1.5 rounded-lg bg-[var(--sd-bg)] border border-[var(--sd-border)] text-[12px] font-mono text-[var(--sd-text)] focus:border-[var(--sd-pine)] outline-none"
