@@ -7,6 +7,7 @@ set -euo pipefail
 
 CONTROL_PLANE=""
 ENROLL_TOKEN=""
+HOST_NAME=""
 INSTALL_DIR="/opt/shielddesk"
 BINARY_PATH="${INSTALL_DIR}/shielddesk-agent"
 SERVICE_FILE="/etc/systemd/system/shielddesk-agent.service"
@@ -30,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --token)
       ENROLL_TOKEN="$2"
+      shift 2
+      ;;
+    --hostname)
+      HOST_NAME="$2"
       shift 2
       ;;
     *)
@@ -77,6 +82,11 @@ fi
 chmod 755 "${BINARY_PATH}"
 
 # 5. Create Systemd Service File
+EXTRA_FLAGS=""
+if [[ -n "${HOST_NAME}" ]]; then
+  EXTRA_FLAGS="-hostname ${HOST_NAME}"
+fi
+
 echo "[3/5] Configuring systemd service (${SERVICE_FILE})..."
 cat <<EOF > "${SERVICE_FILE}"
 [Unit]
@@ -89,7 +99,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${BINARY_PATH} -control-url "${CONTROL_PLANE}" -enroll-token "${ENROLL_TOKEN}"
+ExecStart=${BINARY_PATH} -control-url "${CONTROL_PLANE}" -enroll-token "${ENROLL_TOKEN}" ${EXTRA_FLAGS}
 Restart=always
 RestartSec=5s
 LimitNOFILE=65535

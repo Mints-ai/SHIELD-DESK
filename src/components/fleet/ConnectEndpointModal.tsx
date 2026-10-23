@@ -62,6 +62,7 @@ export function ConnectEndpointModal({
   const [runtimeType, setRuntimeType] = useState<AgentRuntime>("go-binary");
   const [hostName, setHostName] = useState("");
   const [expiryHours, setExpiryHours] = useState("24");
+  const [customControlUrl, setCustomControlUrl] = useState("");
 
   // Enrollment request & result state
   const [loading, setLoading] = useState(false);
@@ -114,9 +115,10 @@ export function ConnectEndpointModal({
 
   if (!isOpen) return null;
 
-  const controlPlaneUrl =
+  const defaultControlUrl =
     serverUrl ||
     (typeof window !== "undefined" ? window.location.origin : "http://localhost:3000");
+  const controlPlaneUrl = customControlUrl.trim() || defaultControlUrl;
 
   const copyToClipboard = async (text: string, key: string) => {
     try {
@@ -178,7 +180,10 @@ export function ConnectEndpointModal({
 
     if (runtimeType === "nodejs" || targetOs === "nodejs") {
       const hostFlag = cleanHost ? ` --hostname "${cleanHost}"` : "";
-      return `node agent/agent-daemon.js --token ${token} --control-url ${controlPlaneUrl}${hostFlag}`;
+      if (targetOs === "linux" || targetOs === "nodejs") {
+        return `curl -sSL -o agent-daemon.js "${controlPlaneUrl}/agent/agent-daemon.js" && node agent-daemon.js --token ${token} --control-url "${controlPlaneUrl}"${hostFlag}`;
+      }
+      return `node agent/agent-daemon.js --token ${token} --control-url "${controlPlaneUrl}"${hostFlag}`;
     }
 
     if (runtimeType === "script") {
@@ -186,21 +191,21 @@ export function ConnectEndpointModal({
         const hostFlag = cleanHost ? ` -Hostname "${cleanHost}"` : "";
         return `powershell -ExecutionPolicy Bypass -File .\\agent\\deploy-agent.ps1 -Token "${token}" -ControlPlaneUrl "${controlPlaneUrl}"${hostFlag}`;
       }
-      const hostParam = cleanHost || "$(hostname)";
-      return `chmod +x ./agent/deploy-agent.sh && ./agent/deploy-agent.sh "${controlPlaneUrl}" "${result.tenantId}" "${hostParam}"`;
+      const hostFlag = cleanHost ? ` --hostname "${cleanHost}"` : "";
+      return `curl -sSL "${controlPlaneUrl}/install.sh" | sudo bash -s -- --control-plane "${controlPlaneUrl}" --token "${token}"${hostFlag}`;
     }
 
     // Native Go binary
     const hostFlag = cleanHost ? ` -hostname "${cleanHost}"` : "";
     switch (targetOs) {
       case "windows":
-        return `.\\shielddesk-agent.exe -token ${token} -control-url ${controlPlaneUrl}${hostFlag}`;
+        return `.\\shielddesk-agent.exe -token ${token} -control-url "${controlPlaneUrl}"${hostFlag}`;
       case "linux":
-        return `./shielddesk-agent -token ${token} -control-url ${controlPlaneUrl}${hostFlag}`;
+        return `curl -sSL -o shielddesk-agent "${controlPlaneUrl}/api/agent/binary/linux-amd64" && chmod +x shielddesk-agent && sudo ./shielddesk-agent -token ${token} -control-url "${controlPlaneUrl}"${hostFlag}`;
       case "darwin":
-        return `./shielddesk-agent -token ${token} -control-url ${controlPlaneUrl}${hostFlag}`;
+        return `curl -sSL -o shielddesk-agent "${controlPlaneUrl}/api/agent/binary/darwin-arm64" && chmod +x shielddesk-agent && sudo ./shielddesk-agent -token ${token} -control-url "${controlPlaneUrl}"${hostFlag}`;
       default:
-        return `.\\shielddesk-agent.exe -token ${token} -control-url ${controlPlaneUrl}${hostFlag}`;
+        return `.\\shielddesk-agent.exe -token ${token} -control-url "${controlPlaneUrl}"${hostFlag}`;
     }
   };
 
@@ -638,9 +643,17 @@ export function ConnectEndpointModal({
                           : "Node.js Daemon (Cross-Platform)"}
                       </span>
                     </div>
-                    <span className="text-[10px] font-mono text-[var(--sd-pine)]">
-                      Control Plane: {controlPlaneUrl}
-                    </span>
+                    <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                      <span className="text-[var(--sd-text-muted)]">Control Plane:</span>
+                      <input
+                        type="text"
+                        value={customControlUrl}
+                        onChange={(e) => setCustomControlUrl(e.target.value)}
+                        placeholder={defaultControlUrl}
+                        className="bg-[var(--sd-panel-raised)] border border-[var(--sd-border)] rounded px-2 py-0.5 text-[10px] font-mono text-[var(--sd-pine)] focus:outline-none focus:border-[var(--sd-pine)] w-44"
+                        title="Change if connecting an external VM or physical machine (e.g. http://192.168.1.2:3000)"
+                      />
+                    </div>
                   </div>
 
                   <div className="flex items-start gap-2">
@@ -660,6 +673,12 @@ export function ConnectEndpointModal({
                       )}
                     </button>
                   </div>
+
+                  {controlPlaneUrl.includes("localhost") && (
+                    <p className="text-[10px] font-mono text-[var(--sd-text-muted)] leading-relaxed">
+                      <span className="text-amber-400 font-semibold">Tip:</span> If connecting from an external VM (e.g. Kali Linux in VirtualBox/VMware) or another laptop, replace <code className="text-[var(--sd-pine)]">localhost</code> above with your host LAN IP (e.g. <code className="text-[var(--sd-pine)]">http://192.168.1.2:3000</code> or <code className="text-[var(--sd-pine)]">http://192.168.56.1:3000</code>).
+                    </p>
+                  )}
                 </div>
 
                 {/* Step-by-step guidance list */}
