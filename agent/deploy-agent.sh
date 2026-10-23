@@ -26,8 +26,21 @@ if [ -z "$CONTROL_PLANE_URL" ]; then
     exit 1
 fi
 
-if [[ "$CONTROL_PLANE_URL" != "https://"* ]] && [ "$CONTROL_PLANE_URL" != "http://localhost:3000" ]; then
-    echo "[-] SECURITY ERROR: Control plane URL must use HTTPS in production. Plain HTTP is rejected."
+# Allow HTTPS in production, or localhost/private LAN IPs for lab/dev evaluation
+is_allowed_url=0
+if [[ "$CONTROL_PLANE_URL" == "https://"* ]] || \
+   [[ "$CONTROL_PLANE_URL" == "http://localhost"* ]] || \
+   [[ "$CONTROL_PLANE_URL" == "http://127.0.0.1"* ]] || \
+   [[ "$CONTROL_PLANE_URL" == "http://192.168."* ]] || \
+   [[ "$CONTROL_PLANE_URL" == "http://10."* ]] || \
+   [[ "$CONTROL_PLANE_URL" == "http://172."* ]] || \
+   [[ "$CONTROL_PLANE_URL" == *.local:* ]] || \
+   [[ "$CONTROL_PLANE_URL" == *.local ]]; then
+    is_allowed_url=1
+fi
+
+if [ "$is_allowed_url" -eq 0 ]; then
+    echo "[-] SECURITY ERROR: Control plane URL must use HTTPS in production. Plain HTTP is rejected for non-local addresses."
     exit 1
 fi
 
@@ -59,16 +72,37 @@ else
 fi
 
 # Build Go Agent or use pre-compiled
-if command -v go >/dev/null 2>&1; then
+if command -v go >/dev/null 2>&1 && [ -d "./cmd" ]; then
     echo "[*] Compiling ShieldDesk Go Agent binary..."
     go build -ldflags="-s -w" -o "${TARGET_BIN}" ./cmd
     chmod +x "${TARGET_BIN}"
 elif [ -f "${TARGET_BIN}" ]; then
-    echo "[!] Go compiler not found, using existing pre-built binary: ${TARGET_BIN}"
+    echo "[!] Using existing binary: ${TARGET_BIN}"
+    chmod +x "${TARGET_BIN}"
+elif [ -f "${SCRIPT_DIR}/shielddesk-agent" ]; then
+    cp "${SCRIPT_DIR}/shielddesk-agent" "${TARGET_BIN}"
+    chmod +x "${TARGET_BIN}"
+elif [ -f "${SCRIPT_DIR}/../bin/shielddesk-agent" ]; then
+    cp "${SCRIPT_DIR}/../bin/shielddesk-agent" "${TARGET_BIN}"
+    chmod +x "${TARGET_BIN}"
+elif [ -f "${SCRIPT_DIR}/bin/shielddesk-agent-linux-amd64" ]; then
+    cp "${SCRIPT_DIR}/bin/shielddesk-agent-linux-amd64" "${TARGET_BIN}"
     chmod +x "${TARGET_BIN}"
 else
-    echo "[-] Go compiler not found and no pre-built binary exists. Please install Go 1.21+."
-    exit 1
+    echo "[*] Downloading pre-compiled agent binary from control plane..."
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64) GO_ARCH="amd64" ;;
+        aarch64|arm64) GO_ARCH="arm64" ;;
+        *) GO_ARCH="amd64" ;;
+    esac
+    if curl -sSfL "${CONTROL_PLANE_URL}/api/agent/binary/linux-${GO_ARCH}" -o "${TARGET_BIN}" 2>/dev/null; then
+        echo "[+] Successfully downloaded agent binary for linux-${GO_ARCH}"
+        chmod +x "${TARGET_BIN}"
+    else
+        echo "[-] Go compiler not found and remote binary download failed."
+        exit 1
+    fi
 fi
 
 # Install Systemd service unit if running as root

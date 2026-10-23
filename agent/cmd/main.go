@@ -262,13 +262,14 @@ func main() {
 			}
 			coreTelem := collector.HarvestCoreTelemetry(*hostname, metrics.CPUPercent, metrics.MemPercent)
 			hbStatus, _ := sendHeartbeat(httpClient, *controlURL, *agentID, metrics.CPUPercent, metrics.MemPercent, eps, coreTelem)
-			if hbStatus == "disconnected" {
+			switch hbStatus {
+			case "disconnected":
 				log.Printf("[Heartbeat #%d] Endpoint: %s | Status: DISCONNECTED BY CONTROL PANEL (Standing by)",
 					tickCount, *hostname)
-			} else if hbStatus == "duplicate_ip" || hbStatus == "kill_switch" || hbStatus == "ip_blocked" {
+			case "duplicate_ip", "kill_switch", "ip_blocked":
 				log.Printf("[Heartbeat #%d] Endpoint: %s | Status: DISCONNECTED (%s)",
 					tickCount, *hostname, hbStatus)
-			} else {
+			default:
 				log.Printf("[Heartbeat #%d] Endpoint: %s | CPU: %.1f%% | Mem: %.1f%% | EPS: %d | Status: CONNECTED",
 					tickCount, *hostname, metrics.CPUPercent, metrics.MemPercent, eps)
 			}
@@ -326,15 +327,16 @@ func pollCommands(client *http.Client, controlURL, agentID, hostname string, han
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 423 {
+	switch resp.StatusCode {
+	case 423:
 		log.Printf("[CommandPoll] Agent %s is locked by Emergency Admin Kill Switch.", agentID)
 		return
-	} else if resp.StatusCode == http.StatusNotFound {
+	case http.StatusNotFound:
 		fmt.Printf("\n\033[31m[!] ENDPOINT REMOVED\033[0m — This host was deleted from the ShieldDesk fleet. Stopping agent daemon.\n")
 		os.Exit(0)
-	}
-
-	if resp.StatusCode != http.StatusOK {
+	case http.StatusOK:
+		// Proceed with command parsing
+	default:
 		return
 	}
 
@@ -874,22 +876,21 @@ func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem flo
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 423 {
+	switch resp.StatusCode {
+	case 423:
 		log.Printf("[Heartbeat Alert] Kill switch is active for agent %s. Host commands blocked.", agentID)
 		return "kill_switch", nil
-	} else if resp.StatusCode == 409 {
+	case 409:
 		log.Printf("[Heartbeat Alert] Connection rejected: Another endpoint is already connected from this IP address. Agent in standby.")
 		return "duplicate_ip", nil
-	} else if resp.StatusCode == 403 {
+	case 403:
 		log.Printf("[Heartbeat Alert] Connection rejected: IP address is blocked by SOC security policy. Endpoint disconnected from fleet.")
 		return "ip_blocked", nil
-	} else if resp.StatusCode == http.StatusNotFound {
+	case http.StatusNotFound:
 		fmt.Printf("\n\033[31m[!] ENDPOINT REMOVED\033[0m — This host was deleted from the ShieldDesk fleet. Stopping agent daemon.\n")
 		os.Exit(0)
 		return "removed", nil
-	}
-
-	if resp.StatusCode == http.StatusOK {
+	case http.StatusOK:
 		var hbResp struct {
 			Success bool   `json:"success"`
 			Status  string `json:"status"`
@@ -898,9 +899,9 @@ func sendHeartbeat(client *http.Client, controlURL, agentID string, cpu, mem flo
 			return hbResp.Status, nil
 		}
 		return "connected", nil
+	default:
+		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
-
-	return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 }
 
 func sendDisconnectHeartbeat(client *http.Client, controlURL, agentID string) {

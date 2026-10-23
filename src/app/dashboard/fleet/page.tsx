@@ -112,8 +112,44 @@ export default function FleetPage() {
   const [filterAgentId, setFilterAgentId] = useState<string>("all");
   const [reconnectingAgentId, setReconnectingAgentId] = useState<string | null>(null);
   // Map of agentId -> timestamp (ms) when 5-second reconnect grace window expires
-  const [disconnectGracePeriods, setDisconnectGracePeriods] = useState<Record<string, number>>({});
+  const [disconnectGracePeriods, setDisconnectGracePeriods] = useState<Record<string, number>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage.getItem("shielddesk_disconnect_grace");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          const now = Date.now();
+          const valid: Record<string, number> = {};
+          for (const [k, v] of Object.entries(parsed)) {
+            if (typeof v === "number" && v > now) {
+              valid[k] = v;
+            }
+          }
+          return valid;
+        }
+      } catch {}
+    }
+    return {};
+  });
+
   const disconnectGracePeriodsRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    disconnectGracePeriodsRef.current = disconnectGracePeriods;
+  }, [disconnectGracePeriods]);
+
+  const updateDisconnectGrace = useCallback((updater: (prev: Record<string, number>) => Record<string, number>) => {
+    setDisconnectGracePeriods((prev) => {
+      const next = updater(prev);
+      disconnectGracePeriodsRef.current = next;
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem("shielddesk_disconnect_grace", JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+  }, []);
   const [currentTime, setCurrentTime] = useState<number>(() => Date.now());
 
   const reconcileAgentsWithGracePeriod = useCallback((incomingAgents: EndpointAgentRecord[]) => {
@@ -196,6 +232,16 @@ export default function FleetPage() {
       setActiveConsoleTab("console");
     }
   }, [isAnalyst, activeConsoleTab]);
+
+  // Deep-link direct to monitoring tab if requested via query parameter (?tab=monitoring)
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("tab") === "monitoring" && !isAnalyst) {
+        setActiveConsoleTab("monitoring");
+      }
+    }
+  }, [isAnalyst]);
 
   const [monitoringPolicy, setMonitoringPolicy] = useState<{
     enabled_scopes: CoreFunctionScope[];
@@ -709,11 +755,7 @@ export default function FleetPage() {
   const handleDisconnectAgent = async (agentId: string) => {
     // Start 5-second countdown grace period immediately
     const expiry = Date.now() + 5000;
-    disconnectGracePeriodsRef.current = {
-      ...disconnectGracePeriodsRef.current,
-      [agentId]: expiry,
-    };
-    setDisconnectGracePeriods((prev) => ({
+    updateDisconnectGrace((prev) => ({
       ...prev,
       [agentId]: expiry,
     }));
@@ -746,8 +788,7 @@ export default function FleetPage() {
         fetchFleet();
       } else {
         // Revert grace period on error
-        delete disconnectGracePeriodsRef.current[agentId];
-        setDisconnectGracePeriods((prev) => {
+        updateDisconnectGrace((prev) => {
           const next = { ...prev };
           delete next[agentId];
           return next;
@@ -756,7 +797,7 @@ export default function FleetPage() {
         alert(data.error || "Failed to disconnect agent");
       }
     } catch {
-      setDisconnectGracePeriods((prev) => {
+      updateDisconnectGrace((prev) => {
         const next = { ...prev };
         delete next[agentId];
         return next;
@@ -766,12 +807,17 @@ export default function FleetPage() {
     }
   };
 
-  // Reconnect/refresh a disconnected agent
+  // Reconnect/refresh a disconnected agent (only allowed within 5s grace period)
   const handleReconnectAgent = async (agentId: string) => {
+    const graceExpiresAt = disconnectGracePeriods[agentId];
+    if (!graceExpiresAt || Date.now() > graceExpiresAt) {
+      alert("Reconnect window expired. Reconnecting is only permitted within 5 seconds of disconnection. Only deletion is allowed.");
+      return;
+    }
+
     setReconnectingAgentId(agentId);
     // Clear grace period so countdown is removed immediately
-    delete disconnectGracePeriodsRef.current[agentId];
-    setDisconnectGracePeriods((prev) => {
+    updateDisconnectGrace((prev) => {
       const next = { ...prev };
       delete next[agentId];
       return next;
@@ -825,8 +871,7 @@ export default function FleetPage() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        delete disconnectGracePeriodsRef.current[agentId];
-        setDisconnectGracePeriods((prev) => {
+        updateDisconnectGrace((prev) => {
           const next = { ...prev };
           delete next[agentId];
           return next;
@@ -876,12 +921,13 @@ export default function FleetPage() {
     if (selectedAgent && activeConsoleTab === "monitoring") {
       setHasUserModifiedScopes(false);
       fetchMonitoring(selectedAgent.id, false);
+      if (!isStreaming || selectedAgent.status === "disconnected") return;
       const interval = setInterval(() => {
         fetchMonitoring(selectedAgent.id, true);
       }, 3000);
       return () => clearInterval(interval);
     }
-  }, [selectedAgent?.id, activeConsoleTab, fetchMonitoring]);
+  }, [selectedAgent?.id, selectedAgent?.status, isStreaming, activeConsoleTab, fetchMonitoring]);
 
   const handleSaveMonitoringPolicy = async () => {
     if (!selectedAgent) return;
@@ -1541,7 +1587,7 @@ export default function FleetPage() {
                             <Unplug className="h-3.5 w-3.5" />
                             <span>Disconnect</span>
                           </button>
-                        ) : (
+                        ) : isWithinGrace ? (
                           <div className="w-full flex items-center gap-2">
                             <button
                               type="button"
@@ -1552,19 +1598,14 @@ export default function FleetPage() {
                                 }
                               }}
                               disabled={reconnectingAgentId === agent.id}
-                              className={cn(
-                                "flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 transition cursor-pointer disabled:opacity-60",
-                                isWithinGrace && "animate-pulse border-emerald-500/70"
-                              )}
-                              title={isWithinGrace ? `Reconnect host (${remainingSeconds}s remaining)` : "Reconnect endpoint to fleet"}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-semibold border border-emerald-500/50 text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 transition cursor-pointer disabled:opacity-60 animate-pulse border-emerald-500/70"
+                              title={`Reconnect host (${remainingSeconds}s remaining)`}
                             >
                               <RefreshCw className={cn("h-3.5 w-3.5", reconnectingAgentId === agent.id && "animate-spin")} />
                               <span>
                                 {reconnectingAgentId === agent.id
                                   ? "Reconnecting..."
-                                  : isWithinGrace
-                                  ? `Reconnect (${remainingSeconds}s)`
-                                  : "Reconnect Host"}
+                                  : `Reconnect (${remainingSeconds}s)`}
                               </span>
                             </button>
                             {canManageFleetAgents && (
@@ -1582,6 +1623,21 @@ export default function FleetPage() {
                               </button>
                             )}
                           </div>
+                        ) : (
+                          canManageFleetAgents && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveAgent(agent.id, agent.hostname);
+                              }}
+                              className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-[11px] font-mono font-medium border border-red-500/40 text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:border-red-500/70 transition cursor-pointer"
+                              title="Remove endpoint from fleet"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Delete</span>
+                            </button>
+                          )
                         )}
                       </div>
                     )}
@@ -2573,6 +2629,10 @@ export default function FleetPage() {
                                                 });
                                                 const data = await res.json();
                                                 if (res.ok && data.success) {
+                                                  if (data.pendingApproval) {
+                                                    alert(`Process termination request for "${p.name}" (PID: ${p.pid}) submitted for Tier 2 Authority Approval (Task ID: ${data.taskId || data.tokenId || "Pending"}).`);
+                                                    return;
+                                                  }
                                                   setMonitoringData((prev: any) => {
                                                     if (!prev?.process_inventory?.processes) return prev;
                                                     return {
@@ -2964,7 +3024,13 @@ export default function FleetPage() {
                                     )}
                                     title="Click to toggle Real-Time Protection"
                                   >
-                                    {monitoringData?.defender_authority?.defender?.realTimeProtectionEnabled ? "ENABLED" : "DISABLED"}
+                                    {defenderActionLoading ? (
+                                      <RefreshCw className="h-3 w-3 animate-spin inline-block" />
+                                    ) : monitoringData?.defender_authority?.defender?.realTimeProtectionEnabled ? (
+                                      "ENABLED"
+                                    ) : (
+                                      "DISABLED"
+                                    )}
                                   </button>
                                 </div>
                                 <p className="text-[10px] text-[var(--sd-text-muted)]">
@@ -3341,6 +3407,30 @@ export default function FleetPage() {
                                 </div>
                               </div>
                             )}
+
+                          {/* Active Exclusions Summary on Host */}
+                          {((monitoringData?.defender_authority?.defender?.exclusions?.paths?.length || 0) +
+                            (monitoringData?.defender_authority?.defender?.exclusions?.extensions?.length || 0) +
+                            (monitoringData?.defender_authority?.defender?.exclusions?.processes?.length || 0)) > 0 && (
+                            <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20 text-[11px]">
+                              <span className="text-[var(--sd-text-dim)]">Configured Antivirus Exclusions:</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-amber-300">
+                                  {(monitoringData.defender_authority.defender.exclusions.paths?.length || 0) +
+                                    (monitoringData.defender_authority.defender.exclusions.extensions?.length || 0) +
+                                    (monitoringData.defender_authority.defender.exclusions.processes?.length || 0)} active exemptions
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowDefenderModal(true)}
+                                  className="text-[10px] text-[var(--sd-pine)] hover:underline cursor-pointer flex items-center gap-0.5"
+                                >
+                                  <span>View &amp; Remove</span>
+                                  <ArrowRight className="h-2.5 w-2.5" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
 
                           {/* Extended Defender Engine & Cloud Protection Telemetry */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-[var(--sd-border)]/40 text-[11px]">
@@ -3744,6 +3834,116 @@ export default function FleetPage() {
                 </button>
               </div>
             </div>
+
+            {/* Active Enforced Exclusions List */}
+            {((monitoringData?.defender_authority?.defender?.exclusions?.paths &&
+              monitoringData.defender_authority.defender.exclusions.paths.length > 0) ||
+              (monitoringData?.defender_authority?.defender?.exclusions?.extensions &&
+                monitoringData.defender_authority.defender.exclusions.extensions.length > 0) ||
+              (monitoringData?.defender_authority?.defender?.exclusions?.processes &&
+                monitoringData.defender_authority.defender.exclusions.processes.length > 0)) && (
+              <div className="p-4 rounded-xl bg-[var(--sd-panel)]/50 border border-[var(--sd-border)] space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[12px] font-semibold font-mono text-[var(--sd-text)] uppercase">
+                    Active Configured Exclusions
+                  </h4>
+                  <span className="text-[10px] font-mono text-[var(--sd-text-dim)]">
+                    {(monitoringData.defender_authority.defender.exclusions.paths?.length || 0) +
+                      (monitoringData.defender_authority.defender.exclusions.extensions?.length || 0) +
+                      (monitoringData.defender_authority.defender.exclusions.processes?.length || 0)}{" "}
+                    total
+                  </span>
+                </div>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {monitoringData.defender_authority.defender.exclusions.paths?.map((exPath: string, idx: number) => (
+                    <div
+                      key={`path-${idx}`}
+                      className="flex items-center justify-between p-2 rounded-lg bg-[var(--sd-bg)]/80 border border-[var(--sd-border)]/70 text-[11px] font-mono"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                          PATH
+                        </span>
+                        <span className="text-[var(--sd-text)] truncate" title={exPath}>
+                          {exPath}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={defenderActionLoading}
+                        onClick={() =>
+                          handleDefenderAction({
+                            action: "remove_exclusion",
+                            path: exPath,
+                            approvalTokenId: defenderTokenId.trim() || undefined,
+                          })
+                        }
+                        className="text-red-400 hover:text-red-300 p-1 cursor-pointer disabled:opacity-50"
+                        title={`Remove exclusion for ${exPath}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {monitoringData.defender_authority.defender.exclusions.extensions?.map((ext: string, idx: number) => (
+                    <div
+                      key={`ext-${idx}`}
+                      className="flex items-center justify-between p-2 rounded-lg bg-[var(--sd-bg)]/80 border border-[var(--sd-border)]/70 text-[11px] font-mono"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30">
+                          EXT
+                        </span>
+                        <span className="text-[var(--sd-text)] truncate">.{ext}</span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={defenderActionLoading}
+                        onClick={() =>
+                          handleDefenderAction({
+                            action: "remove_exclusion",
+                            path: ext,
+                            approvalTokenId: defenderTokenId.trim() || undefined,
+                          })
+                        }
+                        className="text-red-400 hover:text-red-300 p-1 cursor-pointer disabled:opacity-50"
+                        title={`Remove exclusion for .${ext}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {monitoringData.defender_authority.defender.exclusions.processes?.map((proc: string, idx: number) => (
+                    <div
+                      key={`proc-${idx}`}
+                      className="flex items-center justify-between p-2 rounded-lg bg-[var(--sd-bg)]/80 border border-[var(--sd-border)]/70 text-[11px] font-mono"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-purple-500/10 text-purple-300 border border-purple-500/30">
+                          PROCESS
+                        </span>
+                        <span className="text-[var(--sd-text)] truncate">{proc}</span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={defenderActionLoading}
+                        onClick={() =>
+                          handleDefenderAction({
+                            action: "remove_exclusion",
+                            path: proc,
+                            approvalTokenId: defenderTokenId.trim() || undefined,
+                          })
+                        }
+                        className="text-red-400 hover:text-red-300 p-1 cursor-pointer disabled:opacity-50"
+                        title={`Remove exclusion for ${proc}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Authority Token Input */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--sd-border)]/50 text-[11px] font-mono">
