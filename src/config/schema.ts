@@ -23,6 +23,8 @@ export const RawEnvironmentSchema = z.object({
 
   // Cryptographic Secrets
   SHIELDDESK_SESSION_SECRET: z.string().optional(),
+  SHIELDDESK_INTERNAL_KEY: z.string().optional(),
+  SHIELDDESK_ADMIN_ASSERTION_SECRET: z.string().optional(),
   SHIELDDESK_INGEST_API_KEY: z.string().optional(),
   CONTROL_PLANE_CA_PRIVATE_KEY: z.string().optional(),
   CONTROL_PLANE_CA_CERTIFICATE: z.string().optional(),
@@ -211,6 +213,47 @@ export function validateEnvironment(env: Record<string, string | undefined> = pr
     if (!raw.SHIELDDESK_SESSION_SECRET || raw.SHIELDDESK_SESSION_SECRET.length < 32) {
       validationErrors.push(
         "CRITICAL: SHIELDDESK_SESSION_SECRET must be at least 32 characters in production deployments."
+      );
+    }
+  }
+
+  // Production Rule: SHIELDDESK_INTERNAL_KEY must be at least 32 chars and non-default in production
+  if (isProduction) {
+    if (!raw.SHIELDDESK_INTERNAL_KEY) {
+      validationErrors.push(
+        "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_INTERNAL_KEY must be configured in production."
+      );
+    } else if (raw.SHIELDDESK_INTERNAL_KEY.length < 32) {
+      validationErrors.push(
+        "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_INTERNAL_KEY is too weak (minimum 32 characters required in production)."
+      );
+    } else if (
+      raw.SHIELDDESK_INTERNAL_KEY === "sd_internal_dev_secret_key_8000" ||
+      raw.SHIELDDESK_INTERNAL_KEY === "sd_test_internal_key_min_32_characters_long_entropy_secure!"
+    ) {
+      validationErrors.push(
+        "CRITICAL SECURITY CONFIGURATION ERROR: Insecure default SHIELDDESK_INTERNAL_KEY detected in production. Refusing to run."
+      );
+    }
+
+    if (!raw.SHIELDDESK_ADMIN_ASSERTION_SECRET) {
+      validationErrors.push(
+        "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_ADMIN_ASSERTION_SECRET must be configured in production."
+      );
+    } else if (raw.SHIELDDESK_ADMIN_ASSERTION_SECRET.length < 32) {
+      validationErrors.push(
+        "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_ADMIN_ASSERTION_SECRET is too weak (minimum 32 characters required in production)."
+      );
+    } else if (
+      raw.SHIELDDESK_ADMIN_ASSERTION_SECRET === "sd_internal_dev_secret_key_8000" ||
+      raw.SHIELDDESK_ADMIN_ASSERTION_SECRET === "sd_test_internal_key_min_32_characters_long_entropy_secure!"
+    ) {
+      validationErrors.push(
+        "CRITICAL SECURITY CONFIGURATION ERROR: Insecure default SHIELDDESK_ADMIN_ASSERTION_SECRET detected in production. Refusing to run."
+      );
+    } else if (raw.SHIELDDESK_ADMIN_ASSERTION_SECRET === raw.SHIELDDESK_INTERNAL_KEY) {
+      validationErrors.push(
+        "CRITICAL SECURITY CONFIGURATION ERROR: SHIELDDESK_ADMIN_ASSERTION_SECRET must not be identical to SHIELDDESK_INTERNAL_KEY. Separate keys are required."
       );
     }
   }

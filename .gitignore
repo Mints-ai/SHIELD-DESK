@@ -61,5 +61,7 @@ __pycache__/
 scratch/go-cache/
 scratch/active_blocked_ips.json
 scratch/*.json
+ai-chat-desk/models/*.sqlite3*
+ai-chat-desk/models/*.jsonl
 
 

@@ -6,12 +6,22 @@ Serves interactive dashboard and prediction API on localhost:8000.
 import os
 import json
 import time
+import hmac
 import urllib.parse
+import socket
 import requests
 import importlib
-from typing import Any
+from typing import Any, Tuple, Optional
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from cve_ai_engine import CVEAIEngine
+
+from auth_util import (
+    get_internal_service_key,
+    verify_service_token,
+    verify_admin_assertion_token,
+    is_model_lifecycle_enabled,
+    create_admin_assertion_token,
+)
 
 # Initialize Sentry error reporting if SENTRY_DSN is configured
 sentry_sdk: Any = None
@@ -32,7 +42,20 @@ if sentry_dsn:
     except Exception as init_err:
         print(f"[Sentry] Initialization warning: {init_err}")
 
-PORT = 8000
+# Host, Port & Security Boundaries
+HOST = os.getenv("CVE_AI_ENGINE_HOST", "127.0.0.1")
+PORT = int(os.getenv("CVE_AI_ENGINE_PORT", 8000))
+INTERNAL_SERVICE_KEY = get_internal_service_key()
+MAX_BODY_SIZE = 1 * 1024 * 1024  # 1 MB strict streaming ceiling
+
+_configured_app_url = os.getenv("SHIELDDESK_APP_URL", "").rstrip("/")
+ALLOWED_ORIGINS = {
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+}
+if _configured_app_url:
+    ALLOWED_ORIGINS.add(_configured_app_url)
+
 from models.registry import ModelRegistry
 from pipeline.feed_sync import CVEFeedSynchronizer
 import threading
@@ -61,13 +84,142 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=os.path.join(os.path.dirname(__file__), "static"), **kwargs)
 
+    def _read_body_bounded(self) -> Tuple[Optional[bytes], int, str]:
+        """
+        Reads incoming request body with strict RFC compliance, length verification,
+        unsupported transfer encoding rejection, slow-client socket timeouts, and streaming ceiling.
+        Returns (body_bytes, status_code, error_message).
+        """
+        # 1. Reject unsupported Transfer-Encoding
+        te = self.headers.get("Transfer-Encoding", "").strip().lower()
+        if te and te != "identity":
+            return None, 501, f"Not Implemented: Unsupported Transfer-Encoding '{te}'. Only identity is supported."
+
+        # 2. Strict Content-Length validation
+        cl_header = self.headers.get("Content-Length")
+        if cl_header is None:
+            return None, 411, "Length Required: POST requests must specify Content-Length."
+
+        try:
+            cl = int(cl_header.strip())
+            if cl < 0:
+                return None, 400, "Bad Request: Content-Length must be non-negative."
+        except ValueError:
+            return None, 400, f"Bad Request: Malformed Content-Length '{cl_header}'."
+
+        if cl > MAX_BODY_SIZE:
+            return None, 413, f"Payload Too Large: Content-Length ({cl} bytes) exceeds maximum allowed size ({MAX_BODY_SIZE} bytes)."
+
+        # 3. Read body with slow-client socket timeout
+        try:
+            self.connection.settimeout(10.0)
+            chunks = []
+            bytes_read = 0
+            chunk_size = 8192
+
+            while bytes_read < cl:
+                read_now = min(chunk_size, cl - bytes_read)
+                chunk = self.rfile.read(read_now)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                bytes_read += len(chunk)
+                if bytes_read > MAX_BODY_SIZE:
+                    return None, 413, f"Payload Too Large: Streamed body exceeded maximum limit ({MAX_BODY_SIZE} bytes)."
+
+            if bytes_read != cl:
+                return None, 400, f"Bad Request: Truncated request body. Received {bytes_read} bytes, expected {cl} bytes."
+
+            return b"".join(chunks), 200, ""
+        except socket.timeout:
+            return None, 408, "Request Timeout: Socket read timed out while receiving request body."
+        except Exception as e:
+            return None, 400, f"Bad Request: Failed reading body: {str(e)}"
+
+    def _is_authenticated_service(self) -> bool:
+        """Verifies trusted server-to-server credentials using constant-time comparison."""
+        auth_header = self.headers.get("Authorization", "")
+        token = ""
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+        if not token:
+            token = self.headers.get("X-ShieldDesk-Internal-Key", "").strip()
+        if not token:
+            return False
+        return verify_service_token(token)
+
+    def _verify_admin_authorization(self, data: dict, expected_operation: str, expected_target: Optional[str] = None) -> Tuple[bool, str, dict]:
+        """
+        Enforces service-to-service authentication AND cryptographically signed administrator authorization.
+        Validates the signed assertion token against operator identity, role, operation, target, and replay attacks.
+        """
+        if not self._is_authenticated_service():
+            return False, "Unauthorized: Invalid or missing internal service authentication token.", {}
+
+        # The assertion token must be passed via X-ShieldDesk-Admin-Assertion header,
+        # X-ShieldDesk-Approval-Token header, or approval_token field in JSON body.
+        token = (
+            self.headers.get("X-ShieldDesk-Admin-Assertion") or
+            self.headers.get("X-ShieldDesk-Approval-Token") or
+            (data.get("approval_token") if isinstance(data, dict) else "") or
+            (data.get("admin_assertion") if isinstance(data, dict) else "") or
+            ""
+        ).strip()
+
+        if not token:
+            return False, "Forbidden: Missing administrator cryptographic approval assertion token.", {}
+
+        valid, err_msg, payload = verify_admin_assertion_token(
+            token=token,
+            expected_operation=expected_operation,
+            expected_target=expected_target
+        )
+        if not valid:
+            return False, f"Forbidden: {err_msg}", {}
+
+        return True, "", payload
+
+    def _audit_privileged_call(self, endpoint: str, status_code: int, caller_info: dict, reason: str = ""):
+        audit_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "client_ip": self.client_address[0] if self.client_address else "unknown",
+            "endpoint": endpoint,
+            "status_code": status_code,
+            "operator_id": caller_info.get("operator_id", "anonymous"),
+            "role": caller_info.get("role", "unauthenticated"),
+            "reason": reason,
+        }
+        audit_path = os.path.join(os.path.dirname(__file__), "models", "privileged_audit.jsonl")
+        os.makedirs(os.path.dirname(audit_path), exist_ok=True)
+        with open(audit_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(audit_entry) + "\n")
+
+    def do_OPTIONS(self):
+        origin = self.headers.get("Origin", "")
+        if origin in ALLOWED_ORIGINS:
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-ShieldDesk-Internal-Key, X-ShieldDesk-Operator-Id, X-ShieldDesk-Operator-Role, X-ShieldDesk-Approval-Token")
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Access-Control-Max-Age", "86400")
+            self.end_headers()
+        else:
+            self.send_response(403)
+            self.end_headers()
+
     def do_POST(self):
         global engine, challenger_engine
         url = urllib.parse.urlparse(self.path)
-        content_length = int(self.headers.get("Content-Length", 0))
-        post_body = self.rfile.read(content_length).decode("utf-8")
         
+        body_bytes, status_code, err_msg = self._read_body_bounded()
+        if body_bytes is None:
+            self.close_connection = True
+            self._send_json({"error": err_msg}, status=status_code)
+            return
+
         try:
+            post_body = body_bytes.decode("utf-8")
             data = json.loads(post_body) if post_body else {}
         except Exception:
             data = {}
@@ -147,34 +299,106 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             return
 
         elif url.path == "/api/model/promote":
+            # 1. Authenticate service and authorize administrator credentials FIRST
+            auth_ok, err_msg, admin_info = self._verify_admin_authorization(
+                data=data,
+                expected_operation="model_promote"
+            )
+            if not auth_ok:
+                status_code = 401 if "Unauthorized" in err_msg else 403
+                self._audit_privileged_call(url.path, status_code, admin_info, err_msg)
+                self._send_json({"error": err_msg}, status=status_code)
+                return
+
+            # 2. Model Lifecycle Circuit Breaker
+            if not is_model_lifecycle_enabled():
+                self._audit_privileged_call(url.path, 503, admin_info, "Model promotion is disabled.")
+                self._send_json({
+                    "error": "Service Unavailable: Model promotion is restricted until Phase 4 cryptographic release gates and approval workflows are verified."
+                }, status=503)
+                return
+
+            # 3. Candidate Staging Precondition & Target Binding Verification
+            status = registry.get_status()
+            challenger_id = status.get("active_challenger")
+            if not challenger_id:
+                self._send_json({"error": "Precondition Failed: No active challenger model staged for promotion."}, status=412)
+                return
+
+            target_in_token = admin_info.get("target_id")
+            if target_in_token and target_in_token != challenger_id:
+                mismatch_err = f"Target mismatch: approval token authorizes '{target_in_token}', but staged candidate is '{challenger_id}'."
+                self._audit_privileged_call(url.path, 403, admin_info, mismatch_err)
+                self._send_json({"error": f"Forbidden: {mismatch_err}"}, status=403)
+                return
+
             try:
-                promoted_id = registry.promote_challenger_to_champion()
+                try:
+                    promoted_id = registry.promote_challenger_to_champion(
+                        approver_id=admin_info["operator_id"],
+                        approval_token=admin_info.get("nonce")
+                    )
+                except TypeError:
+                    promoted_id = registry.promote_challenger_to_champion()
                 status = registry.get_status()
                 champ_details = status.get("champion_details") or {}
                 champ_path = champ_details.get("artifact_path")
                 if champ_path and os.path.exists(champ_path):
                     engine = CVEAIEngine(model_path=champ_path)
                 challenger_engine = None
+                self._audit_privileged_call(url.path, 200, admin_info, f"Promoted {promoted_id}")
                 self._send_json({"success": True, "promoted_version": promoted_id, "status": "active_champion"})
             except Exception as err:
+                self._audit_privileged_call(url.path, 400, admin_info, str(err))
                 self._send_json({"error": str(err)}, status=400)
             return
 
         elif url.path == "/api/model/rollback":
+            # 1. Authenticate service and authorize administrator credentials FIRST
+            auth_ok, err_msg, admin_info = self._verify_admin_authorization(
+                data=data,
+                expected_operation="model_rollback"
+            )
+            if not auth_ok:
+                status_code = 401 if "Unauthorized" in err_msg else 403
+                self._audit_privileged_call(url.path, status_code, admin_info, err_msg)
+                self._send_json({"error": err_msg}, status=status_code)
+                return
+
+            # 2. Model Lifecycle Circuit Breaker
+            if not is_model_lifecycle_enabled():
+                self._audit_privileged_call(url.path, 503, admin_info, "Model rollback is disabled.")
+                self._send_json({
+                    "error": "Service Unavailable: Model rollback is restricted until Phase 4 cryptographic release gates and approval workflows are verified."
+                }, status=503)
+                return
+
             try:
-                reverted_id = registry.rollback_to_previous()
+                try:
+                    reverted_id = registry.rollback_to_previous(
+                        operator_id=admin_info["operator_id"]
+                    )
+                except TypeError:
+                    reverted_id = registry.rollback_to_previous()
                 status = registry.get_status()
                 champ_details = status.get("champion_details") or {}
                 champ_path = champ_details.get("artifact_path")
                 if champ_path and os.path.exists(champ_path):
                     engine = CVEAIEngine(model_path=champ_path)
                 challenger_engine = None
+                self._audit_privileged_call(url.path, 200, admin_info, f"Rolled back to {reverted_id}")
                 self._send_json({"success": True, "active_version": reverted_id, "status": "rolled_back"})
             except Exception as err:
+                self._audit_privileged_call(url.path, 400, admin_info, str(err))
                 self._send_json({"error": str(err)}, status=400)
             return
 
         elif url.path == "/api/trigger_scan":
+            if not self._is_authenticated_service():
+                self._audit_privileged_call(url.path, 401, {}, "Unauthorized service request")
+                self._send_json({"error": "Unauthorized: Invalid or missing internal service token."}, status=401)
+                return
+
             try:
                 # Call the Next.js API which runs Trivy locally with dev user identity
                 user_id = data.get("user_id") if isinstance(data, dict) else "dev-admin"
@@ -230,10 +454,26 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             return
 
         elif url.path == "/api/intel/sync":
+            if not self._is_authenticated_service():
+                self._audit_privileged_call(url.path, 401, {}, "Unauthorized service request")
+                self._send_json({"error": "Unauthorized: Invalid or missing internal service token."}, status=401)
+                return
+
+            assertion = self.headers.get("X-ShieldDesk-Admin-Assertion", "").strip()
+            caller_info = {"operator_id": "service", "role": "service"}
+            if assertion:
+                valid, msg, admin_payload = verify_admin_assertion_token(assertion, expected_operation="intel_sync")
+                if not valid:
+                    self._audit_privileged_call(url.path, 403, {}, msg)
+                    self._send_json({"error": f"Forbidden: {msg}"}, status=403)
+                    return
+                caller_info = admin_payload
+
             try:
                 sync = CVEFeedSynchronizer()
                 cisa_items = sync.sync_cisa_kev()
                 total_records = sync.initialize_or_update_lookup_store(cisa_items=cisa_items)
+                self._audit_privileged_call(url.path, 200, caller_info, f"Synced {len(cisa_items)} KEV items")
                 self._send_json({
                     "success": True,
                     "synced_cisa_items": len(cisa_items),
@@ -241,14 +481,39 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 })
             except Exception as e:
+                self._audit_privileged_call(url.path, 500, caller_info, str(e))
                 self._send_json({"error": f"Intel sync failed: {str(e)}"}, status=500)
             return
 
         self._send_json({"error": "Endpoint not found"}, status=404)
 
+    def _drain_body(self):
+        try:
+            cl = int(self.headers.get("Content-Length", 0))
+            if 0 < cl <= 65536:
+                self.rfile.read(cl)
+        except Exception:
+            pass
+
+    def do_PUT(self):
+        self._drain_body()
+        self._send_json({"error": f"Method PUT Not Allowed on {self.path}."}, status=405)
+
+    def do_DELETE(self):
+        self._drain_body()
+        self._send_json({"error": f"Method DELETE Not Allowed on {self.path}."}, status=405)
+
+    def do_PATCH(self):
+        self._drain_body()
+        self._send_json({"error": f"Method PATCH Not Allowed on {self.path}."}, status=405)
+
     def do_GET(self):
         url = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(url.query)
+
+        if url.path in ("/api/model/promote", "/api/model/rollback", "/api/intel/sync", "/api/trigger_scan"):
+            self._send_json({"error": f"Method Not Allowed: GET is not permitted on {url.path}. Use POST."}, status=405)
+            return
 
         if url.path in ("/health", "/api/health"):
             self._send_json({"status": "ok", "service": "cve-ai-engine"})
@@ -361,8 +626,12 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
     def _send_json(self, data: Any, status: int = 200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        if getattr(self, "close_connection", False):
+            self.send_header("Connection", "close")
+        origin = self.headers.get("Origin", "")
+        if origin in ALLOWED_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Credentials", "true")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode("utf-8"))
 
@@ -387,12 +656,12 @@ def start_daily_scheduler(interval_hours: int = 24):
     sched_thread = threading.Thread(target=_scheduler_loop, daemon=True)
     sched_thread.start()
 
-def run_server(port=PORT):
+def run_server(host=HOST, port=PORT):
     os.makedirs("static", exist_ok=True)
-    server_address = ("", port)
+    server_address = (host, port)
     httpd = HTTPServer(server_address, CVEAPIHandler)
     print(f"\n=======================================================")
-    print(f"[*] CVE AI Intelligence Server running on http://localhost:{port}")
+    print(f"[*] CVE AI Intelligence Server running on http://{host}:{port}")
     print(f"=======================================================\n")
     # Launch background automated daily scheduler daemon
     start_daily_scheduler(interval_hours=24)
