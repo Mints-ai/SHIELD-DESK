@@ -146,6 +146,8 @@ class CVERandomForestModel:
 
         # 1. Severity
         sev_probs = self.rf_severity.predict_proba(X)[0]
+        if np.sum(sev_probs) > 0:
+            sev_probs = sev_probs / np.sum(sev_probs)
         sev_classes = list(self.rf_severity.classes_)
         pred_sev = self.rf_severity.predict(X)[0]
         sev_conf = float(np.max(sev_probs))
@@ -157,13 +159,18 @@ class CVERandomForestModel:
 
         # 3. Tier
         tier_probs = self.rf_tier.predict_proba(X)[0]
+        if np.sum(tier_probs) > 0:
+            tier_probs = tier_probs / np.sum(tier_probs)
         tier_classes = list(self.rf_tier.classes_)
         pred_tier = self.rf_tier.predict(X)[0]
         tier_conf = float(np.max(tier_probs))
         tier_prob_dict = {cls_name: round(float(p), 4) for cls_name, p in zip(tier_classes, tier_probs)}
 
         # 4. KEV
-        kev_prob = float(self.rf_kev.predict_proba(X)[0][1])
+        kev_raw_probs = self.rf_kev.predict_proba(X)[0]
+        if np.sum(kev_raw_probs) > 0:
+            kev_raw_probs = kev_raw_probs / np.sum(kev_raw_probs)
+        kev_prob = float(kev_raw_probs[1])
         is_kev = bool(kev_prob >= 0.35 or (kev_listed == 1))
 
         # 5. Mitigation Nearest Neighbors

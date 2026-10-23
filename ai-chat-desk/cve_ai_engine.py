@@ -10,6 +10,8 @@ import pandas as pd
 from typing import Dict, Any, Optional
 from cve_random_forest import CVERandomForestModel
 
+from safety_policy import evaluate_remediation_safety_guard
+
 class CVEAIEngine:
     def __init__(self, model_path: str = "models/cve_random_forest_model.joblib"):
         self.model_path = model_path
@@ -31,10 +33,11 @@ class CVEAIEngine:
         cwe_id: str = "Unknown",
         epss_score: Optional[float] = None,
         kev_listed: Optional[int] = None,
-        top_k_similar: int = 3
+        top_k_similar: int = 3,
+        context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        """Perform unified multi-target prediction and mitigation synthesis using the Random Forest model."""
-        return self.rf_model.predict_vulnerability(
+        """Perform unified multi-target prediction and enforce deterministic remediation safety policy."""
+        result = self.rf_model.predict_vulnerability(
             description=description,
             category=category,
             cwe_id=cwe_id,
@@ -42,6 +45,18 @@ class CVEAIEngine:
             kev_listed=kev_listed,
             top_k=top_k_similar
         )
+
+        # Enforce deterministic remediation safety policy
+        safety_eval = evaluate_remediation_safety_guard(
+            result.get("predictions", {}),
+            description=description,
+            context=context
+        )
+
+        # Update effective assigned tier and attach safety audit trail
+        result["predictions"]["assigned_tier"] = safety_eval["effective_assigned_tier"]
+        result["safety_policy"] = safety_eval
+        return result
 
     def search_cve_by_id(self, cve_id: str) -> Optional[Dict[str, Any]]:
         """Lookup an exact CVE in the indexed knowledge base."""
