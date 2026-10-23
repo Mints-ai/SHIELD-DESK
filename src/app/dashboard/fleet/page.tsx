@@ -132,9 +132,16 @@ export default function FleetPage() {
     return {};
   });
 
-  const updateDisconnectGrace = (updater: (prev: Record<string, number>) => Record<string, number>) => {
+  const disconnectGracePeriodsRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    disconnectGracePeriodsRef.current = disconnectGracePeriods;
+  }, [disconnectGracePeriods]);
+
+  const updateDisconnectGrace = useCallback((updater: (prev: Record<string, number>) => Record<string, number>) => {
     setDisconnectGracePeriods((prev) => {
       const next = updater(prev);
+      disconnectGracePeriodsRef.current = next;
       if (typeof window !== "undefined") {
         try {
           sessionStorage.setItem("shielddesk_disconnect_grace", JSON.stringify(next));
@@ -142,8 +149,25 @@ export default function FleetPage() {
       }
       return next;
     });
-  };
+  }, []);
   const [currentTime, setCurrentTime] = useState<number>(() => Date.now());
+
+  const reconcileAgentsWithGracePeriod = useCallback((incomingAgents: EndpointAgentRecord[]) => {
+    const now = Date.now();
+    return incomingAgents.map((incomingAgent) => {
+      const graceExpiry = disconnectGracePeriodsRef.current[incomingAgent.id];
+      if (graceExpiry && graceExpiry > now) {
+        return {
+          ...incomingAgent,
+          status: "disconnected" as const,
+          cpu_usage: 0,
+          memory_usage: 0,
+          eps: 0,
+        };
+      }
+      return incomingAgent;
+    });
+  }, []);
 
   // High-frequency clock to tick countdowns smoothly
   useEffect(() => {
@@ -292,11 +316,12 @@ export default function FleetPage() {
       });
       const data = await res.json();
       if (data.agents) {
-        setAgents(data.agents);
+        const reconciled = reconcileAgentsWithGracePeriod(data.agents);
+        setAgents(reconciled);
         setSelectedAgent((prev) => {
-          if (!prev && data.agents.length > 0) return data.agents[0];
+          if (!prev && reconciled.length > 0) return reconciled[0];
           if (prev) {
-            const updated = data.agents.find(
+            const updated = reconciled.find(
               (a: EndpointAgentRecord) => a.id === prev.id
             );
             return updated || prev;
@@ -395,15 +420,16 @@ export default function FleetPage() {
         try {
           const payload = JSON.parse(event.data);
           if (payload.agents !== undefined) {
-            setAgents(payload.agents);
+            const reconciled = reconcileAgentsWithGracePeriod(payload.agents);
+            setAgents(reconciled);
             setSelectedAgent((prev) => {
-              if (!prev && payload.agents.length > 0) return payload.agents[0];
+              if (!prev && reconciled.length > 0) return reconciled[0];
               if (prev) {
-                const updated = payload.agents.find(
+                const updated = reconciled.find(
                   (a: EndpointAgentRecord) => a.id === prev.id
                 );
                 // If selected agent was removed, clear selection
-                return updated || (payload.agents.length > 0 ? prev : null);
+                return updated || (reconciled.length > 0 ? prev : null);
               }
               return null;
             });
@@ -728,9 +754,10 @@ export default function FleetPage() {
   // Disconnect an agent (starts 5s reconnect grace period; marks as disconnected in DB)
   const handleDisconnectAgent = async (agentId: string) => {
     // Start 5-second countdown grace period immediately
+    const expiry = Date.now() + 5000;
     updateDisconnectGrace((prev) => ({
       ...prev,
-      [agentId]: Date.now() + 5000,
+      [agentId]: expiry,
     }));
 
     // Optimistically update agent status locally
