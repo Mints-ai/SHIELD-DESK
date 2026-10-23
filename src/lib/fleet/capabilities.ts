@@ -133,40 +133,40 @@ export const DEFENDER_CAPABILITY_REGISTRY: Record<string, AgentCapability> = {
   "defender.scan": {
     name: "defender.scan",
     riskLevel: "low",
-    supportedOS: ["windows"],
+    supportedOS: ["windows", "linux"],
     requiredPermission: "fleet.remediate",
     approvalLevel: 1,
     rollbackSupport: false,
     verificationMethod: "service_health_check",
-    description: "Execute on-demand Microsoft Defender Antivirus scan (Quick or Full Scan).",
+    description: "Execute on-demand antivirus / EDR integrity scan (Quick or Full Scan).",
   },
 
   "defender.update": {
     name: "defender.update",
     riskLevel: "low",
-    supportedOS: ["windows"],
+    supportedOS: ["windows", "linux"],
     requiredPermission: "fleet.remediate",
     approvalLevel: 1,
     rollbackSupport: false,
     verificationMethod: "service_health_check",
-    description: "Trigger Microsoft Defender security intelligence definition update.",
+    description: "Trigger security intelligence / threat definitions update.",
   },
 
   "defender.realtime": {
     name: "defender.realtime",
     riskLevel: "medium",
-    supportedOS: ["windows"],
+    supportedOS: ["windows", "linux"],
     requiredPermission: "fleet.remediate",
     approvalLevel: 2,
     rollbackSupport: true,
     verificationMethod: "service_health_check",
-    description: "Enable or toggle Microsoft Defender real-time scanning protection.",
+    description: "Enable or toggle real-time protection / eBPF kernel event inspection.",
   },
 
   "defender.remediate": {
     name: "defender.remediate",
     riskLevel: "medium",
-    supportedOS: ["windows"],
+    supportedOS: ["windows", "linux", "darwin"],
     requiredPermission: "fleet.remediate",
     approvalLevel: 2,
     rollbackSupport: true,
@@ -177,12 +177,12 @@ export const DEFENDER_CAPABILITY_REGISTRY: Record<string, AgentCapability> = {
   "defender.exclusion": {
     name: "defender.exclusion",
     riskLevel: "medium",
-    supportedOS: ["windows"],
+    supportedOS: ["windows", "linux"],
     requiredPermission: "fleet.remediate",
     approvalLevel: 2,
     rollbackSupport: true,
     verificationMethod: "service_health_check",
-    description: "Configure directory, process, or file type inspection exclusions in Defender.",
+    description: "Configure directory, process, or file type inspection exclusions in EDR engine.",
   },
 };
 

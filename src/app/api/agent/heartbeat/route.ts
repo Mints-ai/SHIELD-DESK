@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
 
 
     if (body.coreTelemetry && typeof body.coreTelemetry === "object") {
-      storeEndpointCoreTelemetry(agentId, body.coreTelemetry, body.hostname || req.headers.get("x-shielddesk-hostname") || undefined);
+      storeEndpointCoreTelemetry(agentId, body.coreTelemetry, body.hostname || req.headers.get("x-shielddesk-hostname") || undefined, body.osType || body.os_type || undefined);
     }
 
     const cpuUsage = typeof body.cpuUsage === "number" ? Math.round(body.cpuUsage * 10) / 10 : null;

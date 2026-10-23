@@ -4,11 +4,10 @@ import { canAccess } from "@/lib/permissions";
 import { getApprovalToken, markApprovalTokenConsumed } from "@/lib/governance/approvalTokens";
 import { checkThrottle, recordThrottleCommand } from "@/lib/governance/blastRadiusThrottle";
 import { signCommand } from "@/lib/fleet/commandSigning";
-import { isDemoMode, isProduction, isSimulationAllowed } from "@/lib/config/environment";
-import { validateCapabilitySupport, getCapability } from "./capabilities";
+import { isProduction, isSimulationAllowed } from "@/lib/config/environment";
+import { validateCapabilitySupport } from "./capabilities";
 import { validateIpAddress } from "@/lib/utils/ipValidation";
 import crypto from "crypto";
-import os from "os";
 import { settleCommandTask } from "./taskCompletion";
 
 export type AgentStatus = "connected" | "isolated" | "quarantined" | "disconnected";
@@ -615,18 +614,30 @@ export class SimulationExecutor {
       agent.status = "connected";
     } else if (command.startsWith("defender_scan")) {
       const type = command.includes("full") ? "Full" : "Quick";
-      output = `Microsoft Defender ${type} Scan initiated successfully on ${agent.hostname}. Scan task ID: mpscan-${Date.now().toString(36)}.`;
+      output = agent.os_type === "linux"
+        ? `Linux EDR ${type} integrity & rootkit scan initiated successfully on ${agent.hostname}. Scan task ID: edr-scan-${Date.now().toString(36)}.`
+        : `Microsoft Defender ${type} Scan initiated successfully on ${agent.hostname}. Scan task ID: mpscan-${Date.now().toString(36)}.`;
     } else if (command.startsWith("defender_update")) {
-      output = `Microsoft Defender antivirus definition signatures updated successfully on ${agent.hostname}. Latest security intelligence applied.`;
+      output = agent.os_type === "linux"
+        ? `Linux Sigma & YARA intelligence rules updated successfully on ${agent.hostname}. Latest threat heuristics applied.`
+        : `Microsoft Defender antivirus definition signatures updated successfully on ${agent.hostname}. Latest security intelligence applied.`;
     } else if (command.startsWith("defender_set_realtime")) {
       const state = command.includes("off") ? "DISABLED" : "ENABLED";
-      output = `Microsoft Defender Real-Time Protection set to ${state} on ${agent.hostname}.`;
+      output = agent.os_type === "linux"
+        ? `Linux eBPF kernel real-time monitor set to ${state} on ${agent.hostname}.`
+        : `Microsoft Defender Real-Time Protection set to ${state} on ${agent.hostname}.`;
     } else if (command.startsWith("defender_remediate")) {
-      output = `Active threat purged and neutralized via Microsoft Defender engine on ${agent.hostname}.`;
+      output = agent.os_type === "linux"
+        ? `Active threat purged and process neutralized via Linux EDR engine on ${agent.hostname}.`
+        : `Active threat purged and neutralized via Microsoft Defender engine on ${agent.hostname}.`;
     } else if (command.startsWith("defender_add_exclusion")) {
-      output = `Exclusion rule appended to Microsoft Defender inspection engine on ${agent.hostname}.`;
+      output = agent.os_type === "linux"
+        ? `Path exclusion appended to Linux auditd / eBPF inspection engine on ${agent.hostname}.`
+        : `Exclusion rule appended to Microsoft Defender inspection engine on ${agent.hostname}.`;
     } else if (command.startsWith("defender_remove_exclusion")) {
-      output = `Exclusion rule removed from Microsoft Defender inspection engine on ${agent.hostname}.`;
+      output = agent.os_type === "linux"
+        ? `Path exclusion removed from Linux auditd / eBPF inspection engine on ${agent.hostname}.`
+        : `Exclusion rule removed from Microsoft Defender inspection engine on ${agent.hostname}.`;
     } else {
       output = `Command '${command}' queued for agent delivery on ${agent.hostname}.`;
     }
