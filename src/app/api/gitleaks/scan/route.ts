@@ -147,8 +147,8 @@ export async function POST(req: NextRequest) {
 
     if (targetPath === "." && !noGit) {
       const [gitResult, fsResult] = await Promise.allSettled([
-        runGitleaksScan(targetPath, { redact: true, noGit: false, logOpts }),
-        runGitleaksScan(targetPath, { redact: true, noGit: true }),
+        runGitleaksScan(targetPath, { tenantId: session.tenantId, redact: true, noGit: false, logOpts }),
+        runGitleaksScan(targetPath, { tenantId: session.tenantId, redact: true, noGit: true }),
       ]);
 
       const gitFindings = gitResult.status === "fulfilled" ? gitResult.value.findings : [];
@@ -179,6 +179,7 @@ export async function POST(req: NextRequest) {
       redacted = true;
     } else {
       const result = await runGitleaksScan(targetPath, {
+        tenantId: session.tenantId,
         redact: true,
         noGit,
         logOpts,
@@ -200,7 +201,7 @@ export async function POST(req: NextRequest) {
       binaryPath,
       scanMode,
       redacted,
-    });
+    }, session.tenantId);
 
     return NextResponse.json({
       success: true,

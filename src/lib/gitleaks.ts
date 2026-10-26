@@ -46,6 +46,7 @@ export interface GitleaksScanResult {
 }
 
 export interface GitleaksScanOptions {
+  tenantId: string;
   redact?: boolean;       // mask secret values in output (default: true)
   noGit?: boolean;        // filesystem-only scan (default: false)
   logOpts?: string;       // git log range, e.g. "HEAD~50..HEAD"
@@ -260,8 +261,9 @@ export function parseGitleaksOutput(jsonOutput: string): GitleaksFinding[] {
  */
 export async function runGitleaksScan(
   target: string = ".",
-  opts: GitleaksScanOptions = {}
+  opts: GitleaksScanOptions
 ): Promise<GitleaksScanResult> {
+  if (!opts.tenantId?.trim()) throw new Error("Tenant ID is required for scanning");
   const startTime = Date.now();
 
   // Security: disallow flag injection through target string
@@ -398,7 +400,7 @@ export async function runGitleaksScan(
     redacted: redact,
   };
 
-  lastGitleaksScanResult = scanResult;
+  setLastGitleaksScanResult(scanResult, opts.tenantId);
   return scanResult;
 }
 
@@ -406,22 +408,18 @@ export async function runGitleaksScan(
 // Cache
 // ---------------------------------------------------------------------------
 
-let lastGitleaksScanResult: GitleaksScanResult | null = null;
 const tenantGitleaksResults = new Map<string, GitleaksScanResult>();
 
-export function getLastGitleaksScanResult(tenantId?: string): GitleaksScanResult | null {
-  if (tenantId && tenantGitleaksResults.has(tenantId)) {
-    return tenantGitleaksResults.get(tenantId)!;
-  }
-  return lastGitleaksScanResult;
+export function getLastGitleaksScanResult(tenantId: string): GitleaksScanResult | null {
+  return tenantGitleaksResults.get(tenantId) ?? null;
 }
 
 export function setLastGitleaksScanResult(
   result: GitleaksScanResult | null,
-  tenantId?: string
+  tenantId: string
 ): void {
-  lastGitleaksScanResult = result;
-  if (tenantId) {
+  if (!tenantId?.trim()) throw new Error("Tenant ID is required for scan cache");
+  {
     if (result) {
       tenantGitleaksResults.set(tenantId, result);
     } else {

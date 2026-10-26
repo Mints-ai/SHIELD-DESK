@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
         try {
           const targetPath = body.target_path || ".";
           const scanType = body.scan_type === "image" ? "image" : "fs";
-          const result = await runTrivyScan(targetPath, scanType);
+          const result = await runTrivyScan(targetPath, scanType, session.tenantId);
 
           return NextResponse.json({
             status: "success",
@@ -258,6 +258,7 @@ export async function POST(req: NextRequest) {
           const targetPath = body.target_path || ".";
           const noGit = body.scan_type === "filesystem" || body.no_git === true;
           const result = await runGitleaksScan(targetPath, {
+            tenantId: session.tenantId,
             redact: true,
             noGit,
           });

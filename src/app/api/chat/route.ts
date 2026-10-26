@@ -212,7 +212,7 @@ async function runTool(
       return simulateBlastRadius(session, args);
     case "triggerTrivyScan": {
       try {
-        const scanResult = await runTrivyScan(".", "fs");
+        const scanResult = await runTrivyScan(".", "fs", session.tenantId);
         return {
           success: true,
           scannedTarget: scanResult.scannedTarget,

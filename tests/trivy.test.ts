@@ -21,7 +21,7 @@ describe("Trivy Vulnerability Scanner Suite", () => {
   test("Security: Blocks command line flag and argument injection in target", async () => {
     await assert.rejects(
       async () => {
-        await runTrivyScan("--debug");
+        await runTrivyScan("--debug", "fs", "acme-tenant");
       },
       {
         message: /cannot start with a hyphen or CLI flag/i,
@@ -30,7 +30,7 @@ describe("Trivy Vulnerability Scanner Suite", () => {
 
     await assert.rejects(
       async () => {
-        await runTrivyScan("-v");
+        await runTrivyScan("-v", "fs", "acme-tenant");
       },
       {
         message: /cannot start with a hyphen or CLI flag/i,
@@ -41,7 +41,7 @@ describe("Trivy Vulnerability Scanner Suite", () => {
   test("Security: Blocks nonexistent filesystem paths safely", async () => {
     await assert.rejects(
       async () => {
-        await runTrivyScan("some/completely/nonexistent/directory/path/12345");
+        await runTrivyScan("some/completely/nonexistent/directory/path/12345", "fs", "acme-tenant");
       },
       {
         message: /Target path does not exist on filesystem/i,
@@ -53,7 +53,7 @@ describe("Trivy Vulnerability Scanner Suite", () => {
     if (!isTrivyAvailable()) {
       await assert.rejects(
         async () => {
-          await runTrivyScan(".", "fs");
+          await runTrivyScan(".", "fs", "acme-tenant");
         },
         {
           message: /Trivy scanner binary not found/i,
@@ -63,7 +63,7 @@ describe("Trivy Vulnerability Scanner Suite", () => {
     }
 
     try {
-      const result = await runTrivyScan(".", "fs");
+      const result = await runTrivyScan(".", "fs", "acme-tenant");
 
       assert.ok(result, "Result object should be returned");
       assert.ok(Array.isArray(result.findings), "Findings should be an array");
@@ -103,7 +103,7 @@ describe("Trivy Vulnerability Scanner Suite", () => {
     if (!isTrivyAvailable()) {
       await assert.rejects(
         async () => {
-          await runTrivyScan("/app", "fs");
+          await runTrivyScan("/app", "fs", "acme-tenant");
         },
         {
           message: /Trivy scanner binary not found/i,
@@ -113,7 +113,7 @@ describe("Trivy Vulnerability Scanner Suite", () => {
     }
 
     try {
-      const result = await runTrivyScan("/app", "fs");
+      const result = await runTrivyScan("/app", "fs", "acme-tenant");
       assert.ok(result, "Scanning /app should safely resolve without throwing");
       assert.ok(Array.isArray(result.findings), "Findings array should be returned");
     } catch (err: any) {

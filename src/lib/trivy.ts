@@ -100,8 +100,10 @@ export function isTrivyAvailable(): boolean {
  */
 export async function runTrivyScan(
   target: string = ".",
-  type: "fs" | "image" = "fs"
+  type: "fs" | "image" = "fs",
+  tenantId: string
 ): Promise<ScanResult> {
+  if (!tenantId?.trim()) throw new Error("Tenant ID is required for scanning");
   const startTime = Date.now();
 
   // Security guard: disallow flags passed in target string (CLI option injection prevention)
@@ -253,7 +255,7 @@ export async function runTrivyScan(
       binaryPath: trivyBin,
     };
 
-    lastScanResult = scanOutput;
+    setLastScanResult(scanOutput, tenantId);
     return scanOutput;
   } catch (error: any) {
     console.error("[Trivy Execution Error]", error.message || error);
@@ -261,19 +263,15 @@ export async function runTrivyScan(
   }
 }
 
-let lastScanResult: ScanResult | null = null;
 const tenantScanResults = new Map<string, ScanResult>();
 
-export function getLastScanResult(tenantId?: string): ScanResult | null {
-  if (tenantId && tenantScanResults.has(tenantId)) {
-    return tenantScanResults.get(tenantId)!;
-  }
-  return lastScanResult;
+export function getLastScanResult(tenantId: string): ScanResult | null {
+  return tenantScanResults.get(tenantId) ?? null;
 }
 
-export function setLastScanResult(result: ScanResult | null, tenantId?: string): void {
-  lastScanResult = result;
-  if (tenantId) {
+export function setLastScanResult(result: ScanResult | null, tenantId: string): void {
+  if (!tenantId?.trim()) throw new Error("Tenant ID is required for scan cache");
+  {
     if (result) {
       tenantScanResults.set(tenantId, result);
     } else {
@@ -287,10 +285,12 @@ export function setLastScanResult(result: ScanResult | null, tenantId?: string):
  */
 export async function getOrRunTrivyScan(
   target: string = ".",
-  type: "fs" | "image" = "fs"
+  type: "fs" | "image" = "fs",
+  tenantId: string
 ): Promise<ScanResult> {
+  const lastScanResult = getLastScanResult(tenantId);
   if (lastScanResult && lastScanResult.findings.length > 0) {
     return lastScanResult;
   }
-  return await runTrivyScan(target, type);
+  return await runTrivyScan(target, type, tenantId);
 }
