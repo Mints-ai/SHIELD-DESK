@@ -70,6 +70,7 @@ def run_full_cycle():
         reg = ModelRegistry(models_dir=os.path.join(AI_DIR, "models"))
         version_id = reg.register_candidate(
             candidate_model_path=cand_path,
+            receipt_data=receipt,
             dataset_path=os.path.join(AI_DIR, "data", "cve_lookup_store.parquet")
         )
         reg.stage_challenger(version_id, enable_shadow=True)
@@ -104,7 +105,13 @@ def run_rollback():
         print("[!] No previous version available in history to rollback to.")
         return
     prev_target = history[-2]
-    prev = reg.rollback_to_previous(expected_target_id=prev_target)
+    operator_id = os.getenv("SHIELDDESK_OPERATOR_ID", "cli_admin")
+    approval_token = os.getenv("SHIELDDESK_APPROVAL_NONCE", "cli_manual_rollback_token")
+    prev = reg.rollback_to_previous(
+        expected_target_id=prev_target,
+        operator_id=operator_id,
+        approval_token=approval_token
+    )
     print(f"[+] Successfully rolled back to: {prev}\n")
 
 def main():

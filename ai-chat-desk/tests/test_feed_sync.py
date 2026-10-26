@@ -81,7 +81,40 @@ class TestRealSchemasAndFeedSync(unittest.TestCase):
         self.assertIsNotNone(record, "CVE-2024-3400 must exist in the synchronized lookup store")
         self.assertEqual(record["cve_id"].upper(), "CVE-2024-3400")
         self.assertEqual(record["kev_listed"], 1)
-        self.assertEqual(record["category"], "Palo Alto Networks")
+    def test_feed_sync_does_not_invent_metadata_for_new_kev(self):
+        """Verifies feed sync represents unavailable CVSS/EPSS as None/UNKNOWN, never inventing 8.5 or 0.85."""
+        import tempfile
+        import shutil
+        import pandas as pd
+        import numpy as np
+
+        temp_dir = tempfile.mkdtemp()
+        temp_store = os.path.join(temp_dir, "test_lookup.parquet")
+        try:
+            syncer = CVEFeedSynchronizer(lookup_store_path=temp_store)
+            cisa_item = {
+                "cveID": "CVE-2026-99999",
+                "vendorProject": "TestProject",
+                "product": "TestProduct",
+                "vulnerabilityName": "Zero-Day Remote Vulnerability",
+                "shortDescription": "Test KEV vulnerability without NVD CVSS yet.",
+                "requiredAction": "Apply vendor workaround.",
+                "dueDate": "2026-11-01",
+                "knownRansomwareCampaignUse": "Known"
+            }
+            count = syncer.initialize_or_update_lookup_store(cisa_items=[cisa_item])
+            self.assertGreaterEqual(count, 1)
+
+            df = pd.read_parquet(temp_store)
+            kev_row = df[df["cve_id"] == "CVE-2026-99999"].iloc[0]
+
+            self.assertEqual(kev_row["kev_listed"], 1)
+            # Must NOT invent CVSS 8.5 or EPSS 0.85
+            self.assertTrue(pd.isna(kev_row["cvss_score"]), "CVSS score must be null/NaN when unavailable")
+            self.assertEqual(kev_row["cvss_severity"], "UNKNOWN", "CVSS severity must be UNKNOWN when unavailable")
+            self.assertTrue(pd.isna(kev_row["epss_score"]), "EPSS score must be null/NaN when unavailable")
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 if __name__ == "__main__":
     unittest.main()

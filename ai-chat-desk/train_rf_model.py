@@ -33,16 +33,34 @@ def train_single_rf(
         ". CWE: " + df["cwe_id"].fillna("Unknown") +
         ". Description: " + df["description"].fillna("")
     )
-    df["epss_score"] = pd.to_numeric(df["epss_score"], errors="coerce").fillna(0.05)
+    # Feature inputs: use 0.0 unobserved for probabilities (never invent arbitrary positive probability)
+    df["epss_score"] = pd.to_numeric(df["epss_score"], errors="coerce").fillna(0.0)
     df["kev_listed"] = pd.to_numeric(df["kev_listed"], errors="coerce").fillna(0).astype(int)
-    df["cvss_score"] = pd.to_numeric(df["cvss_score"], errors="coerce").fillna(5.0)
-    df["cvss_severity"] = df["cvss_severity"].fillna("MEDIUM").astype(str)
-    df["assigned_tier"] = df["assigned_tier"].fillna("Tier 2 (Medium-Risk / Human-Approved)").astype(str)
+
+    # Target labels: NEVER silently impute missing target labels. Filter out rows with missing or invalid ground truth.
+    initial_records = len(df)
+    df["cvss_score"] = pd.to_numeric(df["cvss_score"], errors="coerce")
+    df = df.dropna(subset=["cvss_score", "cvss_severity", "assigned_tier"])
+    df = df[(df["cvss_score"] >= 0.0) & (df["cvss_score"] <= 10.0) & np.isfinite(df["cvss_score"])]
+    df = df[df["cvss_severity"].isin(["NONE", "LOW", "MEDIUM", "HIGH", "CRITICAL"])]
+    df = df[df["assigned_tier"].isin([
+        "Tier 1 (Low-Risk / Autonomous)",
+        "Tier 2 (Medium-Risk / Human-Approved)",
+        "Tier 3 (High-Risk / Dual-Sign-Off)"
+    ])]
+    filtered = initial_records - len(df)
+    if filtered > 0:
+        print(f"[!] Data Quality Gate: Filtered out {filtered} records with missing/invalid ground-truth target labels.")
+
     df["mitigation_plan"] = df["mitigation_plan"].fillna("").astype(str)
 
     train_df, test_df = train_test_split(
         df, test_size=0.20, random_state=42, stratify=df["cvss_severity"]
     )
+    if "cve_id" in df.columns:
+        train_cves = set(train_df["cve_id"].dropna())
+        test_cves = set(test_df["cve_id"].dropna())
+        assert train_cves.isdisjoint(test_cves), "Leakage error: Overlapping CVE IDs between train and test splits!"
     print(f"[+] Train Set: {len(train_df)} | Test Set: {len(test_df)}")
 
     # Initialize and fit unified Random Forest model

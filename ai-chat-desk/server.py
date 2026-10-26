@@ -442,7 +442,8 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             try:
                 reverted_id = registry.rollback_to_previous(
                     expected_target_id=intended_rollback_target,
-                    operator_id=admin_info["operator_id"]
+                    operator_id=admin_info["operator_id"],
+                    approval_token=admin_info.get("nonce")
                 )
                 status = registry.get_status()
                 champ_details = status.get("champion_details") or {}
