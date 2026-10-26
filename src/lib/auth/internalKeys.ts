@@ -167,3 +167,77 @@ export function createAdminAssertionToken(params: AdminAssertionParams): string 
   const signature = crypto.createHmac("sha256", sec).update(encodedPayload).digest("base64url");
   return `${encodedPayload}.${signature}`;
 }
+
+export interface VerifiedAdminAssertion {
+  operator_id: string;
+  role: ShieldDeskRole;
+  operation: string;
+  target_id?: string;
+  nonce: string;
+  iat: number;
+  exp: number;
+}
+
+/**
+ * Constant-time comparison for internal service credentials.
+ */
+export function verifyInternalServiceKey(key: string): boolean {
+  if (!key || typeof key !== "string") return false;
+  try {
+    const internalKey = getInternalServiceKey();
+    if (Buffer.byteLength(key) !== Buffer.byteLength(internalKey)) return false;
+    return crypto.timingSafeEqual(Buffer.from(key, "utf-8"), Buffer.from(internalKey, "utf-8"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cryptographically verifies an administrator assertion token against SHIELDDESK_ADMIN_ASSERTION_SECRET.
+ * Validates HMAC signature, expiration, role, operation, and target binding.
+ */
+export function verifyAdminAssertionToken(
+  token: string,
+  expectedOperation?: string,
+  expectedTarget?: string,
+  secret?: string
+): { valid: boolean; error?: string; payload?: VerifiedAdminAssertion } {
+  if (!token || typeof token !== "string") {
+    return { valid: false, error: "Missing administrator identity assertion token" };
+  }
+  const parts = token.split(".");
+  if (parts.length !== 2) {
+    return { valid: false, error: "Malformed token: expected exactly two dot-separated segments" };
+  }
+  const [encodedPayload, receivedSig] = parts;
+  const sec = secret || getAdminAssertionSecret();
+  const expectedSig = crypto.createHmac("sha256", sec).update(encodedPayload).digest("base64url");
+  if (
+    Buffer.byteLength(receivedSig) !== Buffer.byteLength(expectedSig) ||
+    !crypto.timingSafeEqual(Buffer.from(receivedSig), Buffer.from(expectedSig))
+  ) {
+    return { valid: false, error: "Cryptographic signature verification failed: invalid token signature" };
+  }
+  try {
+    const payload: VerifiedAdminAssertion = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf-8"));
+    const now = Math.floor(Date.now() / 1000);
+    if (now > payload.exp) {
+      return { valid: false, error: `Token has expired at ${payload.exp} (current time: ${now})` };
+    }
+    if (now < payload.iat - 30) {
+      return { valid: false, error: `Token issued in the future (iat: ${payload.iat}, current time: ${now})` };
+    }
+    if (payload.role !== "system_admin" && payload.role !== "super_admin") {
+      return { valid: false, error: `Forbidden: Operator role '${payload.role}' is not authorized. Requires system_admin or super_admin` };
+    }
+    if (expectedOperation && payload.operation !== expectedOperation) {
+      return { valid: false, error: `Operation mismatch: token authorizes '${payload.operation}', but requested '${expectedOperation}'` };
+    }
+    if (expectedTarget !== undefined && payload.target_id !== expectedTarget) {
+      return { valid: false, error: `Target mismatch: token authorizes '${payload.target_id}', but target is '${expectedTarget}'` };
+    }
+    return { valid: true, payload };
+  } catch {
+    return { valid: false, error: "Malformed token: unable to decode JSON payload" };
+  }
+}

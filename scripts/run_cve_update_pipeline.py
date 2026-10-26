@@ -98,7 +98,13 @@ def run_rollback():
     print("            ATOMIC PRODUCTION MODEL ROLLBACK                      ")
     print("==================================================================")
     reg = ModelRegistry(models_dir=os.path.join(AI_DIR, "models"))
-    prev = reg.rollback_to_previous()
+    manifest = reg.load_manifest()
+    history = manifest.get("history", [])
+    if len(history) < 2:
+        print("[!] No previous version available in history to rollback to.")
+        return
+    prev_target = history[-2]
+    prev = reg.rollback_to_previous(expected_target_id=prev_target)
     print(f"[+] Successfully rolled back to: {prev}\n")
 
 def main():

@@ -263,7 +263,8 @@ def verify_admin_assertion_token(
     token: str,
     expected_operation: str,
     expected_target: Optional[str] = None,
-    secret: Optional[str] = None
+    secret: Optional[str] = None,
+    require_target: bool = False
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Cryptographically verifies an administrator assertion or approval token.
@@ -272,7 +273,7 @@ def verify_admin_assertion_token(
     - Token validity window (iat, exp)
     - Role authorization (system_admin or super_admin only)
     - Operation match
-    - Target match (candidate model ID or rollback target)
+    - Target match (candidate model ID or rollback target) with mandatory binding when require_target=True
     - Atomic, cross-process, restart-safe replay check via DurableNonceStore
     """
     if not token or not isinstance(token, str):
@@ -316,8 +317,10 @@ def verify_admin_assertion_token(
         return False, f"Operation mismatch: token authorizes '{op}', but requested '{expected_operation}'.", {}
 
     # Target check
+    target = payload.get("target_id")
+    if require_target and (not target or not isinstance(target, str) or not target.strip()):
+        return False, f"Target binding required: token for '{expected_operation}' must specify a non-empty target_id.", {}
     if expected_target is not None:
-        target = payload.get("target_id")
         if target != expected_target:
             return False, f"Target mismatch: token authorizes '{target}', but target is '{expected_target}'.", {}
 

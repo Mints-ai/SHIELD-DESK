@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { shouldFailClosed, isDemoMode, isProduction } from "@/lib/config/environment";
-import { getSessionFromRequest } from "@/lib/auth/session";
+import { getSessionFromRequest, type ChatSession } from "@/lib/auth/session";
 import { trackError } from "@/lib/observability/errorTracker";
 import { hasPermission } from "@/lib/permissions";
+import { verifyInternalServiceKey, verifyAdminAssertionToken } from "@/lib/auth/internalKeys";
 import { runTrivyScan, isTrivyAvailable, getOrRunTrivyScan, getLastScanResult } from "@/lib/trivy";
 import { runGitleaksScan, isGitleaksAvailable, getLastGitleaksScanResult } from "@/lib/gitleaks";
 
@@ -119,7 +120,50 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getSessionFromRequest(req);
+  let session: ChatSession | null = null;
+
+  // 1. Check for authenticated server-to-server internal service call
+  const internalKey =
+    req.headers.get("x-shielddesk-internal-key") ||
+    req.headers.get("X-ShieldDesk-Internal-Key");
+  const authHeader = req.headers.get("authorization") || req.headers.get("Authorization");
+  const bearerKey = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+
+  if (internalKey || (bearerKey && verifyInternalServiceKey(bearerKey))) {
+    const keyToVerify = internalKey || bearerKey!;
+    if (!verifyInternalServiceKey(keyToVerify)) {
+      return NextResponse.json(
+        { error: "Unauthorized: Invalid internal service credentials" },
+        { status: 401 }
+      );
+    }
+    const assertionToken =
+      req.headers.get("x-shielddesk-admin-assertion") ||
+      req.headers.get("X-ShieldDesk-Admin-Assertion");
+    if (!assertionToken) {
+      return NextResponse.json(
+        { error: "Forbidden: Missing administrator cryptographic assertion token" },
+        { status: 403 }
+      );
+    }
+    const assertionResult = verifyAdminAssertionToken(assertionToken, "trigger_scan");
+    if (!assertionResult.valid || !assertionResult.payload) {
+      return NextResponse.json(
+        { error: `Forbidden: ${assertionResult.error}` },
+        { status: 403 }
+      );
+    }
+    session = {
+      uid: assertionResult.payload.operator_id,
+      role: assertionResult.payload.role,
+      tenantId: req.headers.get("x-shielddesk-tenant-id") || "mints-global",
+      email: `${assertionResult.payload.operator_id}@shielddesk.internal`,
+    };
+  } else {
+    // 2. Ordinary browser requests: resolve user session via cookie / user Bearer token
+    session = await getSessionFromRequest(req);
+  }
+
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

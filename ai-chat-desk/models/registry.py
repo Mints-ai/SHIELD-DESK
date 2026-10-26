@@ -130,15 +130,27 @@ class ModelRegistry:
         self.save_manifest(manifest)
         print(f"[+] Staged Challenger: {version_id} (Shadow Mode: {enable_shadow})")
 
-    def promote_challenger_to_champion(self) -> str:
+    def promote_challenger_to_champion(
+        self,
+        expected_candidate_id: str,
+        approver_id: Optional[str] = None,
+        approval_token: Optional[str] = None
+    ) -> str:
         """
         Promotes current Challenger to Champion.
         Updates manifest and points active production to the new version.
+        Enforces mandatory candidate binding and records approval provenance.
         """
+        if not expected_candidate_id or not isinstance(expected_candidate_id, str) or not expected_candidate_id.strip():
+            raise ValueError("Mandatory candidate binding: 'expected_candidate_id' must be a non-empty string.")
+
         manifest = self.load_manifest()
         challenger_id = manifest.get("active_challenger")
         if not challenger_id or challenger_id not in manifest["versions"]:
             raise ValueError("No valid Challenger staged for promotion.")
+
+        if challenger_id != expected_candidate_id.strip():
+            raise ValueError(f"Candidate mismatch in registry: staged challenger is '{challenger_id}', expected '{expected_candidate_id}'.")
 
         old_champion_id = manifest["active_champion"]
         if old_champion_id in manifest["versions"]:
@@ -148,6 +160,10 @@ class ModelRegistry:
         manifest["active_champion"] = challenger_id
         manifest["versions"][challenger_id]["status"] = "CHAMPION"
         manifest["versions"][challenger_id]["promoted_at"] = datetime.now(timezone.utc).isoformat()
+        if approver_id:
+            manifest["versions"][challenger_id]["promoted_by"] = approver_id
+        if approval_token:
+            manifest["versions"][challenger_id]["approval_token_nonce"] = approval_token
         manifest["active_challenger"] = None
         manifest["shadow_evaluation_enabled"] = False
         manifest["history"].append(challenger_id)
@@ -164,10 +180,18 @@ class ModelRegistry:
         print(f"[+] Promoted {challenger_id} to CHAMPION (Previous: {old_champion_id})")
         return challenger_id
 
-    def rollback_to_previous(self) -> str:
+    def rollback_to_previous(
+        self,
+        expected_target_id: str,
+        operator_id: Optional[str] = None
+    ) -> str:
         """
         Rolls back production Champion to the previous known-good version.
+        Enforces mandatory rollback target binding and records rollback provenance.
         """
+        if not expected_target_id or not isinstance(expected_target_id, str) or not expected_target_id.strip():
+            raise ValueError("Mandatory target binding: 'expected_target_id' must be a non-empty string.")
+
         manifest = self.load_manifest()
         history = manifest.get("history", [])
         if len(history) < 2:
@@ -176,9 +200,15 @@ class ModelRegistry:
         current = history.pop()  # remove current
         previous = history[-1]   # target previous
 
+        if previous != expected_target_id.strip():
+            raise ValueError(f"Rollback target mismatch in registry: target in history is '{previous}', expected '{expected_target_id}'.")
+
         manifest["active_champion"] = previous
         if previous in manifest["versions"]:
             manifest["versions"][previous]["status"] = "CHAMPION"
+            if operator_id:
+                manifest["versions"][previous]["rolled_back_by"] = operator_id
+                manifest["versions"][previous]["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
             target_path = manifest["versions"][previous]["artifact_path"]
             try:
                 if os.path.exists(target_path) and os.path.abspath(target_path) != os.path.abspath(DEFAULT_CHAMPION_PATH):

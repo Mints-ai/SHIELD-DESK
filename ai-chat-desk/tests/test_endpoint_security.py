@@ -322,9 +322,15 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
             "X-ShieldDesk-Operator-Role": "super_admin",
             "X-ShieldDesk-Approval-Token": "raw_arbitrary_string"
         }
+        # When unstaged, returns 412 (or 403)
         resp = requests.post(f"{self.base_url}/api/model/promote", headers=headers, json={}, timeout=5)
-        # Even if lifecycle enabled, must fail with 403 or 503
-        self.assertIn(resp.status_code, (403, 503))
+        self.assertIn(resp.status_code, (403, 412))
+
+        # When a challenger is staged, unverified raw token is strictly rejected with 403
+        with mock.patch("server.registry.get_status", return_value={"active_challenger": "v20261026_test"}):
+            resp_staged = requests.post(f"{self.base_url}/api/model/promote", headers=headers, json={}, timeout=5)
+            self.assertEqual(resp_staged.status_code, 403)
+            self.assertIn("Malformed token", resp_staged.json().get("error", ""))
 
     def test_arbitrary_string_approval_token_rejected_403(self):
         """Arbitrary non-cryptographic approval string must be rejected with 403."""
@@ -425,8 +431,14 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
         self.assertEqual(resp.status_code, 403)
         self.assertIn("expired", resp.json().get("error", ""))
 
-    def test_replayed_approval_token_rejected_403(self):
+    @mock.patch("server.CVEFeedSynchronizer")
+    def test_replayed_approval_token_rejected_403(self, mock_syncer_cls):
         """Replaying the exact same signed token twice must be rejected on the second attempt."""
+        mock_instance = mock.MagicMock()
+        mock_instance.sync_cisa_kev.return_value = [{"cve_id": "CVE-2024-9999"}]
+        mock_instance.initialize_or_update_lookup_store.return_value = 13249
+        mock_syncer_cls.return_value = mock_instance
+
         token = create_admin_assertion_token(
             operator_id="admin-1",
             role="super_admin",
@@ -435,7 +447,7 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
         )
         headers = {**self.service_headers, "X-ShieldDesk-Admin-Assertion": token}
 
-        # Attempt 1: Should pass token verification (status 200 or 500 depending on offline feed sync)
+        # Attempt 1: Should pass token verification (status 200)
         resp1 = requests.post(f"{self.base_url}/api/intel/sync", headers=headers, json={}, timeout=10)
         self.assertNotEqual(resp1.status_code, 403, f"First attempt unexpectedly rejected with 403: {resp1.text}")
 
@@ -447,31 +459,40 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
     # ---- 6. Lifecycle Circuit Breaker (Negative & Positive) ----------------
 
     def test_model_lifecycle_disabled_by_default_503(self):
-        """By default (ENABLE_MODEL_LIFECYCLE unset), promotion & rollback endpoints must return 503."""
-        token_promote = create_admin_assertion_token("admin-1", "super_admin", "model_promote")
-        resp_promote = requests.post(
-            f"{self.base_url}/api/model/promote",
-            headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token_promote},
-            json={},
-            timeout=5
-        )
-        self.assertEqual(resp_promote.status_code, 503)
-        self.assertIn("Service Unavailable", resp_promote.json().get("error", ""))
+        """By default (ENABLE_MODEL_LIFECYCLE unset), promotion & rollback endpoints must return 503 when authorized."""
+        cand_id = "v20261026_test_challenger"
+        with mock.patch("server.registry.get_status", return_value={"active_challenger": cand_id}):
+            token_promote = create_admin_assertion_token("admin-1", "super_admin", "model_promote", target_id=cand_id)
+            resp_promote = requests.post(
+                f"{self.base_url}/api/model/promote",
+                headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token_promote},
+                json={},
+                timeout=5
+            )
+            self.assertEqual(resp_promote.status_code, 503)
+            self.assertIn("Service Unavailable", resp_promote.json().get("error", ""))
 
-        token_rollback = create_admin_assertion_token("admin-1", "super_admin", "model_rollback")
-        resp_rollback = requests.post(
-            f"{self.base_url}/api/model/rollback",
-            headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token_rollback},
-            json={},
-            timeout=5
-        )
-        self.assertEqual(resp_rollback.status_code, 503)
-        self.assertIn("Service Unavailable", resp_rollback.json().get("error", ""))
+        with mock.patch("server.registry.load_manifest", return_value={"history": ["v1.0.0-baseline", "v2.0.0-champ"]}):
+            token_rollback = create_admin_assertion_token("admin-1", "super_admin", "model_rollback", target_id="v1.0.0-baseline")
+            resp_rollback = requests.post(
+                f"{self.base_url}/api/model/rollback",
+                headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token_rollback},
+                json={},
+                timeout=5
+            )
+            self.assertEqual(resp_rollback.status_code, 503)
+            self.assertIn("Service Unavailable", resp_rollback.json().get("error", ""))
 
     # ---- 7. Positive Execution Tests (Legitimate Requests) ----------------
 
-    def test_authorized_intel_sync_with_admin_assertion_succeeds(self):
+    @mock.patch("server.CVEFeedSynchronizer")
+    def test_authorized_intel_sync_with_admin_assertion_succeeds(self, mock_syncer_cls):
         """Valid service key + signed admin assertion executes successfully."""
+        mock_instance = mock.MagicMock()
+        mock_instance.sync_cisa_kev.return_value = [{"cve_id": "CVE-2024-9999"}]
+        mock_instance.initialize_or_update_lookup_store.return_value = 13249
+        mock_syncer_cls.return_value = mock_instance
+
         token = create_admin_assertion_token(
             operator_id="sysadmin-usr-1",
             role="system_admin",
@@ -485,8 +506,14 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
         self.assertTrue(body.get("success"))
         self.assertIn("synced_cisa_items", body)
 
-    def test_bearer_token_authorization_header_accepted(self):
+    @mock.patch("server.CVEFeedSynchronizer")
+    def test_bearer_token_authorization_header_accepted(self, mock_syncer_cls):
         """Authorization: Bearer <key> must authenticate service."""
+        mock_instance = mock.MagicMock()
+        mock_instance.sync_cisa_kev.return_value = [{"cve_id": "CVE-2024-9999"}]
+        mock_instance.initialize_or_update_lookup_store.return_value = 13249
+        mock_syncer_cls.return_value = mock_instance
+
         token = create_admin_assertion_token(
             operator_id="sysadmin-usr-1",
             role="system_admin",
@@ -597,6 +624,151 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
         self.assertEqual(resp.status_code, 403)
         self.assertIn("future", resp.json().get("error", "").lower())
 
+    def test_promote_missing_target_id_rejected_403(self):
+        """Promotion approval token without target_id must be rejected with 403."""
+        cand_id = "v20261026_cand_1"
+        with mock.patch("server.registry.get_status", return_value={"active_challenger": cand_id}):
+            token = create_admin_assertion_token(
+                operator_id="admin-1",
+                role="super_admin",
+                operation="model_promote",
+                target_id=None
+            )
+            resp = requests.post(
+                f"{self.base_url}/api/model/promote",
+                headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token},
+                json={},
+                timeout=5
+            )
+            self.assertEqual(resp.status_code, 403)
+            self.assertIn("Target binding required", resp.json().get("error", ""))
+
+    def test_promote_wrong_target_id_rejected_403(self):
+        """Promotion approval token with mismatched target_id must be rejected with 403."""
+        cand_id = "v20261026_cand_1"
+        with mock.patch("server.registry.get_status", return_value={"active_challenger": cand_id}):
+            token = create_admin_assertion_token(
+                operator_id="admin-1",
+                role="super_admin",
+                operation="model_promote",
+                target_id="v20261026_cand_wrong"
+            )
+            resp = requests.post(
+                f"{self.base_url}/api/model/promote",
+                headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token},
+                json={},
+                timeout=5
+            )
+            self.assertEqual(resp.status_code, 403)
+            self.assertIn("Target mismatch", resp.json().get("error", ""))
+
+    def test_promote_candidate_changed_between_checks_rejected_409(self):
+        """If staged candidate changes between auth verification and execution, return 409 Conflict."""
+        cand_id = "v20261026_cand_1"
+        statuses = [
+            {"active_challenger": cand_id},
+            {"active_challenger": "v20261026_cand_changed"}
+        ]
+        with mock.patch("server.registry.get_status", side_effect=statuses):
+            token = create_admin_assertion_token(
+                operator_id="admin-1",
+                role="super_admin",
+                operation="model_promote",
+                target_id=cand_id
+            )
+            with mock.patch("server.is_model_lifecycle_enabled", return_value=True):
+                resp = requests.post(
+                    f"{self.base_url}/api/model/promote",
+                    headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token},
+                    json={},
+                    timeout=5
+                )
+                self.assertEqual(resp.status_code, 409)
+                self.assertIn("Race condition detected", resp.json().get("error", ""))
+
+    def test_rollback_missing_target_id_rejected_403(self):
+        """Rollback approval token without target_id must be rejected with 403."""
+        with mock.patch("server.registry.load_manifest", return_value={"history": ["v1.0.0-baseline", "v2.0.0-champ"]}):
+            token = create_admin_assertion_token(
+                operator_id="admin-1",
+                role="super_admin",
+                operation="model_rollback",
+                target_id=None
+            )
+            resp = requests.post(
+                f"{self.base_url}/api/model/rollback",
+                headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token},
+                json={},
+                timeout=5
+            )
+            self.assertEqual(resp.status_code, 403)
+            self.assertIn("Target binding required", resp.json().get("error", ""))
+
+    def test_rollback_wrong_target_id_rejected_403(self):
+        """Rollback approval token with mismatched target_id must be rejected with 403."""
+        with mock.patch("server.registry.load_manifest", return_value={"history": ["v1.0.0-baseline", "v2.0.0-champ"]}):
+            token = create_admin_assertion_token(
+                operator_id="admin-1",
+                role="super_admin",
+                operation="model_rollback",
+                target_id="v_unintended_target"
+            )
+            resp = requests.post(
+                f"{self.base_url}/api/model/rollback",
+                headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token},
+                json={},
+                timeout=5
+            )
+            self.assertEqual(resp.status_code, 403)
+            self.assertIn("Target mismatch", resp.json().get("error", ""))
+
+    def test_rollback_target_changed_between_checks_rejected_409(self):
+        """If rollback target changes between auth verification and execution, return 409 Conflict."""
+        manifests = [
+            {"history": ["v1.0.0-baseline", "v2.0.0-champ"]},
+            {"history": ["v0.9.0-old", "v2.0.0-champ"]}
+        ]
+        with mock.patch("server.registry.load_manifest", side_effect=manifests):
+            token = create_admin_assertion_token(
+                operator_id="admin-1",
+                role="super_admin",
+                operation="model_rollback",
+                target_id="v1.0.0-baseline"
+            )
+            with mock.patch("server.is_model_lifecycle_enabled", return_value=True):
+                resp = requests.post(
+                    f"{self.base_url}/api/model/rollback",
+                    headers={**self.service_headers, "X-ShieldDesk-Admin-Assertion": token},
+                    json={},
+                    timeout=5
+                )
+                self.assertEqual(resp.status_code, 409)
+                self.assertIn("Race condition detected", resp.json().get("error", ""))
+
+    def test_dataset_integrity_verification_and_mutation_detection(self):
+        """Verifies dataset SHA-256 calculation and mutation detection."""
+        import tempfile
+        import hashlib
+        with tempfile.NamedTemporaryFile(delete=False) as tf:
+            tf.write(b"original_dataset_content_12345")
+            tf_path = tf.name
+
+        try:
+            with open(tf_path, "rb") as f:
+                orig_hash = hashlib.sha256(f.read()).hexdigest()
+
+            # Corrupt dataset
+            with open(tf_path, "wb") as f:
+                f.write(b"mutated_tampered_dataset_payload")
+
+            with open(tf_path, "rb") as f:
+                new_hash = hashlib.sha256(f.read()).hexdigest()
+
+            self.assertNotEqual(orig_hash, new_hash, "Dataset mutation must alter SHA-256 digest")
+        finally:
+            if os.path.exists(tf_path):
+                os.remove(tf_path)
+
     # ---- 10. Concurrent Replay and Durable Restart Protection ------------
 
     @mock.patch("server.CVEFeedSynchronizer")
@@ -695,9 +867,12 @@ class TestEndpointSecurityAndHardening(unittest.TestCase):
             resp = real_post(f"{self.base_url}/api/trigger_scan", headers=headers, json={"target_path": "."}, timeout=10)
             self.assertEqual(resp.status_code, 200)
             self.assertTrue(resp.json().get("success"), f"Status: {resp.status_code}, resp.json was: {resp.json()}")
-            # Verify operator_id from signed assertion was forwarded to Next.js API, not arbitrary caller identity
+            # Verify internal service key, signed assertion, and operator identity were forwarded to Next.js API
             call_headers = mock_post.call_args[1].get("headers", {})
-            self.assertEqual(call_headers.get("X-ShieldDesk-User"), "admin-sec-1")
+            self.assertEqual(call_headers.get("X-ShieldDesk-Operator-Id"), "admin-sec-1")
+            self.assertEqual(call_headers.get("X-ShieldDesk-Operator-Role"), "super_admin")
+            self.assertIn("X-ShieldDesk-Internal-Key", call_headers)
+            self.assertIn("X-ShieldDesk-Admin-Assertion", call_headers)
         finally:
             server.requests.post = real_post
 

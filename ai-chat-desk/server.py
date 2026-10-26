@@ -148,7 +148,13 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             return False
         return verify_service_token(token)
 
-    def _verify_admin_authorization(self, data: dict, expected_operation: str, expected_target: Optional[str] = None) -> Tuple[bool, str, dict]:
+    def _verify_admin_authorization(
+        self,
+        data: dict,
+        expected_operation: str,
+        expected_target: Optional[str] = None,
+        require_target: bool = False
+    ) -> Tuple[bool, str, dict]:
         """
         Enforces service-to-service authentication AND cryptographically signed administrator authorization.
         Validates the signed assertion token against operator identity, role, operation, target, and replay attacks.
@@ -172,7 +178,8 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
         valid, err_msg, payload = verify_admin_assertion_token(
             token=token,
             expected_operation=expected_operation,
-            expected_target=expected_target
+            expected_target=expected_target,
+            require_target=require_target
         )
         if not valid:
             return False, f"Forbidden: {err_msg}", {}
@@ -299,10 +306,38 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             return
 
         elif url.path == "/api/model/promote":
-            # 1. Authenticate service and authorize administrator credentials FIRST
+            # 1. Authenticate calling service independently (401 on missing/invalid credentials)
+            if not self._is_authenticated_service():
+                self._audit_privileged_call(url.path, 401, {}, "Unauthorized: Missing or invalid internal service key")
+                self._send_json({"error": "Unauthorized: Invalid or missing internal service authentication token."}, status=401)
+                return
+
+            # 2. Require administrator cryptographic assertion token (403 on missing assertion)
+            assertion_token = (
+                self.headers.get("X-ShieldDesk-Admin-Assertion") or
+                self.headers.get("X-ShieldDesk-Approval-Token") or
+                (data.get("approval_token") if isinstance(data, dict) else "") or
+                (data.get("admin_assertion") if isinstance(data, dict) else "") or
+                ""
+            ).strip()
+            if not assertion_token:
+                self._audit_privileged_call(url.path, 403, {}, "Missing administrator assertion token")
+                self._send_json({"error": "Forbidden: Missing administrator cryptographic approval assertion token."}, status=403)
+                return
+
+            # 3. Resolve active challenger candidate from trusted registry state
+            status = registry.get_status()
+            challenger_id = status.get("active_challenger")
+            if not challenger_id:
+                self._send_json({"error": "Precondition Failed: No active challenger model staged for promotion."}, status=412)
+                return
+
+            # 4. Authorize administrator credentials WITH mandatory candidate target binding
             auth_ok, err_msg, admin_info = self._verify_admin_authorization(
                 data=data,
-                expected_operation="model_promote"
+                expected_operation="model_promote",
+                expected_target=challenger_id,
+                require_target=True
             )
             if not auth_ok:
                 status_code = 401 if "Unauthorized" in err_msg else 403
@@ -310,7 +345,7 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": err_msg}, status=status_code)
                 return
 
-            # 2. Model Lifecycle Circuit Breaker
+            # 5. Model Lifecycle Circuit Breaker
             if not is_model_lifecycle_enabled():
                 self._audit_privileged_call(url.path, 503, admin_info, "Model promotion is disabled.")
                 self._send_json({
@@ -318,28 +353,21 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                 }, status=503)
                 return
 
-            # 3. Candidate Staging Precondition & Target Binding Verification
-            status = registry.get_status()
-            challenger_id = status.get("active_challenger")
-            if not challenger_id:
-                self._send_json({"error": "Precondition Failed: No active challenger model staged for promotion."}, status=412)
-                return
-
-            target_in_token = admin_info.get("target_id")
-            if target_in_token and target_in_token != challenger_id:
-                mismatch_err = f"Target mismatch: approval token authorizes '{target_in_token}', but staged candidate is '{challenger_id}'."
-                self._audit_privileged_call(url.path, 403, admin_info, mismatch_err)
-                self._send_json({"error": f"Forbidden: {mismatch_err}"}, status=403)
+            # 6. Verify candidate hasn't changed between authorization and execution
+            current_status = registry.get_status()
+            current_challenger = current_status.get("active_challenger")
+            if current_challenger != challenger_id:
+                mismatch_err = f"Race condition detected: staged candidate changed from '{challenger_id}' to '{current_challenger}'."
+                self._audit_privileged_call(url.path, 409, admin_info, mismatch_err)
+                self._send_json({"error": mismatch_err}, status=409)
                 return
 
             try:
-                try:
-                    promoted_id = registry.promote_challenger_to_champion(
-                        approver_id=admin_info["operator_id"],
-                        approval_token=admin_info.get("nonce")
-                    )
-                except TypeError:
-                    promoted_id = registry.promote_challenger_to_champion()
+                promoted_id = registry.promote_challenger_to_champion(
+                    expected_candidate_id=challenger_id,
+                    approver_id=admin_info["operator_id"],
+                    approval_token=admin_info.get("nonce")
+                )
                 status = registry.get_status()
                 champ_details = status.get("champion_details") or {}
                 champ_path = champ_details.get("artifact_path")
@@ -354,10 +382,39 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             return
 
         elif url.path == "/api/model/rollback":
-            # 1. Authenticate service and authorize administrator credentials FIRST
+            # 1. Authenticate calling service independently (401 on missing/invalid credentials)
+            if not self._is_authenticated_service():
+                self._audit_privileged_call(url.path, 401, {}, "Unauthorized: Missing or invalid internal service key")
+                self._send_json({"error": "Unauthorized: Invalid or missing internal service authentication token."}, status=401)
+                return
+
+            # 2. Require administrator cryptographic assertion token (403 on missing assertion)
+            assertion_token = (
+                self.headers.get("X-ShieldDesk-Admin-Assertion") or
+                self.headers.get("X-ShieldDesk-Approval-Token") or
+                (data.get("approval_token") if isinstance(data, dict) else "") or
+                (data.get("admin_assertion") if isinstance(data, dict) else "") or
+                ""
+            ).strip()
+            if not assertion_token:
+                self._audit_privileged_call(url.path, 403, {}, "Missing administrator assertion token")
+                self._send_json({"error": "Forbidden: Missing administrator cryptographic approval assertion token."}, status=403)
+                return
+
+            # 3. Resolve intended rollback target from trusted registry history
+            manifest = registry.load_manifest()
+            history = manifest.get("history", [])
+            if len(history) < 2:
+                self._send_json({"error": "Precondition Failed: No previous model version in history to rollback to."}, status=412)
+                return
+            intended_rollback_target = history[-2]
+
+            # 4. Authorize administrator credentials WITH mandatory rollback target binding
             auth_ok, err_msg, admin_info = self._verify_admin_authorization(
                 data=data,
-                expected_operation="model_rollback"
+                expected_operation="model_rollback",
+                expected_target=intended_rollback_target,
+                require_target=True
             )
             if not auth_ok:
                 status_code = 401 if "Unauthorized" in err_msg else 403
@@ -365,7 +422,7 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": err_msg}, status=status_code)
                 return
 
-            # 2. Model Lifecycle Circuit Breaker
+            # 5. Model Lifecycle Circuit Breaker
             if not is_model_lifecycle_enabled():
                 self._audit_privileged_call(url.path, 503, admin_info, "Model rollback is disabled.")
                 self._send_json({
@@ -373,13 +430,20 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                 }, status=503)
                 return
 
+            # 6. Verify history hasn't changed between authorization and execution
+            current_manifest = registry.load_manifest()
+            current_history = current_manifest.get("history", [])
+            if len(current_history) < 2 or current_history[-2] != intended_rollback_target:
+                mismatch_err = f"Race condition detected: rollback target changed from '{intended_rollback_target}'."
+                self._audit_privileged_call(url.path, 409, admin_info, mismatch_err)
+                self._send_json({"error": mismatch_err}, status=409)
+                return
+
             try:
-                try:
-                    reverted_id = registry.rollback_to_previous(
-                        operator_id=admin_info["operator_id"]
-                    )
-                except TypeError:
-                    reverted_id = registry.rollback_to_previous()
+                reverted_id = registry.rollback_to_previous(
+                    expected_target_id=intended_rollback_target,
+                    operator_id=admin_info["operator_id"]
+                )
                 status = registry.get_status()
                 champ_details = status.get("champion_details") or {}
                 champ_path = champ_details.get("artifact_path")
@@ -405,12 +469,21 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
                 return
 
             try:
-                # Call the Next.js API with verified operator identity
-                operator_id = admin_info.get("operator_id", "system-admin")
-                scan_url = "http://localhost:3000/api/scans"
+                # Forward to Next.js API using internal service credentials and signed admin assertion token
+                scan_url = os.getenv("SHIELDDESK_APP_URL", "http://localhost:3000").rstrip("/") + "/api/scans"
+                service_key = get_internal_service_key()
+                scan_assertion = create_admin_assertion_token(
+                    operator_id=admin_info["operator_id"],
+                    role=admin_info["role"],
+                    operation="trigger_scan",
+                    ttl_seconds=300
+                )
                 headers = {
                     "Content-Type": "application/json",
-                    "X-ShieldDesk-User": operator_id,
+                    "X-ShieldDesk-Internal-Key": service_key,
+                    "X-ShieldDesk-Admin-Assertion": scan_assertion,
+                    "X-ShieldDesk-Operator-Id": admin_info["operator_id"],
+                    "X-ShieldDesk-Operator-Role": admin_info["role"],
                 }
                 payload = {
                     "action": "cve_scan",
@@ -440,6 +513,7 @@ class CVEAPIHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._send_json({"error": f"Failed to trigger scan: {str(e)}"}, status=500)
             return
+
 
         elif url.path == "/api/batch":
             items = data.get("items", [])
