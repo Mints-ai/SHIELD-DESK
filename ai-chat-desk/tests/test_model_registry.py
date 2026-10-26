@@ -33,10 +33,22 @@ from auth_util import get_admin_assertion_secret, reset_cached_keys_for_testing
 TEST_SECRET = "sd_test_signing_secret_min_32_characters_entropy_secure!"
 
 
-def _generate_valid_mock_receipt(model_path: str, secret: str = TEST_SECRET) -> dict:
+def _generate_valid_mock_receipt(
+    model_path: str,
+    secret: str = TEST_SECRET,
+    benchmark_dataset_hash: str = None
+) -> dict:
     """Helper to generate a cryptographically valid APPROVED receipt envelope for a model."""
     with open(model_path, "rb") as f:
         m_hash = hashlib.sha256(f.read()).hexdigest()
+
+    if benchmark_dataset_hash is None:
+        bench_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "golden_safety_benchmark.parquet"))
+        if os.path.exists(bench_path):
+            with open(bench_path, "rb") as f:
+                benchmark_dataset_hash = hashlib.sha256(f.read()).hexdigest()
+        else:
+            benchmark_dataset_hash = "deadbeef" * 8
 
     payload = {
         "version": "1.0",
@@ -44,7 +56,7 @@ def _generate_valid_mock_receipt(model_path: str, secret: str = TEST_SECRET) -> 
         "model_path": model_path,
         "model_sha256": m_hash,
         "benchmark_path": "test_benchmark.parquet",
-        "benchmark_dataset_hash": "deadbeef" * 8,
+        "benchmark_dataset_hash": benchmark_dataset_hash,
         "benchmark_cases_count": 250,
         "verdict": "APPROVED",
         "gate_checks": {
@@ -200,6 +212,42 @@ class TestHardenedModelRegistry(unittest.TestCase):
                 signing_secret=TEST_SECRET
             )
         self.assertIn("verification failed", str(ctx.exception))
+
+    def test_promote_with_benchmark_hash_mismatch_fails(self):
+        """Promotion fails if candidate evaluation receipt was evaluated against a different benchmark."""
+        os.environ["ENABLE_MODEL_LIFECYCLE"] = "true"
+        receipt = _generate_valid_mock_receipt(
+            self.dummy_model_path,
+            benchmark_dataset_hash="wrong_bench_hash_" + "0" * 48
+        )
+        cand_id = self.registry.register_candidate(self.dummy_model_path, receipt_data=receipt)
+        self.registry.stage_challenger(cand_id, enable_shadow=True)
+
+        with self.assertRaises(ValueError) as ctx:
+            self.registry.promote_challenger_to_champion(
+                expected_candidate_id=cand_id,
+                approver_id="admin-ops",
+                approval_token="sd_token_123",
+                signing_secret=TEST_SECRET
+            )
+        self.assertIn("Benchmark dataset binding mismatch", str(ctx.exception))
+
+    def test_promote_with_explicit_expected_benchmark_hash_mismatch_fails(self):
+        """Promotion fails if explicitly specified expected_benchmark_hash does not match."""
+        os.environ["ENABLE_MODEL_LIFECYCLE"] = "true"
+        receipt = _generate_valid_mock_receipt(self.dummy_model_path)
+        cand_id = self.registry.register_candidate(self.dummy_model_path, receipt_data=receipt)
+        self.registry.stage_challenger(cand_id, enable_shadow=True)
+
+        with self.assertRaises(ValueError) as ctx:
+            self.registry.promote_challenger_to_champion(
+                expected_candidate_id=cand_id,
+                approver_id="admin-ops",
+                approval_token="sd_token_123",
+                expected_benchmark_hash="different_expected_benchmark_hash_00000000",
+                signing_secret=TEST_SECRET
+            )
+        self.assertIn("Benchmark dataset binding mismatch", str(ctx.exception))
 
     def test_promote_artifact_tampering_on_disk_fails_provenance(self):
         """If staged model file on disk is modified after registration, promotion fails artifact provenance check."""

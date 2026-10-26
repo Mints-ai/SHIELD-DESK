@@ -94,7 +94,7 @@ def print_status():
     print(f"Registered Versions:  {status['total_registered_versions']}")
     print("==================================================================\n")
 
-def run_rollback():
+def run_rollback(operator_id: Optional[str] = None, approval_token: Optional[str] = None):
     print("==================================================================")
     print("            ATOMIC PRODUCTION MODEL ROLLBACK                      ")
     print("==================================================================")
@@ -105,12 +105,30 @@ def run_rollback():
         print("[!] No previous version available in history to rollback to.")
         return
     prev_target = history[-2]
-    operator_id = os.getenv("SHIELDDESK_OPERATOR_ID", "cli_admin")
-    approval_token = os.getenv("SHIELDDESK_APPROVAL_NONCE", "cli_manual_rollback_token")
+
+    resolved_op = (operator_id or os.getenv("SHIELDDESK_OPERATOR_ID") or "").strip()
+    resolved_token = (
+        approval_token or
+        os.getenv("SHIELDDESK_APPROVAL_TOKEN") or
+        os.getenv("SHIELDDESK_APPROVAL_NONCE") or
+        ""
+    ).strip()
+
+    if not resolved_op:
+        raise ValueError(
+            "Rollback aborted: Missing required administrator identity. "
+            "Must provide --operator-id or set environment variable SHIELDDESK_OPERATOR_ID."
+        )
+    if not resolved_token:
+        raise ValueError(
+            "Rollback aborted: Missing required cryptographic approval token. "
+            "Must provide --approval-token or set environment variable SHIELDDESK_APPROVAL_TOKEN."
+        )
+
     prev = reg.rollback_to_previous(
         expected_target_id=prev_target,
-        operator_id=operator_id,
-        approval_token=approval_token
+        operator_id=resolved_op,
+        approval_token=resolved_token
     )
     print(f"[+] Successfully rolled back to: {prev}\n")
 
@@ -122,6 +140,8 @@ def main():
     parser.add_argument("--full-cycle", action="store_true", help="Run full automated cycle: Sync -> Retrain -> Benchmark -> Stage Challenger")
     parser.add_argument("--status", action="store_true", help="Display model registry and shadow evaluation status")
     parser.add_argument("--rollback", action="store_true", help="Rollback production model to previous version")
+    parser.add_argument("--operator-id", default=None, help="Verified administrator identity for authorized rollback")
+    parser.add_argument("--approval-token", default=None, help="Cryptographic approval token for authorized rollback")
     args = parser.parse_args()
 
     if args.full_cycle:
@@ -133,7 +153,7 @@ def main():
     elif args.eval_gate:
         run_gate()
     elif args.rollback:
-        run_rollback()
+        run_rollback(operator_id=args.operator_id, approval_token=args.approval_token)
     elif args.status:
         print_status()
     else:

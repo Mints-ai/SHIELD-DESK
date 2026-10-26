@@ -6,7 +6,7 @@ import os
 import json
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GroupShuffleSplit
 from sklearn.metrics import accuracy_score, f1_score, r2_score, mean_squared_error, mean_absolute_error, classification_report, confusion_matrix, roc_auc_score
 from cve_random_forest import CVERandomForestModel
 
@@ -54,13 +54,28 @@ def train_single_rf(
 
     df["mitigation_plan"] = df["mitigation_plan"].fillna("").astype(str)
 
-    train_df, test_df = train_test_split(
-        df, test_size=0.20, random_state=42, stratify=df["cvss_severity"]
-    )
-    if "cve_id" in df.columns:
-        train_cves = set(train_df["cve_id"].dropna())
-        test_cves = set(test_df["cve_id"].dropna())
-        assert train_cves.isdisjoint(test_cves), "Leakage error: Overlapping CVE IDs between train and test splits!"
+    if "cve_id" in df.columns and df["cve_id"].notna().any():
+        gss = GroupShuffleSplit(n_splits=1, test_size=0.20, random_state=42)
+        groups = df["cve_id"].copy()
+        missing_mask = groups.isna() | (groups.astype(str).str.strip() == "")
+        if missing_mask.any():
+            groups[missing_mask] = [f"__missing_group_{i}" for i in range(missing_mask.sum())]
+
+        train_idx, test_idx = next(gss.split(df, groups=groups))
+        train_df = df.iloc[train_idx].copy()
+        test_df = df.iloc[test_idx].copy()
+
+        train_cves = set(train_df["cve_id"].dropna().astype(str))
+        test_cves = set(test_df["cve_id"].dropna().astype(str))
+        train_cves.discard("")
+        test_cves.discard("")
+        overlap = train_cves.intersection(test_cves)
+        if overlap:
+            raise ValueError(f"Leakage error: {len(overlap)} CVE groups appear in both train and test splits!")
+    else:
+        train_df, test_df = train_test_split(
+            df, test_size=0.20, random_state=42, stratify=df["cvss_severity"]
+        )
     print(f"[+] Train Set: {len(train_df)} | Test Set: {len(test_df)}")
 
     # Initialize and fit unified Random Forest model

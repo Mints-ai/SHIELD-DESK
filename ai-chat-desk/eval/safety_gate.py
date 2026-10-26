@@ -106,16 +106,44 @@ def evaluate_safety_gate(
     if len(unique_kev) < 2:
         raise ValueError("Benchmark dataset must contain both KEV (1) and non-KEV (0) examples.")
 
+    # EPSS feature validation: Fail closed on missing, non-numeric, non-finite, or out-of-bounds EPSS
+    epss_numeric = pd.to_numeric(df["epss_score"], errors="coerce")
+    if epss_numeric.isna().any():
+        nan_count = int(epss_numeric.isna().sum())
+        raise ValueError(
+            f"Benchmark dataset validation failed: 'epss_score' contains {nan_count} missing, NaN, or non-numeric values. "
+            f"Silent fallback to 0.0 is prohibited to prevent masking high-risk threats as benign."
+        )
+    if not np.isfinite(epss_numeric).all():
+        raise ValueError(
+            "Benchmark dataset validation failed: 'epss_score' contains non-finite (infinite) values."
+        )
+    if ((epss_numeric < 0.0) | (epss_numeric > 100.0)).any():
+        raise ValueError(
+            "Benchmark dataset validation failed: 'epss_score' values must be bounded within [0.0, 100.0]."
+        )
+
+    # Validate vulnerability text description (full_text or description must be present and non-empty)
+    text_list = []
+    for idx, row in df.iterrows():
+        t = str(row.get("full_text") or "").strip()
+        if not t:
+            t = str(row.get("description") or "").strip()
+        if not t:
+            cve_id = row.get("cve_id", f"index_{idx}")
+            raise ValueError(f"Benchmark dataset validation failed: record '{cve_id}' has empty vulnerability text description.")
+        text_list.append(t)
+
     print(f"[+] Loaded {len(df)} golden test cases (Dataset Hash: {bench_hash[:12]}...)")
     print(f"[+] Candidate Model Artifact Hash: {model_sha256[:12]}...")
 
     # 3. Load Model
     model = CVERandomForestModel.load(candidate_model_path)
 
-    # 4. Extract Features
+    # 4. Extract Features (Strict, non-imputed values)
     X_test = model._extract_features(
-        df["full_text"].fillna("").astype(str).tolist(),
-        epss_scores=pd.to_numeric(df["epss_score"], errors="coerce").fillna(0.0).values,
+        text_list,
+        epss_scores=epss_numeric.values,
         kev_statuses=df["kev_listed"].astype(int).values,
         is_fit=False
     )

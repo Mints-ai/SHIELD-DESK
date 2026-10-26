@@ -36,6 +36,7 @@ BASE_MODELS_DIR = os.path.abspath(os.path.dirname(__file__))
 VERSIONS_DIR = os.path.join(BASE_MODELS_DIR, "versions")
 MANIFEST_PATH = os.path.join(BASE_MODELS_DIR, "manifest.json")
 DEFAULT_CHAMPION_PATH = os.path.join(BASE_MODELS_DIR, "cve_random_forest_model.joblib")
+DEFAULT_BENCHMARK_PATH = os.path.abspath(os.path.join(BASE_MODELS_DIR, "..", "data", "golden_safety_benchmark.parquet"))
 
 
 def is_model_lifecycle_enabled() -> bool:
@@ -268,6 +269,7 @@ class ModelRegistry:
         expected_candidate_id: str,
         approver_id: str,
         approval_token: str,
+        expected_benchmark_hash: Optional[str] = None,
         require_shadow: bool = False,
         signing_secret: Optional[str] = None
     ) -> str:
@@ -278,7 +280,7 @@ class ModelRegistry:
         2. Input validation: expected_candidate_id, approver_id, approval_token must be non-empty strings.
         3. Challenger staging & binding: staged challenger must match expected_candidate_id.
         4. Artifact provenance: model file on disk must exist and match recorded SHA-256 digest.
-        5. Evaluation receipt: must contain cryptographically verified receipt with APPROVED verdict.
+        5. Evaluation receipt: must contain cryptographically verified receipt bound to model and benchmark.
         6. Shadow evaluation result: divergence rate must not exceed allowed threshold.
         """
         # Gate 1: Registry-level circuit breaker
@@ -324,7 +326,7 @@ class ModelRegistry:
                     f"Artifact provenance failure: Staged model digest ({actual_sha256}) does not match manifest digest ({expected_sha256})."
                 )
 
-            # Gate 4: Evaluation receipt verification
+            # Gate 4: Evaluation receipt verification with model and benchmark binding
             receipt = challenger_entry.get("receipt")
             if not receipt:
                 raise ValueError(f"Promotion rejected: Candidate version '{challenger_id}' has no evaluation receipt.")
@@ -332,13 +334,31 @@ class ModelRegistry:
             if verify_evaluation_receipt is None:
                 raise RuntimeError("Evaluation release gate verifier could not be imported.")
 
+            target_bench_hash = expected_benchmark_hash
+            if target_bench_hash is None:
+                if os.path.exists(DEFAULT_BENCHMARK_PATH):
+                    with open(DEFAULT_BENCHMARK_PATH, "rb") as f:
+                        target_bench_hash = hashlib.sha256(f.read()).hexdigest()
+                else:
+                    target_bench_hash = challenger_entry.get("dataset_sha256")
+
+            if not target_bench_hash:
+                raise ValueError("Promotion rejected: Missing expected benchmark dataset hash for cryptographic receipt verification.")
+
             valid, err_msg, verified_payload = verify_evaluation_receipt(
                 receipt_input=receipt,
                 expected_model_sha256=expected_sha256,
+                expected_benchmark_hash=target_bench_hash,
                 secret=signing_secret
             )
             if not valid:
                 raise ValueError(f"Promotion rejected: Evaluation receipt cryptographic verification failed: {err_msg}")
+
+            receipt_bench_hash = verified_payload.get("benchmark_dataset_hash")
+            if not receipt_bench_hash or receipt_bench_hash.lower() != target_bench_hash.lower():
+                raise ValueError(
+                    f"Promotion rejected: Receipt benchmark hash ({receipt_bench_hash}) does not match expected benchmark ({target_bench_hash})."
+                )
 
             if verified_payload.get("verdict") != "APPROVED":
                 raise ValueError(f"Promotion rejected: Evaluation receipt verdict is '{verified_payload.get('verdict')}', required 'APPROVED'.")
@@ -378,6 +398,7 @@ class ModelRegistry:
             manifest["versions"][challenger_id]["receipt_hash"] = (
                 receipt.get("receipt_hash") if isinstance(receipt, dict) else None
             )
+            manifest["versions"][challenger_id]["benchmark_dataset_hash"] = target_bench_hash
             manifest["active_challenger"] = None
             manifest["shadow_evaluation_enabled"] = False
             manifest["history"].append(challenger_id)

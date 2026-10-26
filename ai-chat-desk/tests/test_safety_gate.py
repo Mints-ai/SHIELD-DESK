@@ -194,5 +194,74 @@ class TestSafetyGateHarness(unittest.TestCase):
         self.assertFalse(valid)
         self.assertIn("verdict is 'REJECTED'", err_msg)
 
+    def test_missing_epss_fails_closed_never_substitutes_zero(self):
+        """EPSS missing or NaN must fail closed with ValueError rather than silently defaulting to 0.0."""
+        bench_df = pd.read_parquet(DEFAULT_BENCHMARK_PATH)
+        bad_df = bench_df.copy()
+        bad_df.loc[0, "epss_score"] = np.nan
+        bad_bench_path = os.path.join(self.temp_dir, "missing_epss_benchmark.parquet")
+        bad_df.to_parquet(bad_bench_path)
+
+        with self.assertRaises(ValueError) as ctx:
+            evaluate_safety_gate(
+                candidate_model_path=DEFAULT_MODEL_PATH,
+                benchmark_path=bad_bench_path,
+                signing_secret=TEST_SIGNING_SECRET,
+                save_to_disk=False
+            )
+        self.assertIn("Silent fallback to 0.0 is prohibited", str(ctx.exception))
+
+    def test_out_of_bounds_epss_fails_closed(self):
+        """EPSS values out of [0.0, 100.0] range must fail closed."""
+        bench_df = pd.read_parquet(DEFAULT_BENCHMARK_PATH)
+        bad_df = bench_df.copy()
+        bad_df.loc[0, "epss_score"] = 150.0  # Invalid probability/percentage
+        bad_bench_path = os.path.join(self.temp_dir, "oob_epss_benchmark.parquet")
+        bad_df.to_parquet(bad_bench_path)
+
+        with self.assertRaises(ValueError) as ctx:
+            evaluate_safety_gate(
+                candidate_model_path=DEFAULT_MODEL_PATH,
+                benchmark_path=bad_bench_path,
+                signing_secret=TEST_SIGNING_SECRET,
+                save_to_disk=False
+            )
+        self.assertIn("bounded within [0.0, 100.0]", str(ctx.exception))
+
+    def test_negative_epss_fails_closed(self):
+        """Negative EPSS values must fail closed."""
+        bench_df = pd.read_parquet(DEFAULT_BENCHMARK_PATH)
+        bad_df = bench_df.copy()
+        bad_df.loc[0, "epss_score"] = -0.5
+        bad_bench_path = os.path.join(self.temp_dir, "neg_epss_benchmark.parquet")
+        bad_df.to_parquet(bad_bench_path)
+
+        with self.assertRaises(ValueError) as ctx:
+            evaluate_safety_gate(
+                candidate_model_path=DEFAULT_MODEL_PATH,
+                benchmark_path=bad_bench_path,
+                signing_secret=TEST_SIGNING_SECRET,
+                save_to_disk=False
+            )
+        self.assertIn("bounded within [0.0, 100.0]", str(ctx.exception))
+
+    def test_empty_description_fails_closed(self):
+        """Records with empty full_text and description must fail closed."""
+        bench_df = pd.read_parquet(DEFAULT_BENCHMARK_PATH)
+        bad_df = bench_df.copy()
+        bad_df.loc[0, "full_text"] = ""
+        bad_df.loc[0, "description"] = "   "
+        bad_bench_path = os.path.join(self.temp_dir, "empty_desc_benchmark.parquet")
+        bad_df.to_parquet(bad_bench_path)
+
+        with self.assertRaises(ValueError) as ctx:
+            evaluate_safety_gate(
+                candidate_model_path=DEFAULT_MODEL_PATH,
+                benchmark_path=bad_bench_path,
+                signing_secret=TEST_SIGNING_SECRET,
+                save_to_disk=False
+            )
+        self.assertIn("empty vulnerability text description", str(ctx.exception))
+
 if __name__ == "__main__":
     unittest.main()
