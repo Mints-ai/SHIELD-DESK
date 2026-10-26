@@ -69,28 +69,62 @@ export function clearShodanCache(): void {
  * Prioritizes active disk state so edits in .env.local take effect immediately.
  */
 export function getShodanApiKey(): string | undefined {
+  // 1. Scan local .env.local on disk first so active UI edits and deletions take effect immediately
+  try {
+    const root = process.cwd();
+    const envLocalPath = path.join(root, ".env.local");
+    if (fs.existsSync(envLocalPath)) {
+      const content = fs.readFileSync(envLocalPath, "utf-8");
+      let foundInLocal = false;
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+        const [key, ...vals] = trimmed.split("=");
+        if (key.trim() === "SHODAN_API_KEY") {
+          foundInLocal = true;
+          const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
+          if (val && val.length > 0) {
+            process.env.SHODAN_API_KEY = val;
+            return val;
+          }
+          // Explicitly blank in .env.local
+          delete process.env.SHODAN_API_KEY;
+          cache.clear();
+          return undefined;
+        }
+      }
+      // If .env.local exists but SHODAN_API_KEY is not defined in it, the key is removed
+      if (!foundInLocal) {
+        delete process.env.SHODAN_API_KEY;
+        cache.clear();
+        return undefined;
+      }
+    }
+  } catch {
+    // Ignore FS errors
+  }
+
+  // 2. Fall back to process.env if .env.local does not exist (e.g. production / container environments)
   const envVal = process.env.SHODAN_API_KEY?.trim();
   if (envVal && envVal.length > 0) {
     return envVal;
   }
 
-  // Scan local .env files on disk if not directly in process.env
+  // 3. Fall back to root .env if present
   try {
     const root = process.cwd();
-    const envPaths = [path.join(root, ".env.local"), path.join(root, ".env")];
-    for (const p of envPaths) {
-      if (fs.existsSync(p)) {
-        const content = fs.readFileSync(p, "utf-8");
-        for (const line of content.split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-          const [key, ...vals] = trimmed.split("=");
-          if (key.trim() === "SHODAN_API_KEY") {
-            const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
-            if (val && val.length > 0) {
-              process.env.SHODAN_API_KEY = val;
-              return val;
-            }
+    const envPath = path.join(root, ".env");
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+        const [key, ...vals] = trimmed.split("=");
+        if (key.trim() === "SHODAN_API_KEY") {
+          const val = vals.join("=").trim().replace(/^["']|["']$/g, "");
+          if (val && val.length > 0) {
+            process.env.SHODAN_API_KEY = val;
+            return val;
           }
         }
       }
